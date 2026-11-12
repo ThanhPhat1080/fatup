@@ -183,6 +183,13 @@ export function installBrowserApi(): void {
 
     listTrash: () => guarded(async (): Promise<Item[]> => (await client().listAll({ trash: true })).map((it) => ({ ...it, downloaded: false }))),
 
+    rename: (id, name) =>
+      guarded(async (): Promise<Item> => {
+        const item = await client().rename(id, name);
+        itemCache.set(id, item);
+        return { ...item, downloaded: data.downloaded.includes(id) };
+      }),
+
     vaultOpen: async (pin) => {
       if (!unlockedToken) return { ok: false, reason: 'wrong', attemptsLeft: 0 };
       const { result } = await tryUnlock(pin);

@@ -169,8 +169,39 @@ describe('usage', () => {
   });
 });
 
+describe('rename', () => {
+  const rename = (id: string, name: unknown) =>
+    call(`/files/${id}`, { method: 'PATCH', body: JSON.stringify({ name }), headers: { 'Content-Type': 'application/json' } });
+
+  it('changes the name and keeps everything else', async () => {
+    const a = await upload('old.jpg', 'image/jpeg');
+    const res = await rename(a.id, '  new name.jpg ');
+    expect(res.status).toBe(200);
+    const item = (await res.json()) as FileItem;
+    expect(item).toMatchObject({ id: a.id, name: 'new name.jpg', mime: 'image/jpeg', size: a.size });
+    const listed = ((await (await call('/files')).json()) as ListFilesResponse).items;
+    expect(listed.map((i) => i.name)).toEqual(['new name.jpg']);
+  });
+
+  it('strips path separators like uploads do', async () => {
+    const a = await upload('a.txt', 'text/plain');
+    expect(((await (await rename(a.id, '../evil/b.txt')).json()) as FileItem).name).toBe('b.txt');
+  });
+
+  it('rejects bad names, missing files and trashed files', async () => {
+    const a = await upload('a.txt', 'text/plain');
+    expect((await rename(a.id, '')).status).toBe(400);
+    expect((await rename(a.id, '   ')).status).toBe(400);
+    expect((await rename(a.id, 42)).status).toBe(400);
+    expect((await rename(a.id, 'x'.repeat(256))).status).toBe(400);
+    expect((await rename('01HZZZZZZZZZZZZZZZZZZZZZZZ', 'b.txt')).status).toBe(404);
+    await call(`/files/${a.id}`, { method: 'DELETE' });
+    expect((await rename(a.id, 'b.txt')).status).toBe(404);
+  });
+});
+
 describe('vault', () => {
-  const list = async (path: string) => ((await (await call(path)).json()) as ListFilesResponse).items;
+  const list =async (path: string) => ((await (await call(path)).json()) as ListFilesResponse).items;
   const setVault = (id: string, inVault: unknown) =>
     call(`/files/${id}/vault`, { method: 'PUT', body: JSON.stringify({ inVault }), headers: { 'Content-Type': 'application/json' } });
 

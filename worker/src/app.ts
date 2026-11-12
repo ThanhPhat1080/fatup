@@ -233,6 +233,24 @@ export function createApp(options: AppOptions = {}) {
     return c.body(null, 204);
   });
 
+  // Renames a file. Only the display name changes; the R2 objects are keyed by id.
+  app.patch('/files/:id', async (c) => {
+    const id = c.req.param('id');
+    let body: { name?: unknown };
+    try {
+      body = await c.req.json();
+    } catch {
+      return fail(c, 400, 'bad_request', 'Body must be JSON');
+    }
+    if (typeof body.name !== 'string' || body.name.trim() === '') return fail(c, 400, 'bad_request', 'name must be a non-empty string');
+    if (body.name.length > 255) return fail(c, 400, 'bad_request', 'name must be at most 255 characters');
+    const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
+    if (!row) return fail(c, 404, 'not_found', 'File not found');
+    const name = sanitizeName(body.name);
+    await c.env.DB.prepare('UPDATE files SET name = ? WHERE id = ?').bind(name, id).run();
+    return c.json(await toItem({ ...row, name }, c.get('presigner')));
+  });
+
   // Moves a file into or out of the Vault.
   app.put('/files/:id/vault', async (c) => {
     const id = c.req.param('id');

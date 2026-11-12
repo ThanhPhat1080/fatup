@@ -72,6 +72,8 @@ export type FatupApi = {
   /** Fails with error 'vault_locked' unless vaultOpen succeeded. */
   listVault(): Promise<Result<Item[]>>;
   setVault(id: string, inVault: boolean): Promise<Result>;
+  /** Renames a file (the display name only). Fails with 'not_found' if it is gone or in the trash. */
+  rename(id: string, name: string): Promise<Result<Item>>;
   previewUrl(id: string): Promise<Result<string>>;
   download(id: string): Promise<Result<string>>;
   copyImage(id: string): Promise<Result>;

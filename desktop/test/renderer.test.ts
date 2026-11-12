@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems } from '../src/renderer/src/lib/format';
+import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems, splitExt } from '../src/renderer/src/lib/format';
 import { dictionaries, errorText, resolveLocale } from '../src/renderer/src/lib/i18n';
 
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime();
@@ -109,5 +109,19 @@ describe('storage meter helpers', () => {
     expect(formatGb(0, 'en')).toBe('0.00');
     expect(formatGb(10_000_000_000, 'en')).toBe('10.00');
     expect(formatGb(1_234_000_000, 'vi')).toBe('1,23');
+  });
+});
+
+describe('splitExt', () => {
+  it('separates the last extension so a rename can keep it', () => {
+    expect(splitExt('photo.jpg')).toEqual({ stem: 'photo', ext: '.jpg' });
+    expect(splitExt('my.report.final.pdf')).toEqual({ stem: 'my.report.final', ext: '.pdf' });
+    expect(splitExt('archive.tar.gz')).toEqual({ stem: 'archive.tar', ext: '.gz' });
+  });
+
+  it('treats names without a real extension as all stem', () => {
+    expect(splitExt('README')).toEqual({ stem: 'README', ext: '' });
+    expect(splitExt('.gitignore')).toEqual({ stem: '.gitignore', ext: '' });
+    expect(splitExt('trailing.')).toEqual({ stem: 'trailing.', ext: '' });
   });
 });

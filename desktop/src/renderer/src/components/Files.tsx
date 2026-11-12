@@ -1,7 +1,7 @@
-import { useState, type MouseEvent } from 'react';
-import { ArrowDown, ArrowUp, CloudUpload, MoreVertical, SearchX, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { ArrowDown, ArrowUp, CloudUpload, MoreVertical, Pencil, SearchX, Trash2 } from 'lucide-react';
 import type { Item } from '../../../shared-ipc';
-import { formatSize, formatTime, type DateGroup, type SortKey, type SortState } from '../lib/format';
+import { formatSize, formatTime, splitExt, type DateGroup, type SortKey, type SortState } from '../lib/format';
 import { useI18n } from '../lib/i18n';
 import { VaultIcon } from './VaultIcon';
 import { FileIcon } from './FileIcon';
@@ -12,6 +12,8 @@ type ViewProps = {
   onToggle: (item: Item, range: boolean) => void;
   onOpen: (item: Item) => void;
   onMenu: (item: Item, x: number, y: number) => void;
+  /** Renames a file; the pencil is hidden when this is not given (e.g. in the trash). `name` already includes the original extension. */
+  onRename?: (item: Item, name: string) => void;
 };
 
 function Check({ item, selected, onToggle }: { item: Item; selected: boolean; onToggle: ViewProps['onToggle'] }) {
@@ -59,6 +61,62 @@ function MoreButton({ item, onMenu }: { item: Item; onMenu: ViewProps['onMenu'] 
   );
 }
 
+function RenameButton({ onClick }: { onClick: () => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      className="icon-btn icon-btn--sm rename-btn"
+      aria-label={t.rename}
+      title={t.rename}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <Pencil size={15} />
+    </button>
+  );
+}
+
+/** Edits the name without the extension, which stays fixed next to the field. Enter saves; Esc or clicking away cancels. */
+function RenameField({ item, onDone }: { item: Item; onDone: (name: string | null) => void }) {
+  const { t } = useI18n();
+  const { stem, ext } = splitExt(item.name);
+  const [value, setValue] = useState(stem);
+  const input = useRef<HTMLInputElement>(null);
+  const finished = useRef(false);
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
+  const finish = (save: boolean) => {
+    if (finished.current) return;
+    finished.current = true;
+    const next = value.trim();
+    onDone(save && next !== '' && next !== stem ? next + ext : null);
+  };
+  return (
+    <span className="rename" onClick={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}>
+      <input
+        ref={input}
+        className="rename__input"
+        value={value}
+        maxLength={255 - ext.length}
+        aria-label={t.rename}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={() => finish(false)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === 'Enter') finish(true);
+          else if (e.key === 'Escape') finish(false);
+        }}
+      />
+      {ext && <span className="rename__ext">{ext}</span>}
+    </span>
+  );
+}
+
 function Thumb({ item }: { item: Item }) {
   const [failed, setFailed] = useState(false);
   if (item.thumbUrl && !failed) {
@@ -71,7 +129,12 @@ function Thumb({ item }: { item: Item }) {
   );
 }
 
-export function FileGrid({ groups, selected, onToggle, onOpen, onMenu }: ViewProps) {
+export function FileGrid({ groups, selected, onToggle, onOpen, onMenu, onRename }: ViewProps) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const finishRename = (item: Item, name: string | null) => {
+    setEditing(null);
+    if (name) onRename?.(item, name);
+  };
   return (
     <>
       {groups.map((g) => (
@@ -93,9 +156,14 @@ export function FileGrid({ groups, selected, onToggle, onOpen, onMenu }: ViewPro
                     <Check item={item} selected={selected.has(item.id)} onToggle={onToggle} />
                   </span>
                   <FileIcon name={item.name} mime={item.mime} size={18} />
-                  <span className="tile__name" title={item.name}>
-                    {item.name}
-                  </span>
+                  {editing === item.id ? (
+                    <RenameField item={item} onDone={(name) => finishRename(item, name)} />
+                  ) : (
+                    <span className="tile__name" title={item.name}>
+                      {item.name}
+                    </span>
+                  )}
+                  {onRename && editing !== item.id && <RenameButton onClick={() => setEditing(item.id)} />}
                   <MoreButton item={item} onMenu={onMenu} />
                 </div>
                 <div className="tile__thumb">
@@ -132,8 +200,13 @@ function SortHead({ id, label, sort, onSort, className }: { id: SortKey; label: 
   );
 }
 
-export function FileList({ groups, selected, onToggle, onOpen, onMenu, sort, onSort, allSelected, someSelected, onToggleAll, timeLabel }: ListProps) {
+export function FileList({ groups, selected, onToggle, onOpen, onMenu, onRename, sort, onSort, allSelected, someSelected, onToggleAll, timeLabel }: ListProps) {
   const { t } = useI18n();
+  const [editing, setEditing] = useState<string | null>(null);
+  const finishRename = (item: Item, name: string | null) => {
+    setEditing(null);
+    if (name) onRename?.(item, name);
+  };
   return (
     <div className="list" role="table">
       <div className="list__row list__row--head" role="row">
@@ -179,9 +252,16 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, sort, onS
                 ) : (
                   <FileIcon name={item.name} mime={item.mime} />
                 )}
-                <span className="ellipsis" title={item.name}>
-                  {item.name}
-                </span>
+                {editing === item.id ? (
+                  <RenameField item={item} onDone={(name) => finishRename(item, name)} />
+                ) : (
+                  <>
+                    <span className="ellipsis" title={item.name}>
+                      {item.name}
+                    </span>
+                    {onRename && <RenameButton onClick={() => setEditing(item.id)} />}
+                  </>
+                )}
               </span>
               <span role="cell" className="muted col-from ellipsis">
                 {item.device ?? '—'}

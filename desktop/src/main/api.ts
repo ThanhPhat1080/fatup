@@ -81,6 +81,10 @@ export class ApiClient {
     return this.request(`/uploads/${encodeURIComponent(id)}/complete`, { method: 'POST' });
   }
 
+  rename(id: string, name: string): Promise<FileItem> {
+    return this.request(`/files/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+  }
+
   setVault(id: string, inVault: boolean): Promise<FileItem> {
     return this.request(`/files/${encodeURIComponent(id)}/vault`, { method: 'PUT', body: JSON.stringify({ inVault }) });
   }

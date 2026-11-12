@@ -247,6 +247,15 @@ function registerIpc() {
     guarded(async (): Promise<Item[]> => (await client().listAll({ trash: true })).map((it) => ({ ...it, downloaded: false }))),
   );
 
+  ipcMain.handle(
+    'rename',
+    guarded(async (id: string, name: string): Promise<Item> => {
+      const item = await client().rename(id, name);
+      itemCache.set(id, item);
+      return { ...item, downloaded: config.snapshot.downloaded.includes(id) };
+    }),
+  );
+
   ipcMain.handle('vaultOpen', (_e, pin: string): UnlockResult => {
     if (!unlocked) return { ok: false, reason: 'wrong', attemptsLeft: 0 };
     const res = tryUnlock(pin);

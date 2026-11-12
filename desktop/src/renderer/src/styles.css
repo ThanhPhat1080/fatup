@@ -622,6 +622,42 @@ h2 {
   height: 48px;
   padding: 0 0 0 12px;
 }
+.rename {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+  font-weight: 500;
+}
+.rename__input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 2px solid var(--primary);
+  border-radius: 6px;
+  padding: 2px 6px;
+  outline: none;
+}
+.rename__ext {
+  flex: none;
+  color: var(--text-2);
+}
+/* Hover-only on the grid; always visible (but quiet) in the list. */
+.rename-btn {
+  flex: none;
+  color: var(--text-2);
+}
+.tile .rename-btn {
+  opacity: 0;
+}
+.tile:hover .rename-btn,
+.tile:focus-within .rename-btn,
+.rename-btn:focus-visible {
+  opacity: 1;
+}
 .tile__name {
   flex: 1;
   font-weight: 500;

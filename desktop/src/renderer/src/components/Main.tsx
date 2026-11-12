@@ -363,6 +363,18 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     } else toast(errorText(t, res.error), true);
   }
 
+  async function rename(item: Item, name: string) {
+    const res = await window.fatup.rename(item.id, name);
+    if (!res.ok) {
+      if (res.error === 'locked') onLocked();
+      else toast(errorText(t, res.error), true);
+      return;
+    }
+    const apply = (list: Item[] | null) => list?.map((it) => (it.id === item.id ? { ...it, name: res.value.name } : it)) ?? null;
+    setItems(apply);
+    setVaultItems(apply);
+  }
+
   async function copy(item: Item) {
     const res = await window.fatup.copyImage(item.id);
     toast(res.ok ? t.copied : errorText(t, res.error), !res.ok);
@@ -541,7 +553,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           ) : visible.length === 0 ? (
             <EmptyState searching={query !== '' && source.length > 0} trash={inTrash} vault={vaultActive} />
           ) : view === 'grid' ? (
-            <FileGrid groups={groups} selected={selected} onToggle={toggle} onOpen={open} onMenu={openMenu} />
+            <FileGrid groups={groups} selected={selected} onToggle={toggle} onOpen={open} onMenu={openMenu} onRename={inTrash ? undefined : rename} />
           ) : (
             <FileList
               groups={groups}
@@ -549,6 +561,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               onToggle={toggle}
               onOpen={open}
               onMenu={openMenu}
+              onRename={inTrash ? undefined : rename}
               sort={sort}
               onSort={changeSort}
               allSelected={allSelected}

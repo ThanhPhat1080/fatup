@@ -115,3 +115,10 @@ export function fileVisual(name: string, mime: string): FileVisual {
   if (mime.startsWith('text/') || ['txt', 'md', 'json', 'log'].includes(ext)) return 'text';
   return 'other';
 }
+
+/** Splits "photo.final.jpg" into `{ stem: "photo.final", ext: ".jpg" }`. A leading dot (".gitignore") or trailing dot is not an extension. */
+export function splitExt(name: string): { stem: string; ext: string } {
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0 || dot === name.length - 1) return { stem: name, ext: '' };
+  return { stem: name.slice(0, dot), ext: name.slice(dot) };
+}

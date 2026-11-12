@@ -18,6 +18,7 @@ const api: FatupApi = {
   vaultClose: () => ipcRenderer.invoke('vaultClose'),
   listVault: () => ipcRenderer.invoke('listVault'),
   setVault: (id, inVault) => ipcRenderer.invoke('setVault', id, inVault),
+  rename: (id, name) => ipcRenderer.invoke('rename', id, name),
   previewUrl: (id) => ipcRenderer.invoke('previewUrl', id),
   download: (id) => ipcRenderer.invoke('download', id),
   copyImage: (id) => ipcRenderer.invoke('copyImage', id),
