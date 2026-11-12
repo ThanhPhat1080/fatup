@@ -366,8 +366,13 @@ function registerIpc() {
   });
 }
 
+/** Linux needs the window icon spelled out; macOS and Windows take it from the app bundle. */
+const windowIcon = () =>
+  process.platform === 'linux' ? (app.isPackaged ? join(process.resourcesPath, 'icon.png') : join(__dirname, '../../build/icons/512x512.png')) : undefined;
+
 function createWindow() {
   mainWindow = new BrowserWindow({
+    icon: windowIcon(),
     width: 1100,
     height: 740,
     minWidth: 420,

@@ -9,6 +9,10 @@ files:
   - package.json
   - "!**/*.map"
 asar: true
+# The window icon on Linux (taskbar / AppImage, which has no installed .desktop entry) is loaded from here.
+extraResources:
+  - from: build/icons/512x512.png
+    to: icon.png
 mac:
   target: [dmg]
   category: public.app-category.utilities
@@ -24,6 +28,8 @@ nsis:
 linux:
   target: [AppImage, deb]
   category: Utility
+  # A folder of NxN.png files: a lone 1024px icon lands in hicolor/1024x1024, which Ubuntu's icon theme never looks at.
+  icon: icons
   executableName: fatup
   syncDesktopName: true
   maintainer: FatUp
