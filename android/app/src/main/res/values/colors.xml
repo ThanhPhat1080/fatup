@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand">#0B57D0</color>
+    <color name="background">#F8FAFD</color>
+    <color name="text_primary">#1F1F1F</color>
+    <color name="text_secondary">#444746</color>
+    <color name="error">#B3261E</color>
+    <color name="success">#146C2E</color>
+    <color name="launcher_start">#4285F4</color>
+    <color name="launcher_end">#34A853</color>
+</resources>

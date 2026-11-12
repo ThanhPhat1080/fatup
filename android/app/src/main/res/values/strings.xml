@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">FatUp</string>
+    <string name="share_label" translatable="false">FatUp</string>
+    <string name="pair_hint">Open FatUp on your computer, go to Settings → Connect Android, then scan the QR code.</string>
+    <string name="scan_qr">Scan QR code</string>
+    <string name="scan_prompt">Point the camera at the QR code in FatUp on your computer</string>
+    <string name="enter_manually">Enter manually</string>
+    <string name="server_url">Server URL</string>
+    <string name="token">API token</string>
+    <string name="save">Save</string>
+    <string name="connected">Connected</string>
+    <string name="connected_ok">Connected to the server</string>
+    <string name="checking">Checking connection…</string>
+    <string name="test_connection">Test connection</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="disconnect_confirm">This phone will stop sending files until you pair it again.</string>
+    <string name="how_to_title">How to send</string>
+    <string name="how_to_body">1. Open Gallery, Files or any app.\n2. Select one or more photos or files.\n3. Tap Share, then FatUp.\n\nFiles appear on your computer within a minute (or press Refresh there).</string>
+    <string name="channel_uploads">Uploads</string>
+    <string name="sending">Sending…</string>
+    <string name="sending_progress">Sending %1$d/%2$d</string>
+    <string name="send_failed_title">Sending failed</string>
+    <string name="error_not_configured">Connect FatUp to your server first.</string>
+    <string name="error_unauthorized">The server rejected the token. Pair the phone again.</string>
+    <string name="error_network">Cannot reach the server. Check the URL and your connection.</string>
+    <string name="error_invalid_qr">That QR code is not a FatUp code.</string>
+    <string name="error_invalid_input">Enter both the server URL and the token.</string>
+    <plurals name="sending_files">
+        <item quantity="one">Sending %d file to FatUp</item>
+        <item quantity="other">Sending %d files to FatUp</item>
+    </plurals>
+    <plurals name="sent_files">
+        <item quantity="one">Sent %d file</item>
+        <item quantity="other">Sent %d files</item>
+    </plurals>
+    <plurals name="send_failed">
+        <item quantity="one">%d file could not be sent</item>
+        <item quantity="other">%d files could not be sent</item>
+    </plurals>
+    <plurals name="too_large">
+        <item quantity="one">%d file is over 100 MB and was skipped</item>
+        <item quantity="other">%d files are over 100 MB and were skipped</item>
+    </plurals>
+</resources>

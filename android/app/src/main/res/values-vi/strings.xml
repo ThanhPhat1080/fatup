@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pair_hint">Mở FatUp trên máy tính, vào Cài đặt → Kết nối Android, rồi quét mã QR.</string>
+    <string name="scan_qr">Quét mã QR</string>
+    <string name="scan_prompt">Hướng camera vào mã QR trong FatUp trên máy tính</string>
+    <string name="enter_manually">Nhập thủ công</string>
+    <string name="server_url">URL server</string>
+    <string name="token">API token</string>
+    <string name="save">Lưu</string>
+    <string name="connected">Đã kết nối</string>
+    <string name="connected_ok">Đã kết nối tới server</string>
+    <string name="checking">Đang kiểm tra kết nối…</string>
+    <string name="test_connection">Kiểm tra kết nối</string>
+    <string name="disconnect">Ngắt kết nối</string>
+    <string name="disconnect_confirm">Điện thoại sẽ không gửi được file cho tới khi bạn kết nối lại.</string>
+    <string name="how_to_title">Cách gửi</string>
+    <string name="how_to_body">1. Mở Thư viện ảnh, Files hoặc bất kỳ app nào.\n2. Chọn một hoặc nhiều ảnh/file.\n3. Bấm Chia sẻ, chọn FatUp.\n\nFile sẽ hiện trên máy tính trong vòng một phút (hoặc bấm Làm mới ở đó).</string>
+    <string name="channel_uploads">Tải lên</string>
+    <string name="sending">Đang gửi…</string>
+    <string name="sending_progress">Đang gửi %1$d/%2$d</string>
+    <string name="send_failed_title">Gửi thất bại</string>
+    <string name="error_not_configured">Hãy kết nối FatUp với server trước.</string>
+    <string name="error_unauthorized">Server từ chối token. Hãy kết nối lại điện thoại.</string>
+    <string name="error_network">Không kết nối được server. Kiểm tra URL và mạng.</string>
+    <string name="error_invalid_qr">Đây không phải mã QR của FatUp.</string>
+    <string name="error_invalid_input">Nhập đủ URL server và token.</string>
+    <plurals name="sending_files">
+        <item quantity="other">Đang gửi %d file tới FatUp</item>
+    </plurals>
+    <plurals name="sent_files">
+        <item quantity="other">Đã gửi %d file</item>
+    </plurals>
+    <plurals name="send_failed">
+        <item quantity="other">Không gửi được %d file</item>
+    </plurals>
+    <plurals name="too_large">
+        <item quantity="other">%d file lớn hơn 100 MB nên bị bỏ qua</item>
+    </plurals>
+</resources>
