@@ -43,7 +43,8 @@ function makeThumbnail(path: string): Buffer | null {
 
 const uploads = new UploadManager({
   client: () => client(),
-  device: hostname().slice(0, 64) || null,
+  // Shown as "From" in the file list. FATUP_DEVICE_NAME overrides it (handy for demos); "Tracys-MacBook-Air.local" becomes "Tracys-MacBook-Air".
+  device: (process.env.FATUP_DEVICE_NAME || hostname().replace(/\.local$/i, '')).slice(0, 64) || null,
   thumbnail: makeThumbnail,
   onChange: (jobs) => mainWindow?.webContents.send('uploads', jobs),
 });

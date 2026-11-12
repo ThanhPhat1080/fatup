@@ -1,6 +1,6 @@
 # FatUp
 
-Gửi ảnh và file từ **điện thoại Android** sang **máy tính** (macOS, Ubuntu, Windows) chỉ bằng nút **Chia sẻ**. Dành cho dùng cá nhân.
+Gửi ảnh và file giữa **điện thoại Android** và **máy tính** (macOS, Ubuntu, Windows) qua một server cá nhân trên Cloudflare, miễn phí. Có thêm **bản web cài được như app (PWA)** (Phase 2).
 
 | Danh sách (sáng) | Lưới ảnh (tối) |
 |---|---|
@@ -8,18 +8,47 @@ Gửi ảnh và file từ **điện thoại Android** sang **máy tính** (macOS
 | **Xem ảnh** | **Kết nối Android bằng QR** |
 | ![](docs/screenshots/lightbox.png) | ![](docs/screenshots/settings-qr.png) |
 
-- Android: chọn ảnh/file → **Chia sẻ → FatUp**. Mất mạng thì app xếp hàng rồi tự gửi lại.
-- Máy tính: mở app, nhập **PIN 4 số**. File xếp mới nhất lên đầu, nhóm theo ngày, chia tab **Tất cả / Ảnh / File**.
-- File tự xóa sau **30 ngày**. Giới hạn **100 MB/file**.
-- Giao diện En/Vi, sáng/tối theo hệ điều hành.
+> Ảnh chụp ở trên là của bản đầu, giao diện hiện tại đã có thêm thùng rác, két sắt, thanh dung lượng, chọn nhiều file và chế độ tối chọn được.
+
+## Tính năng
+
+- **Android → máy tính:** chọn ảnh/file → **Chia sẻ → FatUp**. Mất mạng thì app xếp hàng rồi tự gửi lại.
+- **Máy tính → cloud:** nút **Tải lên**, `Ctrl/⌘+U` hoặc kéo-thả file vào cửa sổ. Có bảng tiến trình kiểu Google Drive, hủy được từng file.
+- **Danh sách:** mới nhất lên đầu, nhóm theo ngày, tab **Tất cả / Ảnh / File**, tìm kiếm không phân biệt dấu, chế độ lưới hoặc danh sách. Bấm tiêu đề cột để **sắp xếp** theo Tên / Tải lên / Dung lượng.
+- **Chọn nhiều file:** mỗi file có checkbox. `Shift`+bấm chọn một dãy, `Ctrl/⌘+A` chọn tất cả. Chuyển vào thùng rác hoặc két sắt hàng loạt.
+- **Xem ảnh:** vừa khung, zoom 10–800% (nút, lăn chuột, `+`/`-`, phím **↓ phóng to / ↑ thu nhỏ**), kéo để di chuyển, `←`/`→` chuyển ảnh, bảng **Chi tiết** (tên, loại, dung lượng, kích thước, thời gian, thiết bị).
+- **Thùng rác:** xóa file là chuyển vào thùng rác, khôi phục được trong 30 ngày. Xem [bên dưới](#thùng-rác-trash).
+- **Két sắt (Secret Vault):** cất file ra khỏi danh sách chính, mỗi lần mở phải nhập lại PIN. Xem [bên dưới](#két-sắt-secret-vault).
+- **Thanh dung lượng (Store):** cạnh ô tìm kiếm, cho biết đã dùng bao nhiêu GB trên R2: xanh, **cam từ 70%**, **đỏ từ 90%**.
+- **Giao diện:** En/Vi, **sáng/tối** (công tắc mặt trời/mặt trăng trong Cài đặt, mặc định theo hệ điều hành). Bấm logo FatUp để về trang chủ.
+- **Kiểm tra cập nhật** trong Cài đặt (app máy tính). File tự xóa sau **30 ngày**, giới hạn **100 MB/file**.
+
+### Thùng rác (Trash)
+
+- **Xóa = chuyển vào thùng rác**, không xóa thật và không hỏi xác nhận. Thông báo hiện nút **Hoàn tác** trong vài giây.
+- Mở thùng rác bằng biểu tượng thùng rác ở thanh trên cùng (nút ← để quay lại). Ở đó bạn **Khôi phục** file về danh sách chính, **Xóa vĩnh viễn** từng file hoặc nhiều file, hay **Dọn sạch thùng rác**. Xóa vĩnh viễn và dọn sạch đều có hộp xác nhận vì không hoàn tác được.
+- File trong thùng rác chưa mở/tải được, phải khôi phục trước.
+- File nằm trong thùng rác **30 ngày thì bị xóa vĩnh viễn** (cron chạy 03:00 UTC mỗi ngày). File được khôi phục thì được tính lại 30 ngày kể từ lúc khôi phục, nên file cũ khôi phục xong sẽ không bị xóa ngay đêm đó.
+- File trong thùng rác vẫn chiếm dung lượng R2 cho đến khi bị xóa vĩnh viễn.
+
+### Két sắt (Secret Vault)
+
+Một khu vực để **cất file ra khỏi danh sách chính**. Chỉ xem được sau khi nhập lại mã PIN.
+
+- **Cất vào:** menu `⋮`/chuột phải, hoặc thanh chọn nhiều file → **Chuyển vào Két sắt**. File biến mất khỏi danh sách chính.
+- **Mở két:** bấm biểu tượng két sắt cạnh thùng rác, app luôn bắt nhập lại PIN (kể cả khi app đang mở khóa). Thoát ra (nút ←, bấm logo, vào thùng rác, khóa app) là két đóng lại, lần sau phải nhập PIN lại. Sai PIN dùng chung giới hạn 5 lần / khóa 30 giây với màn hình khóa.
+- **Trong két:** xem, tải, copy ảnh, tìm kiếm, chọn nhiều file như bình thường. Có **Đưa ra khỏi Két sắt** để trả file về danh sách chính. Tải file lên khi đang mở két thì file vào thẳng két.
+- **Xóa file trong két:** file ra khỏi két và vào thùng rác thường. Bấm **Hoàn tác** sẽ đưa nó về két.
+- **Lưu ý quan trọng:** két sắt là lớp che ở giao diện app, **không phải mã hóa**. File vẫn nằm bình thường trên R2, và ai có API token (ví dụ app Android hay client khác) vẫn có thể thấy chúng qua API. File trong két vẫn tính vào dung lượng và vẫn tự xóa sau 30 ngày như mọi file.
 
 Thiết kế chi tiết nằm ở [SPEC.md](SPEC.md).
 
 ## Cấu trúc
 
 ```
-worker/    Cloudflare Worker (Hono) + D1 (metadata) + R2 (file)
+worker/    Cloudflare Worker (Hono) + D1 (metadata) + R2 (file); phục vụ luôn bản web
 desktop/   App Electron (electron-vite + React + TS)
+web/       Bản web PWA, dùng chung giao diện với desktop
 android/   App Android (Kotlin, chỉ có share target + màn hình kết nối)
 shared/    Kiểu dữ liệu API dùng chung
 ```
@@ -140,7 +169,7 @@ Lệnh in ra URL kiểu `https://fatup.<tên-bạn>.workers.dev`. Kiểm tra nha
 curl https://fatup.<tên-bạn>.workers.dev/health
 ```
 
-Kết quả đúng là `{"ok":true}`. Cron xóa file cũ chạy lúc 03:00 UTC mỗi ngày.
+Kết quả đúng là `{"ok":true}`. Cron dọn dẹp chạy lúc 03:00 UTC mỗi ngày: xóa file quá 30 ngày kể từ lúc tải lên, file đã nằm trong thùng rác quá 30 ngày, và các lượt tải lên dở dang quá 24 giờ.
 
 ### Bước 9. Dùng bản web (PWA)
 
@@ -149,7 +178,7 @@ Kết quả đúng là `{"ok":true}`. Cron xóa file cũ chạy lúc 03:00 UTC m
 1. Ô URL đã điền sẵn, bạn chỉ cần dán token (chuỗi tạo ở bước 7) rồi đặt PIN 4 số.
 2. Cài như một app: Chrome/Edge chọn **Install app**, Safari (iPhone) chọn **Share → Add to Home Screen**.
 
-Bản web xem, tải về và xóa file giống app máy tính, nhưng không có phần cập nhật và ghép QR cho Android.
+Bản web xem, tải về, xóa (thùng rác), két sắt, chọn nhiều file và sắp xếp giống app máy tính, nhưng **chưa có tải file lên**, kiểm tra cập nhật và ghép QR cho Android.
 
 **Lưu ý bảo mật:** token được mã hóa bằng PIN rồi lưu trong trình duyệt. PIN 4 số chỉ là khóa che màn hình, không chống được người có quyền truy cập vào dữ liệu trình duyệt của bạn. Đừng dùng bản web trên máy dùng chung.
 
@@ -157,7 +186,7 @@ Bản web xem, tải về và xóa file giống app máy tính, nhưng không c�
 
 ### Nâng cấp server từ bản cũ
 
-Mỗi lần có bản mới, chạy lại hai lệnh này trong `worker/` theo đúng thứ tự (migration trước, deploy sau). Bản có **thùng rác** cần thêm cột mới trong database, nên deploy mà chưa migrate thì server sẽ lỗi:
+Mỗi lần có bản mới, chạy lại hai lệnh này trong `worker/`, **theo đúng thứ tự: migration trước, deploy sau**. Các bản mới thêm cột vào database (thùng rác: migration `0002`, két sắt: migration `0003`), nên deploy mà chưa migrate thì server sẽ lỗi:
 
 ```bash
 npm run db:migrate:remote
@@ -167,9 +196,11 @@ npm run db:migrate:remote
 npm run deploy
 ```
 
-Xóa file giờ là chuyển vào thùng rác (khôi phục được). File nằm trong thùng rác 30 ngày thì bị xóa vĩnh viễn lúc 03:00 UTC hằng ngày. File được khôi phục sẽ có thêm 30 ngày kể từ lúc khôi phục.
+Ghi chú:
 
-**Két sắt (Vault):** biểu tượng két sắt cạnh thùng rác. Dùng "Chuyển vào Két sắt" để cất file ra khỏi danh sách chính. Mỗi lần mở Két sắt app đều bắt nhập lại mã PIN, và thoát ra là đóng lại. Tải file lên khi đang mở Két sắt thì file vào thẳng đó. Lưu ý đây là lớp che trên giao diện app, không phải mã hóa: file vẫn lưu bình thường trên R2, và ai có API token (ví dụ app Android) vẫn có thể thấy chúng qua API. File trong Két sắt vẫn bị xóa sau 30 ngày như mọi file khác, và khi bạn xóa file từ Két sắt thì nó ra khỏi Két sắt và vào thùng rác thường. Tính năng này cần chạy migration `0003` (lệnh `db:migrate:remote` ở trên).
+- App máy tính bản cũ (trước khi có thùng rác) nối vào server mới vẫn xóa được file, nhưng file đi vào thùng rác chứ không bị xóa hẳn, và app cũ không có giao diện thùng rác. Hãy cập nhật app trên mọi máy.
+- **Thanh dung lượng** dùng đường `/usage` của server. Nếu server chưa deploy bản mới, app tự cộng dung lượng các file nó thấy. Giới hạn hiển thị mặc định là 10 GB (gói miễn phí của R2); muốn đổi thì thêm `R2_QUOTA_GB = "50"` vào mục `[vars]` của `worker/wrangler.toml`.
+- Số dung lượng lấy từ database nên không tính ảnh xem trước và có thể lệch nhẹ so với dashboard Cloudflare.
 
 ## 2. Cài app máy tính
 
@@ -183,6 +214,8 @@ Tải bản cài trong mục [Releases](https://github.com/ThanhPhat1080/fatup/r
 
 - **Windows** (`.exe`): SmartScreen sẽ cảnh báo, chọn **More info → Run anyway**.
 - **Ubuntu**: dùng file `.deb` (`sudo apt install ./FatUp-*.deb`) hoặc `AppImage` (`chmod +x` rồi chạy).
+
+**Cập nhật:** vào **⚙ Cài đặt → Kiểm tra cập nhật**. Windows và Linux AppImage tự tải và cài, macOS và `.deb` thì mở trang tải về. Chỉ thấy bản mới sau khi bản release được **Publish** (không phải draft).
 
 Lần đầu mở app: dán **URL Worker** và **API token** → **Tiếp** → đặt **PIN 4 số**. Mỗi máy có PIN riêng. Quên PIN thì bấm "Quên PIN? Đặt lại" rồi nhập lại token.
 
@@ -232,7 +265,7 @@ npm test
 npm run -w @fatup/desktop e2e
 ```
 
-Lệnh `e2e` build app rồi điều khiển nó bằng Playwright, dùng một API giả. Trên Linux không có màn hình thì chạy qua `xvfb-run -a`. Đặt biến `SCREENSHOT_DIR=…` để lưu ảnh chụp từng màn hình.
+Lệnh `e2e` build app rồi điều khiển nó bằng Playwright, dùng một API giả. **Lưu ý:** script này viết từ bản đầu và chưa được cập nhật theo giao diện mới (thùng rác, két sắt, chọn nhiều file…), nên có thể fail ở các bước đó. Trên Linux không có màn hình thì chạy qua `xvfb-run -a`. Đặt biến `SCREENSHOT_DIR=…` để lưu ảnh chụp từng màn hình.
 
 Android (cần JDK 21 và Android SDK có `platforms;android-37.0`):
 
@@ -258,7 +291,10 @@ Sau đó thêm 4 secret vào repo (Settings → Secrets and variables → Action
 
 ## Bảo mật (tóm tắt)
 
-- Mọi request API đều cần token dài 32 byte. PIN 4 số chỉ khóa giao diện trên máy tính và không bao giờ rời khỏi máy.
+- Mọi request API đều cần token dài 32 byte. **Ai có token thì đọc và xóa được mọi file**, kể cả file trong Két sắt.
+- PIN 4 số chỉ khóa giao diện, không bao giờ rời khỏi thiết bị. Sai 5 lần thì khóa 30 giây. Két sắt dùng chính PIN này nhưng bắt nhập lại mỗi lần mở.
 - Token trên máy tính được mã hóa bằng keychain của hệ điều hành (Electron `safeStorage`). Trên Linux không có keyring thì app lưu dạng base64.
 - Token trên Android nằm trong storage riêng của app và bị loại khỏi backup.
-- Ai có token thì đọc được file của bạn. Lộ token thì tạo token mới bằng `npm run token:new` và `wrangler secret put API_TOKEN`, rồi kết nối lại các thiết bị.
+- Token trên bản web được mã hóa bằng PIN (AES-GCM, PBKDF2) rồi lưu trong trình duyệt. PIN 4 số chỉ có 10.000 tổ hợp nên chỉ che màn hình, không chống được người đọc được dữ liệu trình duyệt của bạn. Đừng dùng bản web trên máy dùng chung.
+- **Két sắt không mã hóa nội dung file** (xem phần Két sắt ở trên).
+- Lộ token thì tạo token mới bằng `npm run token:new` và `wrangler secret put API_TOKEN`, rồi kết nối lại các thiết bị.

@@ -532,11 +532,6 @@ h2 {
 .sort-head--on {
   color: var(--text);
 }
-.list__row--selected,
-.list__row--selected:not(.list__row--head):hover {
-  background: var(--primary-container);
-  border-radius: 8px;
-}
 .tile__check {
   display: none;
 }
@@ -1369,4 +1364,11 @@ h2 {
   .upload-btn {
     padding: 0 12px;
   }
+}
+
+/* Placed last so a selected row keeps its colour while hovered. */
+.list__row--selected,
+.list__row--selected:not(.list__row--head):hover {
+  background: var(--primary-container);
+  border-radius: 8px;
 }
