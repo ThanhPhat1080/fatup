@@ -36,6 +36,38 @@ export function groupByDay<T extends { createdAt: number }>(
   return groups;
 }
 
+export type SortKey = 'name' | 'createdAt' | 'size';
+export type SortState = { key: SortKey; dir: 'asc' | 'desc' };
+export const DEFAULT_SORT: SortState = { key: 'createdAt', dir: 'desc' };
+
+/** Returns a sorted copy. Name uses natural, accent-insensitive order ("img2" before "img10"); ties fall back to name then id. */
+export function sortItems<T extends { id: string; name: string; size: number; createdAt: number }>(items: T[], sort: SortState): T[] {
+  const sign = sort.dir === 'asc' ? 1 : -1;
+  const byName = (a: T, b: T) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  return [...items].sort((a, b) => {
+    const primary = sort.key === 'name' ? byName(a, b) : a[sort.key] - b[sort.key];
+    return sign * primary || byName(a, b) || (a.id < b.id ? -1 : 1);
+  });
+}
+
+/** One unlabeled bucket, for sort orders where day headings make no sense. */
+export function singleGroup<T>(items: T[]): DateGroup<T>[] {
+  return items.length ? [{ key: 'all', label: '', items }] : [];
+}
+
+export type UsageLevel = 'ok' | 'warn' | 'crit';
+
+/** Green below 70% used, orange from 70%, red from 90%. */
+export function usageLevel(used: number, limit: number): UsageLevel {
+  const ratio = limit > 0 ? used / limit : 0;
+  return ratio >= 0.9 ? 'crit' : ratio >= 0.7 ? 'warn' : 'ok';
+}
+
+/** Decimal gigabytes with two decimals, e.g. "1.23" (locale-aware separator). */
+export function formatGb(bytes: number, locale: string): string {
+  return new Intl.NumberFormat(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(bytes / 1e9);
+}
+
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB'];

@@ -1,12 +1,14 @@
 /** Contract between the preload bridge and the renderer. */
-import type { FileItem } from '@fatup/shared';
+import type { FileItem, UsageResponse } from '@fatup/shared';
 
 export type Lang = 'auto' | 'en' | 'vi';
+export type Theme = 'system' | 'light' | 'dark';
 export type ViewMode = 'grid' | 'list';
 export type Tab = 'all' | 'image' | 'file';
 
 export type Prefs = {
   lang: Lang;
+  theme: Theme;
   viewModes: Record<Tab, ViewMode>;
 };
 
@@ -23,6 +25,8 @@ export type AppState = {
   serverUrl: string | null;
 };
 
+export type Usage = UsageResponse;
+
 export type Item = FileItem & { downloaded: boolean };
 
 export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string; detail?: string };
@@ -37,6 +41,16 @@ export type UpdateCheck =
   | { status: 'available'; current: string; version: string; auto: boolean }
   | { status: 'error'; detail?: string };
 
+export type UploadJob = {
+  id: string;
+  name: string;
+  size: number;
+  sent: number;
+  state: 'queued' | 'uploading' | 'done' | 'error' | 'canceled';
+  /** Error code (see errorText) when state is 'error'. */
+  error?: string;
+};
+
 export type UpdateProgress = { percent: number };
 
 export type FatupApi = {
@@ -50,11 +64,33 @@ export type FatupApi = {
   changePin(oldPin: string, newPin: string): Promise<UnlockResult>;
   setPrefs(prefs: Partial<Prefs>): Promise<Prefs>;
   list(): Promise<Result<Item[]>>;
+  listTrash(): Promise<Result<Item[]>>;
+  usage(): Promise<Result<Usage>>;
+  /** Re-checks the PIN and opens the Vault for this session. Shares the PIN attempt limit with the lock screen. */
+  vaultOpen(pin: string): Promise<UnlockResult>;
+  vaultClose(): Promise<void>;
+  /** Fails with error 'vault_locked' unless vaultOpen succeeded. */
+  listVault(): Promise<Result<Item[]>>;
+  setVault(id: string, inVault: boolean): Promise<Result>;
   previewUrl(id: string): Promise<Result<string>>;
   download(id: string): Promise<Result<string>>;
   copyImage(id: string): Promise<Result>;
+  /** Moves a file to the trash (it can be restored for 30 days). */
   remove(id: string): Promise<Result>;
+  restore(id: string): Promise<Result>;
+  removeForever(id: string): Promise<Result>;
+  emptyTrash(): Promise<Result<number>>;
   pairingQr(pin: string): Promise<UnlockResult & { qr?: string }>;
+  /** Opens the system file picker and queues the chosen files for upload. */
+  uploadPick(vault?: boolean): Promise<void>;
+  /** Queues files by absolute path (used for drag and drop). */
+  uploadPaths(paths: string[], vault?: boolean): Promise<void>;
+  uploadCancel(id: string): Promise<void>;
+  uploadClear(): Promise<void>;
+  uploadList(): Promise<UploadJob[]>;
+  onUploads(cb: (jobs: UploadJob[]) => void): () => void;
+  /** Absolute paths of dropped File objects (empty entries are skipped). */
+  pathsForFiles(files: File[]): string[];
   appVersion(): Promise<string>;
   checkForUpdate(): Promise<UpdateCheck>;
   /** Downloads and installs the update (restarting the app), or opens the release page when auto-install isn't possible. */

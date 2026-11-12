@@ -2,6 +2,7 @@
 
 export const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
 export const RETENTION_DAYS = 30;
+export const TRASH_RETENTION_DAYS = 30;
 export const PENDING_TTL_HOURS = 24;
 export const DEFAULT_PAGE_SIZE = 100;
 export const MAX_PAGE_SIZE = 200;
@@ -24,6 +25,10 @@ export type FileItem = {
   device: string | null;
   /** Epoch milliseconds at which the upload completed. */
   createdAt: number;
+  /** Epoch milliseconds at which it was moved to the trash, or null when it is not in the trash. */
+  deletedAt: number | null;
+  /** True when the file lives in the Vault (hidden from the main list). */
+  inVault: boolean;
 };
 
 export type CreateUploadRequest = {
@@ -44,6 +49,17 @@ export type ListFilesResponse = {
   items: FileItem[];
   nextCursor: string | null;
 };
+
+/** R2's free tier includes 10 GB of storage. */
+export const DEFAULT_QUOTA_BYTES = 10_000_000_000;
+
+export type UsageResponse = {
+  /** Bytes held by uploaded files, including those still in the trash. */
+  usedBytes: number;
+  limitBytes: number;
+};
+
+export type EmptyTrashResponse = { deleted: number };
 
 export type DownloadResponse = { url: string };
 

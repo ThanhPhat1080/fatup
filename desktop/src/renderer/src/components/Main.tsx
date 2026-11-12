@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { LayoutGrid, List, RotateCw, Search, Settings as SettingsIcon, X } from 'lucide-react';
-import type { AppState, Item, Prefs, Tab } from '../../../shared-ipc';
-import { groupByDay, matchesQuery } from '../lib/format';
+import { ArrowLeft, LayoutGrid, List, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Trash2, Upload, UploadCloud, X } from 'lucide-react';
+import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shared-ipc';
+import { DEFAULT_QUOTA_BYTES } from '@fatup/shared';
+import { DEFAULT_SORT, groupByDay, matchesQuery, singleGroup, sortItems, type SortKey, type SortState } from '../lib/format';
 import { errorText, useI18n } from '../lib/i18n';
 import { ConfirmDialog } from './Dialog';
 import { EmptyState, FileGrid, FileList } from './Files';
@@ -9,7 +10,11 @@ import { Lightbox } from './Lightbox';
 import { Logo } from './Logo';
 import { ContextMenu, type MenuState } from './Menu';
 import { Settings } from './Settings';
+import { VaultIcon } from './VaultIcon';
+import { VaultGate } from './VaultGate';
+import { StorageMeter } from './StorageMeter';
 import { useToast } from './Toast';
+import { UploadPanel } from './UploadPanel';
 
 const POLL_MS = 60_000;
 const FOCUS_REFRESH_MIN_GAP_MS = 5_000;
@@ -24,25 +29,59 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [lightboxId, setLightboxId] = useState<string | null>(null);
-  const [toDelete, setToDelete] = useState<Item | null>(null);
+  const [trashItems, setTrashItems] = useState<Item[] | null>(null);
+  const [inTrash, setInTrash] = useState(false);
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [inVault, setInVault] = useState(false);
+  const [vaultUnlocked, setVaultUnlocked] = useState(false);
+  const [vaultItems, setVaultItems] = useState<Item[] | null>(null);
+  const vaultActive = inVault && vaultUnlocked;
+  const vaultActiveRef = useRef(false);
+  vaultActiveRef.current = vaultActive;
+  const [confirm, setConfirm] = useState<{ kind: 'forever'; items: Item[] } | { kind: 'empty' } | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [uploadJobs, setUploadJobs] = useState<UploadJob[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const canUpload = state.platform === 'desktop';
+  const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  // Prefer the server's figure; if it isn't available (e.g. an older server), add up the files we already have.
+  const shownUsage = useMemo<Usage | null>(() => {
+    if (usage) return usage;
+    if (items === null) return null;
+    const total = [...items, ...(trashItems ?? []), ...(vaultItems ?? [])].reduce((sum, it) => sum + it.size, 0);
+    return { usedBytes: total, limitBytes: DEFAULT_QUOTA_BYTES };
+  }, [usage, items, trashItems, vaultItems]);
+  const lastPicked = useRef<string | null>(null);
   const lastRefresh = useRef(0);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
     lastRefresh.current = Date.now();
     setLoading(true);
-    const res = await window.fatup.list();
+    const [res, trashRes, usageRes, vaultRes] = await Promise.all([
+      window.fatup.list(),
+      window.fatup.listTrash(),
+      window.fatup.usage(),
+      vaultActive ? window.fatup.listVault() : Promise.resolve(null),
+    ]);
     setLoading(false);
+    if (vaultRes) {
+      if (vaultRes.ok) setVaultItems(vaultRes.value);
+      else if (vaultRes.error === 'vault_locked') setVaultUnlocked(false);
+      else if (vaultRes.error !== 'locked') setError(errorText(t, vaultRes.error));
+    }
     if (res.ok) {
       setItems(res.value);
+      if (trashRes.ok) setTrashItems(trashRes.value);
+      if (usageRes.ok) setUsage(usageRes.value);
       setError(null);
     } else if (res.error === 'locked') {
       onLocked();
     } else {
       setError(errorText(t, res.error));
     }
-  }, [onLocked, t]);
+  }, [onLocked, t, vaultActive]);
 
   useEffect(() => {
     refresh();
@@ -72,13 +111,244 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     return () => window.removeEventListener('keydown', onKey);
   }, [refresh]);
 
-  const visible = useMemo(
-    () => (items ?? []).filter((it) => (tab === 'all' || it.kind === tab) && matchesQuery(it.name, query)),
-    [items, tab, query],
+  // In the trash the "time" shown and sorted on is when a file was deleted, so we feed it through createdAt.
+  const source = useMemo(
+    () => (inTrash ? (trashItems ?? []).map((it) => ({ ...it, createdAt: it.deletedAt ?? it.createdAt })) : inVault ? (vaultItems ?? []) : (items ?? [])),
+    [inTrash, inVault, trashItems, vaultItems, items],
   );
-  const groups = useMemo(() => groupByDay(visible, Date.now(), t, locale), [visible, t, locale]);
+  const loaded = inTrash ? trashItems !== null : inVault ? vaultItems !== null : items !== null;
+  const visible = useMemo(
+    () => source.filter((it) => (inTrash || tab === 'all' || it.kind === tab) && matchesQuery(it.name, query)),
+    [source, inTrash, tab, query],
+  );
+  const sorted = useMemo(() => sortItems(visible, sort), [visible, sort]);
+  // Day headings only make sense when ordered by upload time.
+  const groups = useMemo(
+    () => (sort.key === 'createdAt' ? groupByDay(sorted, Date.now(), t, locale) : singleGroup(sorted)),
+    [sorted, sort.key, t, locale],
+  );
+
+  // Selection only ever acts on what's currently visible, so a filter can't hide files from a bulk delete.
+  const picked = useMemo(() => sorted.filter((it) => selected.has(it.id)), [sorted, selected]);
+  const allSelected = sorted.length > 0 && picked.length === sorted.length;
+
+  const toggle = useCallback(
+    (item: Item, range: boolean) => {
+      setSelected((prev) => {
+        const next = new Set(prev);
+        const from = lastPicked.current ? sorted.findIndex((it) => it.id === lastPicked.current) : -1;
+        if (range && from >= 0) {
+          const to = sorted.findIndex((it) => it.id === item.id);
+          for (const it of sorted.slice(Math.min(from, to), Math.max(from, to) + 1)) next.add(it.id);
+        } else if (next.has(item.id)) next.delete(item.id);
+        else next.add(item.id);
+        return next;
+      });
+      lastPicked.current = item.id;
+    },
+    [sorted],
+  );
+  const selectAll = useCallback(() => setSelected(new Set(sorted.map((it) => it.id))), [sorted]);
+  const clearSelection = useCallback(() => {
+    setSelected(new Set());
+    lastPicked.current = null;
+  }, []);
+  const changeSort = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' ? 'asc' : 'desc' }));
+
+  // Drop selections for files that no longer exist (deleted elsewhere, expired).
+  useEffect(() => {
+    const ids = new Set(source.map((it) => it.id));
+    setSelected((prev) => (Array.from(prev).every((id) => ids.has(id)) ? prev : new Set(Array.from(prev).filter((id) => ids.has(id)))));
+  }, [source]);
+
+  // The Vault closes whenever you leave it, so coming back always asks for the PIN again.
+  const leaveVault = useCallback(() => {
+    void window.fatup.vaultClose();
+    setInVault(false);
+    setVaultUnlocked(false);
+    setVaultItems(null);
+  }, []);
+  useEffect(() => () => void window.fatup.vaultClose(), []);
+
+  const toggleTrash = () => {
+    if (inVault) leaveVault();
+    setInTrash((v) => !v);
+    clearSelection();
+  };
+  /** The FatUp logo: back to the plain file list, with nothing filtered, selected or open. */
+  const goHome = () => {
+    if (inVault) leaveVault();
+    setInTrash(false);
+    setTab('all');
+    setQuery('');
+    setSettingsOpen(false);
+    setLightboxId(null);
+    setMenu(null);
+    clearSelection();
+  };
+  const toggleVault = () => {
+    if (inVault) leaveVault();
+    else {
+      setInTrash(false);
+      setInVault(true);
+    }
+    clearSelection();
+  };
+
+  /** Runs `fn` over the targets four at a time; returns the ids that succeeded. "Already gone" counts as success. */
+  async function batch(targets: Item[], fn: (id: string) => Promise<{ ok: boolean; error?: string }>) {
+    const done = new Set<string>();
+    let locked = false;
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < targets.length) {
+        const item = targets[cursor++];
+        const res = await fn(item.id);
+        if (res.ok || res.error === 'not_found') done.add(item.id);
+        else if (res.error === 'locked') locked = true;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, targets.length) }, worker));
+    if (locked) onLocked();
+    return { done, failed: targets.length - done.size, locked };
+  }
+
+  const report = (ok: number, failed: number, success: string, action?: { label: string; onClick: () => void }) =>
+    failed === 0 ? toast(success, false, action) : toast(t.partialFail(ok, failed), true);
+
+  async function restoreMany(targets: Item[], backToVault = false) {
+    const { done, failed, locked } = await batch(targets, (id) => window.fatup.restore(id));
+    if (locked) return;
+    // Deleting takes a file out of the Vault, so an "Undo" has to put it back.
+    if (backToVault) await batch(targets.filter((it) => done.has(it.id)), (id) => window.fatup.setVault(id, true));
+    setTrashItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
+    clearSelection();
+    report(done.size, failed, t.restored(done.size));
+    refresh();
+  }
+
+  /** Moves files to the trash. No confirmation: the toast offers Undo. */
+  async function moveToTrash(targets: Item[]) {
+    if (targets.length === 0) return;
+    setLightboxId((id) => (id && targets.some((it) => it.id === id) ? null : id));
+    const { done, failed, locked } = await batch(targets, (id) => window.fatup.remove(id));
+    if (locked) return;
+    setItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
+    setVaultItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
+    clearSelection();
+    const moved = targets.filter((it) => done.has(it.id));
+    const fromVault = vaultActive;
+    report(done.size, failed, t.movedToTrash(done.size), {
+      label: t.undo,
+      onClick: () => void restoreMany(moved, fromVault),
+    });
+    refresh();
+  }
+
+  async function moveToVault(targets: Item[]) {
+    if (targets.length === 0) return;
+    setLightboxId(null);
+    const { done, failed, locked } = await batch(targets, (id) => window.fatup.setVault(id, true));
+    if (locked) return;
+    setItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
+    clearSelection();
+    report(done.size, failed, t.movedToVault(done.size));
+    refresh();
+  }
+
+  async function removeFromVault(targets: Item[]) {
+    if (targets.length === 0) return;
+    setLightboxId(null);
+    const { done, failed, locked } = await batch(targets, (id) => window.fatup.setVault(id, false));
+    if (locked) return;
+    setVaultItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
+    clearSelection();
+    report(done.size, failed, t.removedFromVault(done.size));
+    refresh();
+  }
+
+  async function foreverMany(targets: Item[]) {
+    setConfirm(null);
+    const { done, failed, locked } = await batch(targets, (id) => window.fatup.removeForever(id));
+    if (locked) return;
+    setTrashItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
+    clearSelection();
+    report(done.size, failed, t.trashEmptied(done.size));
+  }
+
+  async function emptyTrashNow() {
+    setConfirm(null);
+    const res = await window.fatup.emptyTrash();
+    if (!res.ok) {
+      if (res.error === 'locked') return onLocked();
+      return toast(errorText(t, res.error), true);
+    }
+    setTrashItems([]);
+    clearSelection();
+    toast(t.trashEmptied(res.value));
+  }
+
+  // Uploads: mirror the queue from the main process and refresh the list whenever one finishes.
+  const doneCount = uploadJobs.filter((j) => j.state === 'done').length;
+  const prevDone = useRef(0);
+  useEffect(() => {
+    if (!canUpload) return;
+    window.fatup.uploadList().then(setUploadJobs);
+    return window.fatup.onUploads(setUploadJobs);
+  }, [canUpload]);
+  useEffect(() => {
+    if (doneCount > prevDone.current) refresh();
+    prevDone.current = doneCount;
+  }, [doneCount, refresh]);
+
+  // Drag files from the OS onto the window; Ctrl/Cmd+U opens the picker.
+  useEffect(() => {
+    if (!canUpload) return;
+    let depth = 0;
+    const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+    const enter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth++;
+      setDragging(true);
+    };
+    const over = (e: DragEvent) => hasFiles(e) && e.preventDefault();
+    const leave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) setDragging(false);
+    };
+    const drop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      setDragging(false);
+      const paths = window.fatup.pathsForFiles(Array.from(e.dataTransfer?.files ?? []));
+      if (paths.length > 0) window.fatup.uploadPaths(paths, vaultActiveRef.current);
+    };
+    const key = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'u') {
+        e.preventDefault();
+        window.fatup.uploadPick(vaultActiveRef.current);
+      }
+    };
+    window.addEventListener('dragenter', enter);
+    window.addEventListener('dragover', over);
+    window.addEventListener('dragleave', leave);
+    window.addEventListener('drop', drop);
+    window.addEventListener('keydown', key);
+    return () => {
+      window.removeEventListener('dragenter', enter);
+      window.removeEventListener('dragover', over);
+      window.removeEventListener('dragleave', leave);
+      window.removeEventListener('drop', drop);
+      window.removeEventListener('keydown', key);
+    };
+  }, [canUpload]);
+
   const images = useMemo(() => visible.filter((it) => it.kind === 'image'), [visible]);
-  const view = state.prefs.viewModes[tab];
+  const modeKey: Tab = inTrash ? 'all' : tab;
+  const view = state.prefs.viewModes[modeKey];
 
   const inFlight = useRef(new Set<string>());
 
@@ -98,18 +368,39 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     toast(res.ok ? t.copied : errorText(t, res.error), !res.ok);
   }
 
-  async function remove(item: Item) {
-    setToDelete(null);
-    setLightboxId((id) => (id === item.id ? null : id));
-    const res = await window.fatup.remove(item.id);
-    if (res.ok || res.error === 'not_found') {
-      setItems((list) => list?.filter((it) => it.id !== item.id) ?? null);
-      toast(t.deleted);
-    } else toast(errorText(t, res.error), true);
-  }
+  // Keyboard: Ctrl/Cmd+A selects everything shown, Esc clears, Delete removes the selection.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) && (e.target as HTMLInputElement).type !== 'checkbox';
+      const overlay = lightboxId || settingsOpen || menu || confirm || (inVault && !vaultUnlocked);
+      if (typing || overlay) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        selectAll();
+      } else if (e.key === 'Escape') clearSelection();
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && picked.length > 0) {
+        if (inTrash) setConfirm({ kind: 'forever', items: picked });
+        else void moveToTrash(picked);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lightboxId, settingsOpen, menu, confirm, picked, inTrash, inVault, vaultUnlocked, selectAll, clearSelection]);
 
-  const open = (item: Item) => (item.kind === 'image' ? setLightboxId(item.id) : download(item));
+  // Trashed files can't be opened; restore them first.
+  const open = (item: Item) => (inTrash ? undefined : item.kind === 'image' ? setLightboxId(item.id) : download(item));
   const openMenu = (item: Item, x: number, y: number) => setMenu({ item, x, y });
+
+  // "← Vault", the same header the Trash has.
+  const vaultBackBar = (
+    <div className="trashbar">
+      <button className="icon-btn" onClick={toggleVault} title={t.backToFiles} aria-label={t.backToFiles}>
+        <ArrowLeft size={20} />
+      </button>
+      <h2 className="trashbar__title">{t.vault}</h2>
+    </div>
+  );
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'all', label: t.tabAll },
@@ -120,10 +411,10 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">
+        <button className="brand" onClick={goHome} title={t.goHome} aria-label={`${t.appName} – ${t.goHome}`}>
           <Logo />
-          <span>{t.appName}</span>
-        </div>
+          <span className="brand__text">{t.appName}</span>
+        </button>
         <label className="search">
           <Search size={20} aria-hidden />
           <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.search} aria-label={t.search} />
@@ -133,17 +424,19 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
             </button>
           )}
         </label>
+        <StorageMeter usage={shownUsage} />
         <div className="topbar__actions">
-          <button className="icon-btn" onClick={refresh} title={`${t.refresh} (Ctrl+R)`} aria-label={t.refresh} disabled={loading}>
-            <RotateCw size={20} className={loading ? 'spin' : ''} />
+          {canUpload && (
+            <button className="btn btn--filled upload-btn" onClick={() => window.fatup.uploadPick(vaultActive)} title={`${t.upload} (Ctrl+U)`}>
+              <Upload size={18} />
+              <span className="upload-btn__label">{t.upload}</span>
+            </button>
+          )}
+          <button className={`icon-btn${inVault ? ' is-active' : ''}`} onClick={toggleVault} title={inVault ? t.closeVault : t.vault} aria-label={inVault ? t.closeVault : t.vault} aria-pressed={inVault}>
+            <VaultIcon size={26} />
           </button>
-          <button
-            className="icon-btn"
-            onClick={() => onPrefs({ viewModes: { ...state.prefs.viewModes, [tab]: view === 'grid' ? 'list' : 'grid' } })}
-            title={view === 'grid' ? t.listView : t.gridView}
-            aria-label={view === 'grid' ? t.listView : t.gridView}
-          >
-            {view === 'grid' ? <List size={20} /> : <LayoutGrid size={20} />}
+          <button className={`icon-btn${inTrash ? ' is-active' : ''}`} onClick={toggleTrash} title={inTrash ? t.backToFiles : t.trash} aria-label={inTrash ? t.backToFiles : t.trash} aria-pressed={inTrash}>
+            <Trash2 size={20} />
           </button>
           <button className="icon-btn" onClick={() => setSettingsOpen(true)} title={t.settings} aria-label={t.settings}>
             <SettingsIcon size={20} />
@@ -152,13 +445,86 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       </header>
 
       <main className="panel">
-        <nav className="chips" role="tablist">
-          {tabs.map((tb) => (
-            <button key={tb.id} role="tab" aria-selected={tab === tb.id} className={`chip ${tab === tb.id ? 'chip--on' : ''}`} onClick={() => setTab(tb.id)}>
-              {tb.label}
+        {inVault && !vaultUnlocked ? (
+          <>
+            <div className="chips-row">{vaultBackBar}</div>
+            <VaultGate onUnlocked={() => setVaultUnlocked(true)} />
+          </>
+        ) : (
+          <>
+        {picked.length > 0 ? (
+          <div className="selbar" role="toolbar" aria-label={t.selectedN(picked.length)}>
+            <button className="icon-btn" onClick={clearSelection} title={t.clearSelection} aria-label={t.clearSelection}>
+              <X size={20} />
             </button>
-          ))}
-        </nav>
+            <span className="selbar__count">{t.selectedN(picked.length)}</span>
+            {!allSelected && (
+              <button className="btn btn--text" onClick={selectAll}>
+                {t.selectAll}
+              </button>
+            )}
+            <span className="spacer" />
+            {inTrash ? (
+              <>
+                <button className="btn btn--text" onClick={() => void restoreMany(picked)}>
+                  <RotateCcw size={18} /> {t.restore}
+                </button>
+                <button className="btn btn--text btn--danger-text" onClick={() => setConfirm({ kind: 'forever', items: picked })}>
+                  <Trash2 size={18} /> {t.deleteForever}
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="btn btn--text" onClick={() => void (vaultActive ? removeFromVault(picked) : moveToVault(picked))}>
+                  <VaultIcon size={18} /> {vaultActive ? t.removeFromVault : t.moveToVault}
+                </button>
+                <button className="btn btn--text btn--danger-text" onClick={() => void moveToTrash(picked)}>
+                  <Trash2 size={18} /> {t.moveToTrash}
+                </button>
+              </>
+            )}
+          </div>
+        ) : (
+          <div className="chips-row">
+            {inTrash ? (
+              <div className="trashbar">
+                <button className="icon-btn" onClick={toggleTrash} title={t.backToFiles} aria-label={t.backToFiles}>
+                  <ArrowLeft size={20} />
+                </button>
+                <h2 className="trashbar__title">{t.trash}</h2>
+                {(trashItems?.length ?? 0) > 0 && (
+                  <button className="btn btn--text" onClick={() => setConfirm({ kind: 'empty' })}>
+                    {t.emptyTrash}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="chips-left">
+                {inVault && vaultBackBar}
+                <nav className="chips" role="tablist">
+                  {tabs.map((tb) => (
+                    <button key={tb.id} role="tab" aria-selected={tab === tb.id} className={`chip ${tab === tb.id ? 'chip--on' : ''}`} onClick={() => setTab(tb.id)}>
+                      {tb.label}
+                    </button>
+                  ))}
+                </nav>
+              </div>
+            )}
+            <div className="chips-row__tools">
+              <button className="icon-btn" onClick={refresh} title={`${t.refresh} (Ctrl+R)`} aria-label={t.refresh} disabled={loading}>
+                <RotateCw size={20} className={loading ? 'spin' : ''} />
+              </button>
+              <button
+                className="icon-btn"
+                onClick={() => onPrefs({ viewModes: { ...state.prefs.viewModes, [modeKey]: view === 'grid' ? 'list' : 'grid' } })}
+                title={view === 'grid' ? t.listView : t.gridView}
+                aria-label={view === 'grid' ? t.listView : t.gridView}
+              >
+                {view === 'grid' ? <List size={20} /> : <LayoutGrid size={20} />}
+              </button>
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="banner" role="alert">
@@ -170,17 +536,31 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
         )}
 
         <div className="panel__scroll">
-          {items === null ? (
+          {!loaded ? (
             <div className="skeleton" aria-busy />
           ) : visible.length === 0 ? (
-            <EmptyState searching={query !== '' && (items?.length ?? 0) > 0} />
+            <EmptyState searching={query !== '' && source.length > 0} trash={inTrash} vault={vaultActive} />
           ) : view === 'grid' ? (
-            <FileGrid groups={groups} onOpen={open} onMenu={openMenu} />
+            <FileGrid groups={groups} selected={selected} onToggle={toggle} onOpen={open} onMenu={openMenu} />
           ) : (
-            <FileList groups={groups} onOpen={open} onMenu={openMenu} />
+            <FileList
+              groups={groups}
+              selected={selected}
+              onToggle={toggle}
+              onOpen={open}
+              onMenu={openMenu}
+              sort={sort}
+              onSort={changeSort}
+              allSelected={allSelected}
+              someSelected={picked.length > 0}
+              onToggleAll={() => (allSelected ? clearSelection() : selectAll())}
+              timeLabel={inTrash ? t.colDeleted : t.colTime}
+            />
           )}
-          {visible.length > 0 && <p className="footnote">{t.expiresNote}</p>}
+          {inTrash && visible.length > 0 && <p className="footnote">{t.trashNote}</p>}
         </div>
+          </>
+        )}
       </main>
 
       {menu && (
@@ -189,7 +569,10 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           onClose={() => setMenu(null)}
           onDownload={download}
           onCopy={copy}
-          onDelete={(it) => setToDelete(it)}
+          onDelete={(it) => void moveToTrash([it])}
+          onVault={(it) => void (vaultActive ? removeFromVault([it]) : moveToVault([it]))}
+          inVault={vaultActive}
+          trash={inTrash ? { onRestore: (it) => void restoreMany([it]), onForever: (it) => setConfirm({ kind: 'forever', items: [it] }) } : undefined}
         />
       )}
       {lightboxId && (
@@ -200,17 +583,27 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           onClose={() => setLightboxId(null)}
           onDownload={download}
           onCopy={copy}
-          onDelete={(it) => setToDelete(it)}
+          onDelete={(it) => void moveToTrash([it])}
         />
       )}
-      {toDelete && (
+      {confirm?.kind === 'forever' && (
         <ConfirmDialog
-          title={t.deleteTitle}
-          body={t.deleteBody(toDelete.name)}
-          confirmLabel={t.delete}
+          title={t.foreverTitle(confirm.items.length)}
+          body={t.foreverBody(confirm.items.length)}
+          confirmLabel={t.deleteForever}
           danger
-          onCancel={() => setToDelete(null)}
-          onConfirm={() => remove(toDelete)}
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => void foreverMany(confirm.items)}
+        />
+      )}
+      {confirm?.kind === 'empty' && (
+        <ConfirmDialog
+          title={t.emptyTrashTitle}
+          body={t.emptyTrashBody(trashItems?.length ?? 0)}
+          confirmLabel={t.emptyTrash}
+          danger
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => void emptyTrashNow()}
         />
       )}
       {settingsOpen && (
@@ -228,6 +621,13 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
             onLocked();
           }}
         />
+      )}
+      {canUpload && <UploadPanel jobs={uploadJobs} onCancel={(id) => window.fatup.uploadCancel(id)} onClear={() => window.fatup.uploadClear()} />}
+      {dragging && (
+        <div className="dropzone" aria-hidden>
+          <UploadCloud size={56} />
+          <p>{t.dropToUpload}</p>
+        </div>
       )}
       {toastNode}
     </div>

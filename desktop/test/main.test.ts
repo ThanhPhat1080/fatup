@@ -128,6 +128,32 @@ describe('ApiClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('calls the trash endpoints', async () => {
+    const calls: string[] = [];
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      calls.push(`${init.method ?? 'GET'} ${new URL(url).pathname}${new URL(url).search}`);
+      if (url.endsWith('/trash')) return new Response(JSON.stringify({ deleted: 3 }), { status: 200 });
+      if (init.method === 'DELETE') return new Response(null, { status: 204 });
+      if (url.includes('trash=1')) return new Response(JSON.stringify({ items: [{ id: 't' }], nextCursor: null }), { status: 200 });
+      return new Response(JSON.stringify({ id: 'x' }), { status: 200 });
+    });
+    const client = new ApiClient('https://api.test', 'tok', fetchMock as unknown as typeof fetch);
+    await client.setVault('v', true);
+    await client.remove('a');
+    await client.restore('b');
+    await client.removeForever('c');
+    expect(await client.emptyTrash()).toBe(3);
+    expect((await client.listAll({ trash: true })).map((i) => i.id)).toEqual(['t']);
+    expect(calls).toEqual([
+      'PUT /files/v/vault',
+      'DELETE /files/a',
+      'POST /files/b/restore',
+      'DELETE /files/c/permanent',
+      'DELETE /trash',
+      'GET /files?limit=200&trash=1',
+    ]);
+  });
+
   it('maps HTTP and network errors to ApiError codes', async () => {
     const unauthorized = new ApiClient('https://api.test', 'bad', (async () =>
       new Response(JSON.stringify({ error: { code: 'unauthorized', message: 'no' } }), { status: 401 })) as unknown as typeof fetch);

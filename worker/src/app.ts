@@ -4,13 +4,17 @@ import {
   DEFAULT_PAGE_SIZE,
   MAX_FILE_SIZE,
   MAX_PAGE_SIZE,
+  DEFAULT_QUOTA_BYTES,
+  type UsageResponse,
   kindFromMime,
   type CreateUploadRequest,
   type CreateUploadResponse,
+  type EmptyTrashResponse,
   type FileItem,
   type FileKind,
   type ListFilesResponse,
 } from '@fatup/shared';
+import { purge } from './cleanup';
 import type { Env } from './env';
 import { createPresigner, fileKey, thumbKey, type Presigner } from './presign';
 import { isUlid, ulid } from './ulid';
@@ -25,6 +29,9 @@ type Row = {
   status: 'pending' | 'ready';
   device: string | null;
   created_at: number;
+  deleted_at: number | null;
+  in_vault: number;
+  retain_from: number | null;
 };
 
 type AppEnv = { Bindings: Env; Variables: { presigner: Presigner } };
@@ -54,8 +61,8 @@ export function sanitizeName(raw: string): string {
   return clean || 'file';
 }
 
-function encodeCursor(row: Pick<Row, 'created_at' | 'id'>) {
-  return `${row.created_at}_${row.id}`;
+function encodeCursor(sortValue: number, id: string) {
+  return `${sortValue}_${id}`;
 }
 
 function decodeCursor(cursor: string): { createdAt: number; id: string } | null {
@@ -73,6 +80,8 @@ async function toItem(row: Row, presigner: Presigner): Promise<FileItem> {
     thumbUrl: row.has_thumb ? await presigner.get(thumbKey(row.id), { contentType: 'image/jpeg' }) : null,
     device: row.device,
     createdAt: row.created_at,
+    deletedAt: row.deleted_at,
+    inVault: row.in_vault === 1,
   };
 }
 
@@ -94,6 +103,17 @@ export function createApp(options: AppOptions = {}) {
 
   // Authenticated health check, used by clients to verify their setup.
   app.get('/me', (c) => c.json({ ok: true }));
+
+  // Storage in use, summed from the database (no extra R2 API credentials needed). Preview thumbnails are tiny and not counted.
+  app.get('/usage', async (c) => {
+    const row = await c.env.DB.prepare(`SELECT COALESCE(SUM(size), 0) AS used FROM files WHERE status = 'ready'`).first<{ used: number }>();
+    const quotaGb = Number(c.env.R2_QUOTA_GB);
+    const res: UsageResponse = {
+      usedBytes: row?.used ?? 0,
+      limitBytes: Number.isFinite(quotaGb) && quotaGb > 0 ? Math.round(quotaGb * 1_000_000_000) : DEFAULT_QUOTA_BYTES,
+    };
+    return c.json(res);
+  });
 
   app.post('/uploads', async (c) => {
     let body: Partial<CreateUploadRequest>;
@@ -159,7 +179,12 @@ export function createApp(options: AppOptions = {}) {
     const limitRaw = Number(c.req.query('limit') ?? DEFAULT_PAGE_SIZE);
     const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_PAGE_SIZE, 1), MAX_PAGE_SIZE);
 
-    const where = [`status = 'ready'`];
+    const trash = c.req.query('trash') === '1';
+    // The trash is ordered by when files were deleted, the normal list by when they were uploaded.
+    const sortCol = trash ? 'deleted_at' : 'created_at';
+    // The Vault is a separate list; trashed files are shown together because deleting a file takes it out of the Vault.
+    const vault = c.req.query('vault') === '1';
+    const where = [`status = 'ready'`, trash ? 'deleted_at IS NOT NULL' : `deleted_at IS NULL AND in_vault = ${vault ? 1 : 0}`];
     const params: unknown[] = [];
     if (kind !== 'all') {
       where.push('kind = ?');
@@ -169,11 +194,11 @@ export function createApp(options: AppOptions = {}) {
     if (cursorRaw) {
       const cursor = decodeCursor(cursorRaw);
       if (!cursor) return fail(c, 400, 'bad_request', 'Invalid cursor');
-      where.push('(created_at < ? OR (created_at = ? AND id < ?))');
+      where.push(`(${sortCol} < ? OR (${sortCol} = ? AND id < ?))`);
       params.push(cursor.createdAt, cursor.createdAt, cursor.id);
     }
     const { results } = await c.env.DB.prepare(
-      `SELECT * FROM files WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ?`,
+      `SELECT * FROM files WHERE ${where.join(' AND ')} ORDER BY ${sortCol} DESC, id DESC LIMIT ?`,
     )
       .bind(...params, limit + 1)
       .all<Row>();
@@ -182,26 +207,77 @@ export function createApp(options: AppOptions = {}) {
     const presigner = c.get('presigner');
     const res: ListFilesResponse = {
       items: await Promise.all(page.map((r) => toItem(r, presigner))),
-      nextCursor: results.length > limit ? encodeCursor(page[page.length - 1]) : null,
+      nextCursor: results.length > limit ? encodeCursor(page[page.length - 1][sortCol] ?? 0, page[page.length - 1].id) : null,
     };
     return c.json(res);
   });
 
   app.get('/files/:id/download', async (c) => {
     const id = c.req.param('id');
-    const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready'`).bind(id).first<Row>();
+    const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
     if (!row) return fail(c, 404, 'not_found', 'File not found');
     const url = await c.get('presigner').get(fileKey(id), { filename: row.name, contentType: row.mime });
     return c.json({ url });
   });
 
+  // Moves a file to the trash (idempotent). Unfinished uploads have nothing worth restoring, so they are removed outright.
   app.delete('/files/:id', async (c) => {
     const id = c.req.param('id');
-    const row = await c.env.DB.prepare('SELECT id FROM files WHERE id = ?').bind(id).first();
+    const row = await c.env.DB.prepare('SELECT id, status FROM files WHERE id = ?').bind(id).first<Pick<Row, 'id' | 'status'>>();
     if (!row) return fail(c, 404, 'not_found', 'File not found');
-    await c.env.BUCKET.delete([fileKey(id), thumbKey(id)]);
-    await c.env.DB.prepare('DELETE FROM files WHERE id = ?').bind(id).run();
+    if (row.status === 'pending') {
+      await purge(c.env, [id]);
+    } else {
+      await c.env.DB.prepare('UPDATE files SET deleted_at = ?, in_vault = 0 WHERE id = ? AND deleted_at IS NULL').bind(Date.now(), id).run();
+    }
     return c.body(null, 204);
+  });
+
+  // Moves a file into or out of the Vault.
+  app.put('/files/:id/vault', async (c) => {
+    const id = c.req.param('id');
+    let body: { inVault?: unknown };
+    try {
+      body = await c.req.json();
+    } catch {
+      return fail(c, 400, 'bad_request', 'Body must be JSON');
+    }
+    if (typeof body.inVault !== 'boolean') return fail(c, 400, 'bad_request', 'inVault must be a boolean');
+    const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
+    if (!row) return fail(c, 404, 'not_found', 'File not found');
+    await c.env.DB.prepare('UPDATE files SET in_vault = ? WHERE id = ?').bind(body.inVault ? 1 : 0, id).run();
+    return c.json(await toItem({ ...row, in_vault: body.inVault ? 1 : 0 }, c.get('presigner')));
+  });
+
+  app.post('/files/:id/restore', async (c) => {
+    const id = c.req.param('id');
+    const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready'`).bind(id).first<Row>();
+    if (!row) return fail(c, 404, 'not_found', 'File not found');
+    if (row.deleted_at === null) return c.json(await toItem(row, c.get('presigner')));
+    const now = Date.now();
+    await c.env.DB.prepare('UPDATE files SET deleted_at = NULL, retain_from = ? WHERE id = ?').bind(now, id).run();
+    return c.json(await toItem({ ...row, deleted_at: null, retain_from: now }, c.get('presigner')));
+  });
+
+  app.delete('/files/:id/permanent', async (c) => {
+    const id = c.req.param('id');
+    const row = await c.env.DB.prepare('SELECT deleted_at FROM files WHERE id = ?').bind(id).first<Pick<Row, 'deleted_at'>>();
+    if (!row) return fail(c, 404, 'not_found', 'File not found');
+    if (row.deleted_at === null) return fail(c, 409, 'not_in_trash', 'Move the file to the trash first');
+    await purge(c.env, [id]);
+    return c.body(null, 204);
+  });
+
+  app.delete('/trash', async (c) => {
+    let deleted = 0;
+    for (;;) {
+      const { results } = await c.env.DB.prepare('SELECT id FROM files WHERE deleted_at IS NOT NULL LIMIT 500').all<{ id: string }>();
+      if (results.length === 0) break;
+      await purge(c.env, results.map((r) => r.id));
+      deleted += results.length;
+    }
+    const res: EmptyTrashResponse = { deleted };
+    return c.json(res);
   });
 
   app.notFound((c) => fail(c, 404, 'not_found', 'Route not found'));

@@ -140,12 +140,134 @@ describe('download and delete', () => {
     expect((await call('/files/01HZZZZZZZZZZZZZZZZZZZZZZZ/download')).status).toBe(404);
   });
 
-  it('deletes the row and both objects', async () => {
+  it('moves a file to the trash, keeping its objects, and hides it from the list and downloads', async () => {
     const item = await upload('x.jpg', 'image/jpeg', 'x', true);
     expect((await call(`/files/${item.id}`, { method: 'DELETE' })).status).toBe(204);
+    expect((await call(`/files/${item.id}`, { method: 'DELETE' })).status).toBe(204); // idempotent
+    expect(await env.BUCKET.head(fileKey(item.id))).not.toBeNull();
+    expect(await env.BUCKET.head(thumbKey(item.id))).not.toBeNull();
+    expect(((await (await call('/files')).json()) as ListFilesResponse).items).toEqual([]);
+    expect((await call(`/files/${item.id}/download`)).status).toBe(404);
+    expect((await call('/files/01HZZZZZZZZZZZZZZZZZZZZZZZ', { method: 'DELETE' })).status).toBe(404);
+  });
+
+  it('removes an unfinished upload outright instead of trashing it', async () => {
+    const pending = (await (await postJson('/uploads', { name: 'p', mime: 'text/plain', size: 1, hasThumb: false })).json()) as CreateUploadResponse;
+    expect((await call(`/files/${pending.id}`, { method: 'DELETE' })).status).toBe(204);
+    expect(await env.DB.prepare('SELECT id FROM files WHERE id = ?').bind(pending.id).first()).toBeNull();
+  });
+});
+
+describe('usage', () => {
+  it('sums ready files (trash included) against the 10 GB free tier', async () => {
+    expect(await (await call('/usage')).json()).toEqual({ usedBytes: 0, limitBytes: 10_000_000_000 });
+    await upload('a.txt', 'text/plain', 'hello'); // 5 bytes
+    const b = await upload('b.txt', 'text/plain', 'worlds'); // 6 bytes
+    await call(`/files/${b.id}`, { method: 'DELETE' });
+    await postJson('/uploads', { name: 'p', mime: 'text/plain', size: 999, hasThumb: false }); // pending: not counted
+    expect(await (await call('/usage')).json()).toEqual({ usedBytes: 11, limitBytes: 10_000_000_000 });
+  });
+});
+
+describe('vault', () => {
+  const list = async (path: string) => ((await (await call(path)).json()) as ListFilesResponse).items;
+  const setVault = (id: string, inVault: unknown) =>
+    call(`/files/${id}/vault`, { method: 'PUT', body: JSON.stringify({ inVault }), headers: { 'Content-Type': 'application/json' } });
+
+  it('moves files between the main list and the vault list', async () => {
+    const a = await upload('a.txt', 'text/plain');
+    const b = await upload('b.txt', 'text/plain');
+    const res = await setVault(a.id, true);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as FileItem).inVault).toBe(true);
+    expect((await list('/files')).map((i) => i.id)).toEqual([b.id]);
+    expect((await list('/files?vault=1')).map((i) => i.id)).toEqual([a.id]);
+    await setVault(a.id, false);
+    expect((await list('/files?vault=1'))).toEqual([]);
+    expect((await list('/files')).map((i) => i.id).sort()).toEqual([a.id, b.id].sort());
+  });
+
+  it('validates the request and rejects missing or trashed files', async () => {
+    const a = await upload('a.txt', 'text/plain');
+    expect((await setVault(a.id, 'yes')).status).toBe(400);
+    expect((await setVault('01HZZZZZZZZZZZZZZZZZZZZZZZ', true)).status).toBe(404);
+    await call(`/files/${a.id}`, { method: 'DELETE' });
+    expect((await setVault(a.id, true)).status).toBe(404);
+  });
+
+  it('takes a file out of the vault when it is deleted, so it shows up (and restores) in the normal trash', async () => {
+    const a = await upload('secret.txt', 'text/plain');
+    await setVault(a.id, true);
+    await call(`/files/${a.id}`, { method: 'DELETE' });
+    expect((await list('/files?vault=1'))).toEqual([]);
+    expect((await list('/files?trash=1')).map((i) => i.id)).toEqual([a.id]);
+    await call(`/files/${a.id}/restore`, { method: 'POST' });
+    expect((await list('/files')).map((i) => i.id)).toEqual([a.id]);
+  });
+});
+
+describe('trash', () => {
+  const list = async (path: string) => ((await (await call(path)).json()) as ListFilesResponse).items;
+
+  it('lists trashed files newest-deleted first, with deletedAt', async () => {
+    const a = await upload('a.txt', 'text/plain');
+    const b = await upload('b.txt', 'text/plain');
+    await call(`/files/${a.id}`, { method: 'DELETE' });
+    await new Promise((r) => setTimeout(r, 5));
+    await call(`/files/${b.id}`, { method: 'DELETE' });
+    const items = await list('/files?trash=1');
+    expect(items.map((i) => i.id)).toEqual([b.id, a.id]);
+    expect(items[0].deletedAt).toBeGreaterThan(0);
+    expect((await list('/files'))).toEqual([]);
+  });
+
+  it('paginates the trash', async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const it = await upload(`f${i}.txt`, 'text/plain');
+      ids.push(it.id);
+      await call(`/files/${it.id}`, { method: 'DELETE' });
+      await new Promise((r) => setTimeout(r, 3));
+    }
+    const first = (await (await call('/files?trash=1&limit=2')).json()) as ListFilesResponse;
+    expect(first.items).toHaveLength(2);
+    const second = (await (await call(`/files?trash=1&limit=2&cursor=${first.nextCursor}`)).json()) as ListFilesResponse;
+    expect([...first.items, ...second.items].map((i) => i.id)).toEqual([...ids].reverse());
+    expect(second.nextCursor).toBeNull();
+  });
+
+  it('restores a file back into the list', async () => {
+    const item = await upload('r.txt', 'text/plain');
+    await call(`/files/${item.id}`, { method: 'DELETE' });
+    const res = await call(`/files/${item.id}/restore`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as FileItem).deletedAt).toBeNull();
+    expect((await list('/files')).map((i) => i.id)).toEqual([item.id]);
+    expect(await list('/files?trash=1')).toEqual([]);
+    expect((await call(`/files/${item.id}/restore`, { method: 'POST' })).status).toBe(200); // idempotent
+    expect((await call('/files/01HZZZZZZZZZZZZZZZZZZZZZZZ/restore', { method: 'POST' })).status).toBe(404);
+  });
+
+  it('deletes forever only from the trash', async () => {
+    const item = await upload('p.jpg', 'image/jpeg', 'x', true);
+    expect((await call(`/files/${item.id}/permanent`, { method: 'DELETE' })).status).toBe(409);
+    await call(`/files/${item.id}`, { method: 'DELETE' });
+    expect((await call(`/files/${item.id}/permanent`, { method: 'DELETE' })).status).toBe(204);
     expect(await env.BUCKET.head(fileKey(item.id))).toBeNull();
     expect(await env.BUCKET.head(thumbKey(item.id))).toBeNull();
-    expect((await call(`/files/${item.id}`, { method: 'DELETE' })).status).toBe(404);
+    expect((await call(`/files/${item.id}/permanent`, { method: 'DELETE' })).status).toBe(404);
+  });
+
+  it('empties the trash without touching live files', async () => {
+    const keep = await upload('keep.txt', 'text/plain');
+    const gone1 = await upload('g1.txt', 'text/plain');
+    const gone2 = await upload('g2.txt', 'text/plain');
+    await call(`/files/${gone1.id}`, { method: 'DELETE' });
+    await call(`/files/${gone2.id}`, { method: 'DELETE' });
+    const res = await call('/trash', { method: 'DELETE' });
+    expect(await res.json()).toEqual({ deleted: 2 });
+    expect(await env.BUCKET.head(fileKey(gone1.id))).toBeNull();
+    expect((await list('/files')).map((i) => i.id)).toEqual([keep.id]);
   });
 });
 
@@ -164,6 +286,34 @@ describe('cleanup', () => {
     const ids = (await env.DB.prepare('SELECT id FROM files').all<{ id: string }>()).results.map((r) => r.id).sort();
     expect(ids).toEqual([fresh.id, freshPending.id].sort());
     expect(await env.BUCKET.head(fileKey(old.id))).toBeNull();
+  });
+});
+
+describe('cleanup and the trash', () => {
+  const day = 24 * 60 * 60 * 1000;
+
+  it('purges files only after 30 days in the trash, regardless of upload age', async () => {
+    const trashedLong = await upload('long.txt', 'text/plain');
+    const trashedRecent = await upload('recent.txt', 'text/plain');
+    // Both were uploaded 40 days ago, which would normally expire them.
+    await env.DB.prepare('UPDATE files SET created_at = ?').bind(Date.now() - 40 * day).run();
+    await env.DB.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').bind(Date.now() - 31 * day, trashedLong.id).run();
+    await env.DB.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').bind(Date.now() - 5 * day, trashedRecent.id).run();
+
+    expect(await cleanup(env)).toBe(1);
+    expect(await env.BUCKET.head(fileKey(trashedLong.id))).toBeNull();
+    expect(await env.BUCKET.head(fileKey(trashedRecent.id))).not.toBeNull();
+  });
+
+  it('restarts the retention clock when an old file is restored', async () => {
+    const item = await upload('old.txt', 'text/plain');
+    await env.DB.prepare('UPDATE files SET created_at = ? WHERE id = ?').bind(Date.now() - 40 * day, item.id).run();
+    await call(`/files/${item.id}`, { method: 'DELETE' });
+    await call(`/files/${item.id}/restore`, { method: 'POST' });
+    expect(await cleanup(env)).toBe(0);
+    expect(await env.BUCKET.head(fileKey(item.id))).not.toBeNull();
+    // ...and it does expire 30 days after the restore.
+    expect(await cleanup(env, Date.now() + 31 * day)).toBe(1);
   });
 });
 

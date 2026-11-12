@@ -1,15 +1,36 @@
 import { useState, type MouseEvent } from 'react';
-import { CheckCircle2, CloudUpload, MoreVertical, SearchX } from 'lucide-react';
+import { ArrowDown, ArrowUp, CloudUpload, MoreVertical, SearchX, Trash2 } from 'lucide-react';
 import type { Item } from '../../../shared-ipc';
-import { formatSize, formatTime, type DateGroup } from '../lib/format';
+import { formatSize, formatTime, type DateGroup, type SortKey, type SortState } from '../lib/format';
 import { useI18n } from '../lib/i18n';
+import { VaultIcon } from './VaultIcon';
 import { FileIcon } from './FileIcon';
 
 type ViewProps = {
   groups: DateGroup<Item>[];
+  selected: ReadonlySet<string>;
+  onToggle: (item: Item, range: boolean) => void;
   onOpen: (item: Item) => void;
   onMenu: (item: Item, x: number, y: number) => void;
 };
+
+function Check({ item, selected, onToggle }: { item: Item; selected: boolean; onToggle: ViewProps['onToggle'] }) {
+  const { t } = useI18n();
+  return (
+    <input
+      type="checkbox"
+      className="check"
+      checked={selected}
+      aria-label={t.selectItem(item.name)}
+      onChange={() => undefined}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle(item, e.shiftKey);
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+    />
+  );
+}
 
 function menuHandlers(item: Item, onMenu: ViewProps['onMenu']) {
   return {
@@ -50,18 +71,17 @@ function Thumb({ item }: { item: Item }) {
   );
 }
 
-export function FileGrid({ groups, onOpen, onMenu }: ViewProps) {
-  const { t } = useI18n();
+export function FileGrid({ groups, selected, onToggle, onOpen, onMenu }: ViewProps) {
   return (
     <>
       {groups.map((g) => (
         <section key={g.key} className="group">
-          <h3 className="group__label">{g.label}</h3>
-          <div className="grid">
+          {g.label && <h3 className="group__label">{g.label}</h3>}
+          <div className={`grid${selected.size > 0 ? ' grid--selecting' : ''}`}>
             {g.items.map((item) => (
               <div
                 key={item.id}
-                className="tile"
+                className={`tile${selected.has(item.id) ? ' tile--selected' : ''}`}
                 role="button"
                 tabIndex={0}
                 onClick={() => onOpen(item)}
@@ -69,6 +89,9 @@ export function FileGrid({ groups, onOpen, onMenu }: ViewProps) {
                 {...menuHandlers(item, onMenu)}
               >
                 <div className="tile__head">
+                  <span className="tile__check">
+                    <Check item={item} selected={selected.has(item.id)} onToggle={onToggle} />
+                  </span>
                   <FileIcon name={item.name} mime={item.mime} size={18} />
                   <span className="tile__name" title={item.name}>
                     {item.name}
@@ -77,11 +100,6 @@ export function FileGrid({ groups, onOpen, onMenu }: ViewProps) {
                 </div>
                 <div className="tile__thumb">
                   <Thumb item={item} />
-                  {item.downloaded && (
-                    <span className="badge" title={t.downloaded}>
-                      <CheckCircle2 size={18} />
-                    </span>
-                  )}
                 </div>
               </div>
             ))}
@@ -92,36 +110,69 @@ export function FileGrid({ groups, onOpen, onMenu }: ViewProps) {
   );
 }
 
-export function FileList({ groups, onOpen, onMenu }: ViewProps) {
+type ListProps = ViewProps & {
+  sort: SortState;
+  onSort: (key: SortKey) => void;
+  allSelected: boolean;
+  someSelected: boolean;
+  onToggleAll: () => void;
+  /** Heading of the time column: "Uploaded", or "Deleted" in the trash. */
+  timeLabel: string;
+};
+
+function SortHead({ id, label, sort, onSort, className }: { id: SortKey; label: string; sort: SortState; onSort: (k: SortKey) => void; className?: string }) {
+  const active = sort.key === id;
+  return (
+    <span role="columnheader" className={className} aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <button className={`sort-head${active ? ' sort-head--on' : ''}`} onClick={() => onSort(id)}>
+        {label}
+        {active && (sort.dir === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />)}
+      </button>
+    </span>
+  );
+}
+
+export function FileList({ groups, selected, onToggle, onOpen, onMenu, sort, onSort, allSelected, someSelected, onToggleAll, timeLabel }: ListProps) {
   const { t } = useI18n();
   return (
     <div className="list" role="table">
       <div className="list__row list__row--head" role="row">
-        <span role="columnheader">{t.colName}</span>
+        <span role="columnheader">
+          <input
+            type="checkbox"
+            className="check"
+            checked={allSelected}
+            ref={(el) => {
+              if (el) el.indeterminate = someSelected && !allSelected;
+            }}
+            aria-label={t.selectAll}
+            onChange={onToggleAll}
+          />
+        </span>
+        <SortHead id="name" label={t.colName} sort={sort} onSort={onSort} />
         <span role="columnheader" className="col-from">
           {t.colFrom}
         </span>
-        <span role="columnheader" className="col-time">
-          {t.colTime}
-        </span>
-        <span role="columnheader" className="col-size">
-          {t.colSize}
-        </span>
+        <SortHead id="createdAt" label={timeLabel} sort={sort} onSort={onSort} className="col-time" />
+        <SortHead id="size" label={t.colSize} sort={sort} onSort={onSort} className="col-size" />
         <span />
       </div>
       {groups.map((g) => (
         <section key={g.key} role="rowgroup">
-          <h3 className="group__label group__label--list">{g.label}</h3>
+          {g.label && <h3 className="group__label group__label--list">{g.label}</h3>}
           {g.items.map((item) => (
             <div
               key={item.id}
-              className="list__row"
+              className={`list__row${selected.has(item.id) ? ' list__row--selected' : ''}`}
               role="row"
               tabIndex={0}
               onClick={() => onOpen(item)}
               onKeyDown={(e) => e.key === 'Enter' && onOpen(item)}
               {...menuHandlers(item, onMenu)}
             >
+              <span role="cell">
+                <Check item={item} selected={selected.has(item.id)} onToggle={onToggle} />
+              </span>
               <span className="list__name" role="cell">
                 {item.thumbUrl ? (
                   <img className="list__mini" src={item.thumbUrl} alt="" loading="lazy" draggable={false} />
@@ -131,7 +182,6 @@ export function FileList({ groups, onOpen, onMenu }: ViewProps) {
                 <span className="ellipsis" title={item.name}>
                   {item.name}
                 </span>
-                {item.downloaded && <CheckCircle2 size={16} className="downloaded" aria-label={t.downloaded} />}
               </span>
               <span role="cell" className="muted col-from ellipsis">
                 {item.device ?? '—'}
@@ -153,13 +203,13 @@ export function FileList({ groups, onOpen, onMenu }: ViewProps) {
   );
 }
 
-export function EmptyState({ searching }: { searching: boolean }) {
+export function EmptyState({ searching, trash, vault }: { searching: boolean; trash?: boolean; vault?: boolean }) {
   const { t } = useI18n();
   return (
     <div className="empty">
-      <div className="empty__art">{searching ? <SearchX size={56} /> : <CloudUpload size={56} />}</div>
-      <h2>{searching ? t.noMatches : t.emptyTitle}</h2>
-      {!searching && <p className="muted">{t.emptyHint}</p>}
+      <div className="empty__art">{searching ? <SearchX size={56} /> : trash ? <Trash2 size={56} /> : vault ? <VaultIcon size={56} /> : <CloudUpload size={56} />}</div>
+      <h2>{searching ? t.noMatches : trash ? t.trashEmptyTitle : vault ? t.vaultEmptyTitle : t.emptyTitle}</h2>
+      {!searching && <p className="muted">{trash ? t.trashEmptyHint : vault ? t.vaultEmptyHint : t.emptyHint}</p>}
     </div>
   );
 }

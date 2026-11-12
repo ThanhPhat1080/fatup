@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AppState, Prefs } from '../../shared-ipc';
+import { applyTheme } from './lib/theme';
 import { I18nContext, dictionaries, resolveLocale } from './lib/i18n';
 import { Setup } from './components/Setup';
 import { Lock } from './components/Lock';
@@ -19,6 +20,9 @@ export function App() {
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);
+
+  const theme = state?.prefs.theme ?? 'system';
+  useEffect(() => applyTheme(theme), [theme]);
 
   if (!state) return null;
 

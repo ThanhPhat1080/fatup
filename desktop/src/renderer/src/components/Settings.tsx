@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Download, KeyRound, Languages, Loader2, Lock as LockIcon, LogOut, QrCode, RefreshCw, Server } from 'lucide-react';
+import { Download, KeyRound, Languages, Moon, Sun, Loader2, Lock as LockIcon, LogOut, QrCode, RefreshCw, Server } from 'lucide-react';
 import type { AppState, Lang, Prefs } from '../../../shared-ipc';
 import { useI18n } from '../lib/i18n';
+import { isDark, useSystemDark } from '../lib/theme';
 import { ConfirmDialog, Dialog } from './Dialog';
 import { PinInput } from './PinInput';
 
@@ -33,6 +34,8 @@ export function Settings({ state, onClose, onPrefs, onToast, onLock, onSignOut }
   const [errorKey, setErrorKey] = useState(0);
   const [oldPin, setOldPin] = useState<string | null>(null);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const systemDark = useSystemDark();
+  const dark = isDark(state.prefs.theme, systemDark);
   const [version, setVersion] = useState('');
   const [update, setUpdate] = useState<UpdateUi>({ s: 'idle' });
 
@@ -115,6 +118,23 @@ export function Settings({ state, onClose, onPrefs, onToast, onLock, onSignOut }
             <option value="en">English</option>
             <option value="vi">Tiếng Việt</option>
           </select>
+        </div>
+
+        <div className="settings__row">
+          {dark ? <Moon size={20} className="settings__icon" /> : <Sun size={20} className="settings__icon" />}
+          <span className="settings__label">{t.appearance}</span>
+          <button
+            role="switch"
+            aria-checked={dark}
+            className="theme-switch"
+            onClick={() => onPrefs({ theme: dark ? 'light' : 'dark' })}
+            title={dark ? t.themeToLight : t.themeToDark}
+            aria-label={dark ? t.themeToLight : t.themeToDark}
+          >
+            <span className="theme-switch__thumb" />
+            <Sun size={16} className="theme-switch__sun" />
+            <Moon size={16} className="theme-switch__moon" />
+          </button>
         </div>
 
         <div className="settings__row">

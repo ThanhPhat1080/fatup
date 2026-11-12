@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileVisual, formatSize, groupByDay, matchesQuery } from '../src/renderer/src/lib/format';
+import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems } from '../src/renderer/src/lib/format';
 import { dictionaries, errorText, resolveLocale } from '../src/renderer/src/lib/i18n';
 
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime();
@@ -61,5 +61,53 @@ describe('i18n', () => {
   it('maps error codes with a generic fallback', () => {
     expect(errorText(dictionaries.en, 'network')).toMatch(/reach the server/);
     expect(errorText(dictionaries.vi, 'weird')).toBe(dictionaries.vi.err_generic);
+  });
+});
+
+describe('sortItems', () => {
+  const f = (id: string, name: string, size: number, createdAt: number) => ({ id, name, size, createdAt });
+  const items = [f('a', 'img10.jpg', 300, 1), f('b', 'Img2.jpg', 100, 3), f('c', 'báo cáo.pdf', 200, 2)];
+  const names = (key: 'name' | 'size' | 'createdAt', dir: 'asc' | 'desc') => sortItems(items, { key, dir }).map((i) => i.id);
+
+  it('sorts names naturally and ignoring case', () => {
+    expect(names('name', 'asc')).toEqual(['c', 'b', 'a']); // báo, Img2, img10
+    expect(names('name', 'desc')).toEqual(['a', 'b', 'c']);
+  });
+  it('sorts by size and upload time in both directions', () => {
+    expect(names('size', 'asc')).toEqual(['b', 'c', 'a']);
+    expect(names('size', 'desc')).toEqual(['a', 'c', 'b']);
+    expect(names('createdAt', 'desc')).toEqual(['b', 'c', 'a']);
+  });
+  it('does not mutate the input and breaks ties by name', () => {
+    const tied = [f('x', 'b', 5, 1), f('y', 'a', 5, 1)];
+    expect(sortItems(tied, { key: 'size', dir: 'asc' }).map((i) => i.id)).toEqual(['y', 'x']);
+    expect(tied.map((i) => i.id)).toEqual(['x', 'y']);
+  });
+});
+
+describe('singleGroup', () => {
+  it('returns one unlabeled bucket, or none when empty', () => {
+    expect(singleGroup([1, 2])).toEqual([{ key: 'all', label: '', items: [1, 2] }]);
+    expect(singleGroup([])).toEqual([]);
+  });
+});
+
+describe('storage meter helpers', () => {
+  it('turns orange at 70% and red at 90%', async () => {
+    const { usageLevel } = await import('../src/renderer/src/lib/format');
+    expect(usageLevel(0, 10)).toBe('ok');
+    expect(usageLevel(6.99, 10)).toBe('ok');
+    expect(usageLevel(7, 10)).toBe('warn');
+    expect(usageLevel(8.99, 10)).toBe('warn');
+    expect(usageLevel(9, 10)).toBe('crit');
+    expect(usageLevel(12, 10)).toBe('crit');
+    expect(usageLevel(1, 0)).toBe('ok');
+  });
+  it('formats decimal gigabytes with two decimals', async () => {
+    const { formatGb } = await import('../src/renderer/src/lib/format');
+    expect(formatGb(1_234_000_000, 'en')).toBe('1.23');
+    expect(formatGb(0, 'en')).toBe('0.00');
+    expect(formatGb(10_000_000_000, 'en')).toBe('10.00');
+    expect(formatGb(1_234_000_000, 'vi')).toBe('1,23');
   });
 });

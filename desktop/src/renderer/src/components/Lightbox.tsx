@@ -130,7 +130,7 @@ export function Lightbox({ items, currentId, onChange, onClose, onDownload, onCo
         <button className="icon-btn icon-btn--dark" onClick={() => onDownload(item)} aria-label={t.download} title={t.download}>
           <Download size={20} />
         </button>
-        <button className="icon-btn icon-btn--dark" onClick={() => onDelete(item)} aria-label={t.delete} title={t.delete}>
+        <button className="icon-btn icon-btn--dark" onClick={() => onDelete(item)} aria-label={t.moveToTrash} title={t.moveToTrash}>
           <Trash2 size={20} />
         </button>
       </header>

@@ -155,6 +155,22 @@ Bản web xem, tải về và xóa file giống app máy tính, nhưng không c�
 
 **Nút "Copy ảnh"** trên web cần bucket R2 cho phép CORS. Nếu không cấu hình, nút này sẽ dùng ảnh xem trước thay cho ảnh gốc. Việc này không bắt buộc.
 
+### Nâng cấp server từ bản cũ
+
+Mỗi lần có bản mới, chạy lại hai lệnh này trong `worker/` theo đúng thứ tự (migration trước, deploy sau). Bản có **thùng rác** cần thêm cột mới trong database, nên deploy mà chưa migrate thì server sẽ lỗi:
+
+```bash
+npm run db:migrate:remote
+```
+
+```bash
+npm run deploy
+```
+
+Xóa file giờ là chuyển vào thùng rác (khôi phục được). File nằm trong thùng rác 30 ngày thì bị xóa vĩnh viễn lúc 03:00 UTC hằng ngày. File được khôi phục sẽ có thêm 30 ngày kể từ lúc khôi phục.
+
+**Két sắt (Vault):** biểu tượng két sắt cạnh thùng rác. Dùng "Chuyển vào Két sắt" để cất file ra khỏi danh sách chính. Mỗi lần mở Két sắt app đều bắt nhập lại mã PIN, và thoát ra là đóng lại. Tải file lên khi đang mở Két sắt thì file vào thẳng đó. Lưu ý đây là lớp che trên giao diện app, không phải mã hóa: file vẫn lưu bình thường trên R2, và ai có API token (ví dụ app Android) vẫn có thể thấy chúng qua API. File trong Két sắt vẫn bị xóa sau 30 ngày như mọi file khác, và khi bạn xóa file từ Két sắt thì nó ra khỏi Két sắt và vào thùng rác thường. Tính năng này cần chạy migration `0003` (lệnh `db:migrate:remote` ở trên).
+
 ## 2. Cài app máy tính
 
 Tải bản cài trong mục [Releases](https://github.com/ThanhPhat1080/fatup/releases), hoặc tự build (xem phần 5).

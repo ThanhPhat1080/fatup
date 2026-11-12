@@ -1,4 +1,5 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, ipcMain, Menu, nativeImage, nativeTheme, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, safeStorage, shell } from 'electron';
+import { hostname } from 'node:os';
 import { createWriteStream, existsSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -12,15 +13,40 @@ import { ApiClient, ApiError, normalizeServerUrl } from './api';
 import { ConfigStore } from './config';
 import { uniqueFileName } from './filename';
 import { checkPin, hashPin, isValidPin } from './pin';
+import { UploadManager } from './uploader';
 import { fetchLatestRelease, isNewer, type ReleaseInfo } from './updater';
 
 if (process.env.FATUP_USER_DATA) app.setPath('userData', process.env.FATUP_USER_DATA);
 
 let config: ConfigStore;
 let unlocked = false;
+/** True only while the Vault view is open and the PIN was re-entered. Never persisted. */
+let vaultOpen = false;
 let mainWindow: BrowserWindow | null = null;
 const itemCache = new Map<string, FileItem>();
 let pendingRelease: ReleaseInfo | null = null;
+
+const THUMB_EDGE = 400;
+/** 400px JPEG preview, same as the Android app. Returns null for formats Electron can't decode. */
+function makeThumbnail(path: string): Buffer | null {
+  try {
+    const image = nativeImage.createFromPath(path);
+    if (image.isEmpty()) return null;
+    const { width, height } = image.getSize();
+    const scale = Math.min(1, THUMB_EDGE / Math.max(width, height));
+    const small = scale < 1 ? image.resize({ width: Math.round(width * scale), height: Math.round(height * scale), quality: 'good' }) : image;
+    return small.toJPEG(80);
+  } catch {
+    return null;
+  }
+}
+
+const uploads = new UploadManager({
+  client: () => client(),
+  device: hostname().slice(0, 64) || null,
+  thumbnail: makeThumbnail,
+  onChange: (jobs) => mainWindow?.webContents.send('uploads', jobs),
+});
 
 /**
  * In-app install needs a signed app on macOS and a package we can replace in place on Linux (AppImage).
@@ -72,6 +98,19 @@ async function fetchBytes(url: string): Promise<Buffer> {
 }
 
 function registerIpc() {
+  ipcMain.handle('uploadPick', async (_e, vault?: boolean) => {
+    if (!unlocked || !mainWindow || (vault && !vaultOpen)) return;
+    const res = await dialog.showOpenDialog(mainWindow, { properties: ['openFile', 'multiSelections'] });
+    if (!res.canceled) uploads.add(res.filePaths, vault === true);
+  });
+  ipcMain.handle('uploadPaths', (_e, paths: unknown, vault?: boolean) => {
+    if (!unlocked || !Array.isArray(paths) || (vault && !vaultOpen)) return;
+    uploads.add(paths.filter((p): p is string => typeof p === 'string' && p !== ''), vault === true);
+  });
+  ipcMain.handle('uploadCancel', (_e, id: string) => uploads.cancel(id));
+  ipcMain.handle('uploadClear', () => uploads.clearFinished());
+  ipcMain.handle('uploadList', () => uploads.snapshot());
+
   ipcMain.handle('appVersion', () => app.getVersion());
 
   ipcMain.handle('checkForUpdate', async (): Promise<UpdateCheck> => {
@@ -163,10 +202,14 @@ function registerIpc() {
 
   ipcMain.handle('lock', () => {
     unlocked = false;
+    vaultOpen = false;
+    uploads.cancelAll();
     itemCache.clear();
   });
 
   ipcMain.handle('reset', () => {
+    vaultOpen = false;
+    uploads.cancelAll();
     config.reset();
     unlocked = false;
     itemCache.clear();
@@ -180,7 +223,12 @@ function registerIpc() {
     return res;
   });
 
-  ipcMain.handle('setPrefs', (_e, prefs: Partial<Prefs>) => config.setPrefs(prefs));
+  ipcMain.handle('setPrefs', (_e, prefs: Partial<Prefs>) => {
+    const next = config.setPrefs(prefs);
+    // Keeps native chrome (scrollbars, dialogs, menus) and prefers-color-scheme in step with the in-app choice.
+    nativeTheme.themeSource = next.theme;
+    return next;
+  });
 
   ipcMain.handle(
     'list',
@@ -191,6 +239,49 @@ function registerIpc() {
       const downloaded = new Set(config.snapshot.downloaded);
       return items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) }));
     }),
+  );
+
+  ipcMain.handle(
+    'listTrash',
+    guarded(async (): Promise<Item[]> => (await client().listAll({ trash: true })).map((it) => ({ ...it, downloaded: false }))),
+  );
+
+  ipcMain.handle('vaultOpen', (_e, pin: string): UnlockResult => {
+    if (!unlocked) return { ok: false, reason: 'wrong', attemptsLeft: 0 };
+    const res = tryUnlock(pin);
+    if (res.ok) vaultOpen = true;
+    return res;
+  });
+  ipcMain.handle('vaultClose', () => {
+    vaultOpen = false;
+  });
+  ipcMain.handle('listVault', async (): Promise<Result<Item[]>> => {
+    if (!unlocked) return { ok: false, error: 'locked' };
+    if (!vaultOpen) return { ok: false, error: 'vault_locked' };
+    try {
+      const items = await client().listAll({ vault: true });
+      for (const it of items) itemCache.set(it.id, it);
+      const downloaded = new Set(config.snapshot.downloaded);
+      return { ok: true, value: items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) })) };
+    } catch (err) {
+      return fail(err);
+    }
+  });
+  ipcMain.handle('setVault', async (_e, id: string, inVault: boolean): Promise<Result> => {
+    if (!unlocked) return { ok: false, error: 'locked' };
+    // Taking a file out of the Vault reveals it, so that needs the Vault open too.
+    if (!inVault && !vaultOpen) return { ok: false, error: 'vault_locked' };
+    try {
+      await client().setVault(id, inVault);
+      return { ok: true, value: undefined };
+    } catch (err) {
+      return fail(err);
+    }
+  });
+
+  ipcMain.handle(
+    'usage',
+    guarded(async () => client().usage()),
   );
 
   ipcMain.handle(
@@ -244,6 +335,23 @@ function registerIpc() {
     }),
   );
 
+  ipcMain.handle(
+    'restore',
+    guarded(async (id: string) => {
+      await client().restore(id);
+    }),
+  );
+
+  ipcMain.handle(
+    'removeForever',
+    guarded(async (id: string) => client().removeForever(id)),
+  );
+
+  ipcMain.handle(
+    'emptyTrash',
+    guarded(async () => client().emptyTrash()),
+  );
+
   ipcMain.handle('pairingQr', async (_e, pin: string) => {
     if (!unlocked) return { ok: false, reason: 'wrong', attemptsLeft: 0 };
     const res = tryUnlock(pin);
@@ -289,6 +397,7 @@ function createWindow() {
 app.whenReady().then(() => {
   config = new ConfigStore(join(app.getPath('userData'), 'config.json'), safeStorage);
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null);
+  nativeTheme.themeSource = config.snapshot.prefs.theme ?? 'system';
   registerIpc();
   createWindow();
   app.on('activate', () => {

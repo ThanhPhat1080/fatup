@@ -14,7 +14,7 @@ type Stored = {
   downloaded: string[];
 };
 
-const DEFAULT_PREFS: Prefs = { lang: 'auto', viewModes: { all: 'list', image: 'grid', file: 'list' } };
+const DEFAULT_PREFS: Prefs = { lang: 'auto', theme: 'system', viewModes: { all: 'list', image: 'grid', file: 'list' } };
 
 function load(): Stored {
   const base: Stored = { serverUrl: null, token: null, lockout: { failedAttempts: 0, lockedUntil: 0 }, prefs: structuredClone(DEFAULT_PREFS), downloaded: [] };
@@ -50,6 +50,7 @@ async function toPng(blob: Blob): Promise<Blob> {
 export function installBrowserApi(): void {
   let data = load();
   let unlockedToken: string | null = null; // decrypted token, memory only
+  let vaultIsOpen = false;
   let pendingToken: { serverUrl: string; token: string } | null = null; // between "connect" and "set PIN"
   const itemCache = new Map<string, FileItem>();
 
@@ -142,6 +143,7 @@ export function installBrowserApi(): void {
 
     lock: async () => {
       unlockedToken = null;
+      vaultIsOpen = false;
       itemCache.clear();
     },
 
@@ -149,6 +151,7 @@ export function installBrowserApi(): void {
       data = { serverUrl: null, token: null, lockout: { failedAttempts: 0, lockedUntil: 0 }, prefs: data.prefs, downloaded: [] };
       unlockedToken = null;
       pendingToken = null;
+      vaultIsOpen = false;
       itemCache.clear();
       save();
     },
@@ -177,6 +180,51 @@ export function installBrowserApi(): void {
         const downloaded = new Set(data.downloaded);
         return items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) }));
       }),
+
+    listTrash: () => guarded(async (): Promise<Item[]> => (await client().listAll({ trash: true })).map((it) => ({ ...it, downloaded: false }))),
+
+    vaultOpen: async (pin) => {
+      if (!unlockedToken) return { ok: false, reason: 'wrong', attemptsLeft: 0 };
+      const { result } = await tryUnlock(pin);
+      if (result.ok) vaultIsOpen = true;
+      return result;
+    },
+    vaultClose: async () => {
+      vaultIsOpen = false;
+    },
+    listVault: async (): Promise<Result<Item[]>> => {
+      if (!unlockedToken) return { ok: false, error: 'locked' };
+      if (!vaultIsOpen) return { ok: false, error: 'vault_locked' };
+      try {
+        const items = await client().listAll({ vault: true });
+        for (const it of items) itemCache.set(it.id, it);
+        const downloaded = new Set(data.downloaded);
+        return { ok: true, value: items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) })) };
+      } catch (err) {
+        return fail(err);
+      }
+    },
+    setVault: async (id, inVault) => {
+      if (!unlockedToken) return { ok: false, error: 'locked' };
+      if (!inVault && !vaultIsOpen) return { ok: false, error: 'vault_locked' };
+      try {
+        await client().setVault(id, inVault);
+        return { ok: true, value: undefined };
+      } catch (err) {
+        return fail(err);
+      }
+    },
+
+    usage: () => guarded(() => client().usage()),
+
+    restore: (id) =>
+      guarded(async () => {
+        await client().restore(id);
+      }),
+
+    removeForever: (id) => guarded(() => client().removeForever(id)),
+
+    emptyTrash: () => guarded(() => client().emptyTrash()),
 
     previewUrl: (id) => guarded(() => client().downloadUrl(id)),
 
@@ -221,6 +269,13 @@ export function installBrowserApi(): void {
         itemCache.delete(id);
       }),
 
+    uploadPick: async () => undefined,
+    uploadPaths: async () => undefined,
+    uploadCancel: async () => undefined,
+    uploadClear: async () => undefined,
+    uploadList: async () => [],
+    onUploads: () => () => undefined,
+    pathsForFiles: () => [],
     // Desktop-only features; the UI hides them when platform === 'web'.
     pairingQr: async () => ({ ok: false, reason: 'wrong', attemptsLeft: 0 }),
     appVersion: async () => '',

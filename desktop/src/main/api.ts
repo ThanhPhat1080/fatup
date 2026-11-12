@@ -1,4 +1,4 @@
-import type { DownloadResponse, FileItem, ListFilesResponse } from '@fatup/shared';
+import type { CreateUploadRequest, CreateUploadResponse, DownloadResponse, EmptyTrashResponse, UsageResponse, FileItem, ListFilesResponse } from '@fatup/shared';
 
 export class ApiError extends Error {
   constructor(
@@ -47,12 +47,18 @@ export class ApiClient {
     return this.request('/me');
   }
 
+  usage(): Promise<UsageResponse> {
+    return this.request('/usage');
+  }
+
   /** Fetches every page; retention keeps the total small. */
-  async listAll(maxPages = 20): Promise<FileItem[]> {
+  async listAll(opts: { trash?: boolean; vault?: boolean } = {}, maxPages = 20): Promise<FileItem[]> {
     const items: FileItem[] = [];
     let cursor: string | null = null;
     for (let page = 0; page < maxPages; page++) {
       const qs = new URLSearchParams({ limit: '200' });
+      if (opts.trash) qs.set('trash', '1');
+      if (opts.vault) qs.set('vault', '1');
       if (cursor) qs.set('cursor', cursor);
       const res: ListFilesResponse = await this.request(`/files?${qs}`);
       items.push(...res.items);
@@ -67,7 +73,34 @@ export class ApiClient {
     return res.url;
   }
 
+  createUpload(req: CreateUploadRequest): Promise<CreateUploadResponse> {
+    return this.request('/uploads', { method: 'POST', body: JSON.stringify(req) });
+  }
+
+  complete(id: string): Promise<FileItem> {
+    return this.request(`/uploads/${encodeURIComponent(id)}/complete`, { method: 'POST' });
+  }
+
+  setVault(id: string, inVault: boolean): Promise<FileItem> {
+    return this.request(`/files/${encodeURIComponent(id)}/vault`, { method: 'PUT', body: JSON.stringify({ inVault }) });
+  }
+
+  /** Moves a file to the trash. */
   remove(id: string): Promise<void> {
     return this.request(`/files/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  restore(id: string): Promise<FileItem> {
+    return this.request(`/files/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+  }
+
+  /** Permanently deletes a file that is already in the trash. */
+  removeForever(id: string): Promise<void> {
+    return this.request(`/files/${encodeURIComponent(id)}/permanent`, { method: 'DELETE' });
+  }
+
+  async emptyTrash(): Promise<number> {
+    const res: EmptyTrashResponse = await this.request('/trash', { method: 'DELETE' });
+    return res.deleted;
   }
 }
