@@ -1,0 +1,24 @@
+name = "fatup"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+R2_BUCKET_NAME = "fatup-files"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "fatup-files"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fatup"
+# Replace with the id printed by `wrangler d1 create fatup`.
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[triggers]
+crons = ["0 3 * * *"]
+
+# Secrets (set with `wrangler secret put <NAME>`):
+#   API_TOKEN, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ACCOUNT_ID

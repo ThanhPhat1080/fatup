@@ -1,0 +1,16 @@
+node_modules/
+dist/
+out/
+release/
+.wrangler/
+.dev.vars
+*.log
+.DS_Store
+# android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/*.jks
+android/*.keystore
+android/.idea/
