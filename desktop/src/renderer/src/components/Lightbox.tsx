@@ -14,7 +14,7 @@ type Props = {
   onDelete: (item: Item) => void;
 };
 
-const MIN_ZOOM = 1;
+const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 8;
 const STEP = 1.25;
 const clamp = (v: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, v));
@@ -30,12 +30,14 @@ export function Lightbox({ items, currentId, onChange, onClose, onDownload, onCo
   const item = items[index];
   const [fullUrl, setFullUrl] = useState<string | null>(null);
   const [fullFailed, setFullFailed] = useState(false);
+  const [fullReady, setFullReady] = useState(false);
 
   useEffect(() => {
     if (!item) return;
     let cancelled = false;
     setFullUrl(null);
     setFullFailed(false);
+    setFullReady(false);
     setZoom(1);
     setPan({ x: 0, y: 0 });
     setDims(null);
@@ -47,10 +49,17 @@ export function Lightbox({ items, currentId, onChange, onClose, onDownload, onCo
     };
   }, [item?.id]);
 
+  // Warm the cache for the neighbours so stepping through photos doesn't flash an empty frame.
+  useEffect(() => {
+    for (const n of [items[index - 1], items[index + 1]]) {
+      if (n?.thumbUrl) new Image().src = n.thumbUrl;
+    }
+  }, [index, items]);
+
   const applyZoom = useCallback((next: number) => {
     const z = clamp(next);
     setZoom(z);
-    if (z === 1) setPan({ x: 0, y: 0 });
+    if (z <= 1) setPan({ x: 0, y: 0 });
   }, []);
 
   useEffect(() => {
@@ -58,6 +67,8 @@ export function Lightbox({ items, currentId, onChange, onClose, onDownload, onCo
       if (e.key === 'Escape') onClose();
       if (e.key === '+' || e.key === '=') applyZoom(zoom * STEP);
       if (e.key === '-') applyZoom(zoom / STEP);
+      if (e.key === 'ArrowUp') applyZoom(zoom / STEP);
+      if (e.key === 'ArrowDown') applyZoom(zoom * STEP);
       if (e.key === '0') applyZoom(1);
       if (e.key === 'i' || e.key === 'I') setShowInfo((v) => !v);
       if (e.key === 'ArrowLeft' && index > 0) onChange(items[index - 1].id);
@@ -68,7 +79,6 @@ export function Lightbox({ items, currentId, onChange, onClose, onDownload, onCo
   }, [index, items, onChange, onClose, zoom, applyZoom]);
 
   if (!item) return null;
-  // Show the thumbnail while the original loads, and keep it if the browser can't decode the original (e.g. HEIC).
   const onWheel = (e: React.WheelEvent) => applyZoom(zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1));
   const onPointerDown = (e: React.PointerEvent) => {
     if (zoom <= 1) return;
@@ -83,7 +93,8 @@ export function Lightbox({ items, currentId, onChange, onClose, onDownload, onCo
     drag.current = null;
   };
   const when = new Date(item.createdAt).toLocaleString(locale === 'vi' ? 'vi-VN' : 'en-US');
-  const src = fullUrl && !fullFailed ? fullUrl : item.thumbUrl;
+  const imgStyle = { transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, cursor: zoom > 1 ? 'grab' : 'default' };
+  const imgHandlers = { onDoubleClick: () => applyZoom(zoom > 1 ? 1 : 2.5), onPointerDown, onPointerMove, onPointerUp };
 
   return (
     <div className="lightbox" role="dialog" aria-modal aria-label={item.name}>
@@ -130,24 +141,31 @@ export function Lightbox({ items, currentId, onChange, onClose, onDownload, onCo
             <ChevronLeft size={28} />
           </button>
         )}
-        {src ? (
-          <img
-            key={src}
-            src={src}
-            alt={item.name}
-            style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, cursor: zoom > 1 ? 'grab' : 'default' }}
-            onLoad={(e) => fullUrl && setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })}
-            onError={() => fullUrl && setFullFailed(true)}
-            onDoubleClick={() => applyZoom(zoom > 1 ? 1 : 2.5)}
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            draggable={false}
-          />
+        {item.thumbUrl || (fullUrl && !fullFailed) ? (
+          <>
+            {/* The preview stays put underneath; the original fades in on top once decoded, so nothing blinks. */}
+            {item.thumbUrl && <img key={`t-${item.id}`} src={item.thumbUrl} alt={item.name} style={imgStyle} {...imgHandlers} draggable={false} />}
+            {fullUrl && !fullFailed && (
+              <img
+                key={`f-${item.id}`}
+                className={`lightbox__full${fullReady ? ' is-ready' : ''}`}
+                src={fullUrl}
+                alt={item.name}
+                style={imgStyle}
+                {...imgHandlers}
+                onLoad={(e) => {
+                  setFullReady(true);
+                  setDims({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
+                }}
+                onError={() => setFullFailed(true)}
+                draggable={false}
+              />
+            )}
+          </>
         ) : (
           <Loader2 size={40} className="spin lightbox__spinner" />
         )}
-        {fullUrl === null && src && <Loader2 size={22} className="spin lightbox__loading" />}
+        {!fullReady && !fullFailed && (item.thumbUrl || fullUrl) && <Loader2 size={22} className="spin lightbox__loading" />}
         {index < items.length - 1 && (
           <button className="lightbox__nav lightbox__nav--next" onClick={() => onChange(items[index + 1].id)} aria-label={t.nextItem}>
             <ChevronRight size={28} />

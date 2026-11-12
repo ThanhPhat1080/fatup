@@ -892,14 +892,26 @@ h2 {
   position: relative;
   display: grid;
   place-items: center;
-  padding: 8px 72px 24px;
 }
+/* Pinned to the stage's box so "fit" is always the visible area; percentage heights don't resolve inside a grid. */
 .lightbox__stage img {
+  position: absolute;
+  top: 8px;
+  bottom: 24px;
+  left: 72px;
+  right: 72px;
+  width: calc(100% - 144px);
+  height: calc(100% - 32px);
   user-select: none;
-  max-width: 100%;
-  max-height: 100%;
   object-fit: contain;
   border-radius: 4px;
+}
+.lightbox__stage img.lightbox__full {
+  opacity: 0;
+  transition: opacity 0.15s ease-out;
+}
+.lightbox__stage img.lightbox__full.is-ready {
+  opacity: 1;
 }
 .lightbox__nav {
   position: absolute;
