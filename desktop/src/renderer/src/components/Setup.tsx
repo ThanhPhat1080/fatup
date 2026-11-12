@@ -6,10 +6,10 @@ import { PinInput } from './PinInput';
 
 type Step = 'connection' | 'pin' | 'confirm';
 
-export function Setup({ needsConnection, onDone }: { needsConnection: boolean; onDone: () => void }) {
+export function Setup({ needsConnection, defaultUrl, onDone }: { needsConnection: boolean; defaultUrl?: string; onDone: () => void }) {
   const { t } = useI18n();
   const [step, setStep] = useState<Step>(needsConnection ? 'connection' : 'pin');
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState(defaultUrl ?? '');
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

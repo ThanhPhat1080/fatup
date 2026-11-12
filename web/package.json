@@ -1,0 +1,25 @@
+{
+  "name": "@fatup/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FatUp web app (PWA), served by the Worker",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@fatup/shared": "*",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "lucide-react": "^1.72.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^5.9.3",
+    "vite": "*",
+    "vitest": "*"
+  }
+}

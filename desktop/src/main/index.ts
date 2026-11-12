@@ -6,11 +6,13 @@ import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import QRCode from 'qrcode';
 import type { FileItem } from '@fatup/shared';
-import type { AppState, Item, Prefs, Result, UnlockResult } from '../shared-ipc';
+import { autoUpdater } from 'electron-updater';
+import type { AppState, Item, Prefs, Result, UnlockResult, UpdateCheck } from '../shared-ipc';
 import { ApiClient, ApiError, normalizeServerUrl } from './api';
 import { ConfigStore } from './config';
 import { uniqueFileName } from './filename';
 import { checkPin, hashPin, isValidPin } from './pin';
+import { fetchLatestRelease, isNewer, type ReleaseInfo } from './updater';
 
 if (process.env.FATUP_USER_DATA) app.setPath('userData', process.env.FATUP_USER_DATA);
 
@@ -18,6 +20,14 @@ let config: ConfigStore;
 let unlocked = false;
 let mainWindow: BrowserWindow | null = null;
 const itemCache = new Map<string, FileItem>();
+let pendingRelease: ReleaseInfo | null = null;
+
+/**
+ * In-app install needs a signed app on macOS and a package we can replace in place on Linux (AppImage).
+ * Everywhere else we open the release page instead.
+ */
+const canAutoInstall = () =>
+  app.isPackaged && (process.platform === 'win32' || (process.platform === 'linux' && Boolean(process.env.APPIMAGE)));
 
 const downloadDir = () => process.env.FATUP_DOWNLOAD_DIR || app.getPath('downloads');
 
@@ -62,9 +72,48 @@ async function fetchBytes(url: string): Promise<Buffer> {
 }
 
 function registerIpc() {
+  ipcMain.handle('appVersion', () => app.getVersion());
+
+  ipcMain.handle('checkForUpdate', async (): Promise<UpdateCheck> => {
+    try {
+      const release = await fetchLatestRelease();
+      const current = app.getVersion();
+      if (!isNewer(release.version, current)) {
+        pendingRelease = null;
+        return { status: 'latest', current };
+      }
+      pendingRelease = release;
+      return { status: 'available', current, version: release.version, auto: canAutoInstall() };
+    } catch (err) {
+      return { status: 'error', detail: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('installUpdate', async (): Promise<Result> => {
+    if (!pendingRelease) return { ok: false, error: 'no_update' };
+    try {
+      if (!canAutoInstall()) {
+        await shell.openExternal(pendingRelease.url);
+        return { ok: true, value: undefined };
+      }
+      autoUpdater.autoDownload = false;
+      autoUpdater.on('download-progress', (p) => mainWindow?.webContents.send('updateProgress', { percent: Math.round(p.percent) }));
+      const found = await autoUpdater.checkForUpdates();
+      if (!found?.isUpdateAvailable) return { ok: false, error: 'no_update' };
+      await autoUpdater.downloadUpdate();
+      // Give the renderer a moment to show "restarting", then swap in the new version.
+      setTimeout(() => autoUpdater.quitAndInstall(), 500);
+      return { ok: true, value: undefined };
+    } catch (err) {
+      autoUpdater.removeAllListeners('download-progress');
+      return { ok: false, error: 'update_failed', detail: (err as Error).message };
+    }
+  });
+
   ipcMain.handle('state', (): AppState => {
     const s = config.snapshot;
     return {
+      platform: 'desktop',
       configured: Boolean(s.serverUrl && config.token),
       hasPin: Boolean(s.pin),
       unlocked,

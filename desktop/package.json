@@ -19,6 +19,7 @@
     "dist:linux": "electron-vite build && electron-builder --linux --publish never"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {

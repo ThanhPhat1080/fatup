@@ -15,3 +15,5 @@ android/*.jks
 android/*.keystore
 android/.idea/
 .env
+worker/public/*
+!worker/public/.gitkeep

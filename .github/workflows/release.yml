@@ -48,6 +48,8 @@ jobs:
             desktop/release/*/*.exe
             desktop/release/*/*.AppImage
             desktop/release/*/*.deb
+            desktop/release/*/latest*.yml
+            desktop/release/*/*.exe.blockmap
           if-no-files-found: error
 
   android:

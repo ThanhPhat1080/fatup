@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { KeyRound, Languages, Lock as LockIcon, LogOut, QrCode, Server } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Download, KeyRound, Languages, Loader2, Lock as LockIcon, LogOut, QrCode, RefreshCw, Server } from 'lucide-react';
 import type { AppState, Lang, Prefs } from '../../../shared-ipc';
 import { useI18n } from '../lib/i18n';
 import { ConfirmDialog, Dialog } from './Dialog';
@@ -14,6 +14,15 @@ type Props = {
   onSignOut: () => void;
 };
 
+type UpdateUi =
+  | { s: 'idle' }
+  | { s: 'checking' }
+  | { s: 'latest' }
+  | { s: 'available'; version: string; auto: boolean }
+  | { s: 'installing'; percent: number }
+  | { s: 'restarting' }
+  | { s: 'error'; key: 'updateCheckFailed' | 'updateFailed' };
+
 type Panel = null | 'qr' | 'pin';
 
 export function Settings({ state, onClose, onPrefs, onToast, onLock, onSignOut }: Props) {
@@ -24,6 +33,44 @@ export function Settings({ state, onClose, onPrefs, onToast, onLock, onSignOut }
   const [errorKey, setErrorKey] = useState(0);
   const [oldPin, setOldPin] = useState<string | null>(null);
   const [confirmSignOut, setConfirmSignOut] = useState(false);
+  const [version, setVersion] = useState('');
+  const [update, setUpdate] = useState<UpdateUi>({ s: 'idle' });
+
+  useEffect(() => {
+    window.fatup.appVersion().then(setVersion);
+    return window.fatup.onUpdateProgress(({ percent }) => setUpdate((u) => (u.s === 'installing' ? { s: 'installing', percent } : u)));
+  }, []);
+
+  async function checkUpdate() {
+    setUpdate({ s: 'checking' });
+    const res = await window.fatup.checkForUpdate();
+    if (res.status === 'latest') setUpdate({ s: 'latest' });
+    else if (res.status === 'available') setUpdate({ s: 'available', version: res.version, auto: res.auto });
+    else setUpdate({ s: 'error', key: 'updateCheckFailed' });
+  }
+
+  async function installUpdate(auto: boolean) {
+    if (auto) setUpdate({ s: 'installing', percent: 0 });
+    const res = await window.fatup.installUpdate();
+    if (!res.ok) setUpdate({ s: 'error', key: 'updateFailed' });
+    else if (auto) setUpdate({ s: 'restarting' });
+  }
+
+  const updateText =
+    update.s === 'checking'
+      ? t.checking
+      : update.s === 'latest'
+        ? t.upToDate
+        : update.s === 'available'
+          ? t.updateAvailable(update.version)
+          : update.s === 'installing'
+            ? t.updateDownloading(update.percent)
+            : update.s === 'restarting'
+              ? t.updateRestarting
+              : update.s === 'error'
+                ? t[update.key]
+                : '';
+  const busy = update.s === 'checking' || update.s === 'installing' || update.s === 'restarting';
 
   function showPanel(p: Panel) {
     setPanel(panel === p ? null : p);
@@ -78,10 +125,35 @@ export function Settings({ state, onClose, onPrefs, onToast, onLock, onSignOut }
           </span>
         </div>
 
+        {state.platform === 'desktop' && (
+        <div className="settings__row settings__row--update">
+          <RefreshCw size={20} className="settings__icon" />
+          <span className="settings__label">
+            {t.version} {version}
+            {updateText && (
+              <span className={`settings__sub${update.s === 'error' ? ' error' : ''}`} role="status">
+                {updateText}
+              </span>
+            )}
+          </span>
+          {update.s === 'available' ? (
+            <button className="btn btn--filled" onClick={() => installUpdate(update.auto)}>
+              <Download size={16} /> {update.auto ? t.updateNow : t.updateOpenPage}
+            </button>
+          ) : (
+            <button className="btn btn--text" onClick={checkUpdate} disabled={busy}>
+              {busy && <Loader2 size={16} className="spin" />} {t.checkUpdate}
+            </button>
+          )}
+        </div>
+        )}
+
+        {state.platform === 'desktop' && (
         <button className="settings__row settings__row--btn" onClick={() => showPanel('qr')} aria-expanded={panel === 'qr'}>
           <QrCode size={20} className="settings__icon" />
           <span className="settings__label">{t.pairAndroid}</span>
         </button>
+        )}
         {panel === 'qr' && (
           <div className="settings__panel">
             {qr ? (

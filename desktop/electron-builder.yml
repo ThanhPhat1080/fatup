@@ -28,4 +28,8 @@ linux:
   syncDesktopName: true
   maintainer: FatUp
   artifactName: FatUp-${version}-linux-${arch}.${ext}
+publish:
+  provider: github
+  owner: ThanhPhat1080
+  repo: fatup
 npmRebuild: false

@@ -142,6 +142,19 @@ curl https://fatup.<tên-bạn>.workers.dev/health
 
 Kết quả đúng là `{"ok":true}`. Cron xóa file cũ chạy lúc 03:00 UTC mỗi ngày.
 
+### Bước 9. Dùng bản web (PWA)
+
+`npm run deploy` build luôn bản web và đẩy lên cùng Worker, nên không cần deploy thêm gì. Mở `https://fatup.<tên-bạn>.workers.dev` trên trình duyệt (điện thoại hay máy tính đều được):
+
+1. Ô URL đã điền sẵn, bạn chỉ cần dán token (chuỗi tạo ở bước 7) rồi đặt PIN 4 số.
+2. Cài như một app: Chrome/Edge chọn **Install app**, Safari (iPhone) chọn **Share → Add to Home Screen**.
+
+Bản web xem, tải về và xóa file giống app máy tính, nhưng không có phần cập nhật và ghép QR cho Android.
+
+**Lưu ý bảo mật:** token được mã hóa bằng PIN rồi lưu trong trình duyệt. PIN 4 số chỉ là khóa che màn hình, không chống được người có quyền truy cập vào dữ liệu trình duyệt của bạn. Đừng dùng bản web trên máy dùng chung.
+
+**Nút "Copy ảnh"** trên web cần bucket R2 cho phép CORS. Nếu không cấu hình, nút này sẽ dùng ảnh xem trước thay cho ảnh gốc. Việc này không bắt buộc.
+
 ## 2. Cài app máy tính
 
 Tải bản cài trong mục [Releases](https://github.com/ThanhPhat1080/fatup/releases), hoặc tự build (xem phần 5).
@@ -185,6 +198,12 @@ Desktop:
 
 ```bash
 npm run -w @fatup/desktop dev
+```
+
+Web (PWA, dùng chung giao diện với desktop, chạy ở http://localhost:5173 và nối vào server bạn nhập):
+
+```bash
+npm run -w @fatup/web dev
 ```
 
 Test:

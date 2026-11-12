@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { FatupApi } from '../shared-ipc';
+import type { FatupApi, UpdateProgress } from '../shared-ipc';
 
 const api: FatupApi = {
   getState: () => ipcRenderer.invoke('state'),
@@ -17,6 +17,14 @@ const api: FatupApi = {
   copyImage: (id) => ipcRenderer.invoke('copyImage', id),
   remove: (id) => ipcRenderer.invoke('remove', id),
   pairingQr: (pin) => ipcRenderer.invoke('pairingQr', pin),
+  appVersion: () => ipcRenderer.invoke('appVersion'),
+  checkForUpdate: () => ipcRenderer.invoke('checkForUpdate'),
+  installUpdate: () => ipcRenderer.invoke('installUpdate'),
+  onUpdateProgress: (cb) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: UpdateProgress) => cb(p);
+    ipcRenderer.on('updateProgress', handler);
+    return () => ipcRenderer.removeListener('updateProgress', handler);
+  },
 };
 
 contextBridge.exposeInMainWorld('fatup', api);

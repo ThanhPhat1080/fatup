@@ -29,7 +29,7 @@ export function App() {
 
   let screen;
   if (!state.configured || !state.hasPin) {
-    screen = <Setup needsConnection={!state.configured} onDone={reload} />;
+    screen = <Setup needsConnection={!state.configured} defaultUrl={state.defaultServerUrl} onDone={reload} />;
   } else if (!state.unlocked) {
     screen = <Lock onUnlocked={reload} onReset={reload} />;
   } else {

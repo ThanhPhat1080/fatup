@@ -1,7 +1,12 @@
 {
   "name": "fatup",
   "private": true,
-  "workspaces": ["shared", "worker", "desktop"],
+  "workspaces": [
+    "shared",
+    "worker",
+    "desktop",
+    "web"
+  ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present"

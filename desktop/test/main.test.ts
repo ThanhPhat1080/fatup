@@ -140,3 +140,19 @@ describe('ApiClient', () => {
     await expect(offline.verify()).rejects.toMatchObject({ code: 'network' });
   });
 });
+
+import { isNewer } from '../src/main/updater';
+
+describe('isNewer', () => {
+  it('compares x.y.z numerically', () => {
+    expect(isNewer('0.1.1', '0.1.0')).toBe(true);
+    expect(isNewer('0.10.0', '0.9.0')).toBe(true);
+    expect(isNewer('1.0.0', '0.9.9')).toBe(true);
+    expect(isNewer('0.1.0', '0.1.0')).toBe(false);
+    expect(isNewer('0.1.0', '0.2.0')).toBe(false);
+  });
+  it('accepts a v prefix and ignores pre-release suffixes', () => {
+    expect(isNewer('v0.2.0', '0.1.0')).toBe(true);
+    expect(isNewer('0.1.0', '0.0.0-dev')).toBe(true);
+  });
+});

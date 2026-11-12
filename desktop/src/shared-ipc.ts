@@ -11,6 +11,10 @@ export type Prefs = {
 };
 
 export type AppState = {
+  /** Which shell is hosting the UI; the web (PWA) build hides desktop-only features. */
+  platform: 'desktop' | 'web';
+  /** Pre-filled server URL for first setup (the web build is served by the Worker itself). */
+  defaultServerUrl?: string;
   configured: boolean;
   hasPin: boolean;
   unlocked: boolean;
@@ -28,6 +32,13 @@ export type UnlockResult =
   | { ok: false; reason: 'wrong'; attemptsLeft: number }
   | { ok: false; reason: 'locked'; lockedUntil: number };
 
+export type UpdateCheck =
+  | { status: 'latest'; current: string }
+  | { status: 'available'; current: string; version: string; auto: boolean }
+  | { status: 'error'; detail?: string };
+
+export type UpdateProgress = { percent: number };
+
 export type FatupApi = {
   getState(): Promise<AppState>;
   testConnection(serverUrl: string, token: string): Promise<Result>;
@@ -44,4 +55,9 @@ export type FatupApi = {
   copyImage(id: string): Promise<Result>;
   remove(id: string): Promise<Result>;
   pairingQr(pin: string): Promise<UnlockResult & { qr?: string }>;
+  appVersion(): Promise<string>;
+  checkForUpdate(): Promise<UpdateCheck>;
+  /** Downloads and installs the update (restarting the app), or opens the release page when auto-install isn't possible. */
+  installUpdate(): Promise<Result>;
+  onUpdateProgress(cb: (p: UpdateProgress) => void): () => void;
 };
