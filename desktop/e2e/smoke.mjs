@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import { TOKEN, startMockServer } from './mock-server.mjs';
 
 const require = createRequire(import.meta.url);
-const { _electron: electron } = require('playwright');
+const { _electron: electron } = require('playwright-core');
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const shots = process.env.SCREENSHOT_DIR;
 if (shots) mkdirSync(shots, { recursive: true });

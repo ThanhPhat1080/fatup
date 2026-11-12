@@ -96,6 +96,7 @@ Tất cả trả JSON, lỗi có dạng `{ "error": { "code": string, "message":
 | Method | Path | Mô tả |
 |---|---|---|
 | `GET` | `/health` | Không cần auth. `{ ok: true }` |
+| `GET` | `/me` | Có auth. Client dùng để kiểm tra URL + token khi setup |
 | `POST` | `/uploads` | Body `{ name, mime, size, hasThumb, device? }`. Kiểm tra `size ≤ 100MB`. Tạo row `pending`. Trả `{ id, uploadUrl, thumbUploadUrl? }` |
 | `POST` | `/uploads/:id/complete` | `HEAD` R2 để xác nhận object tồn tại và đúng size. Đặt `status = 'ready'`, `created_at = now`. Trả `FileItem` |
 | `GET` | `/files?kind=all\|image\|file&cursor=&limit=100` | Chỉ file `ready`, mới nhất trước. Trả `{ items: FileItem[], nextCursor? }` |
@@ -118,7 +119,7 @@ type FileItem = {
 
 ## 6. Android
 
-- **Kotlin**, `minSdk 28` (để decode HEIC bằng `ImageDecoder`), package `dev.fatup.app`.
+- **Kotlin**, `minSdk 28` (để decode HEIC bằng `ImageDecoder`), `compileSdk`/`targetSdk 37`, package `dev.fatup.app`. Build bằng AGP 9 + Gradle 9 (Kotlin tích hợp sẵn trong AGP).
 - **Không có màn hình chính**. Chỉ có:
   1. `ShareActivity` (trong suốt) nhận `ACTION_SEND` / `ACTION_SEND_MULTIPLE` với `*/*`. Activity copy các URI vào cache của app (vì quyền đọc URI sẽ mất khi activity đóng), enqueue một `UploadWorker` cho mỗi file, hiện toast "Đang gửi N file", rồi đóng.
   2. `SetupActivity` mở khi chưa có config, hoặc từ icon launcher. Có nút **Quét QR** (zxing-android-embedded, không phụ thuộc Google Play) hoặc nhập tay URL + token. Có nút "Gửi thử" để gọi `/health` có auth.
@@ -126,6 +127,7 @@ type FileItem = {
   1. Tạo thumbnail nếu là ảnh: cạnh dài 400px, JPEG q80, có tôn trọng EXIF orientation.
   2. `POST /uploads`, rồi PUT file (OkHttp stream từ file cache), rồi PUT thumbnail, rồi `complete`.
   3. Xóa file cache khi xong.
+  - Mỗi lần share là **một batch**: một worker gửi lần lượt từng file, tiến độ lưu vào file JSON để retry tiếp đúng chỗ. Lỗi 401 thì dừng cả batch. Lỗi 4xx khác thì bỏ qua file đó. Lỗi mạng/5xx thì retry, tối đa 8 lần.
 - Notification foreground hiện tiến độ "Đang gửi 3/10". Xong thì hiện "Đã gửi 10 file", lỗi vĩnh viễn thì "Gửi thất bại: <tên>".
 - File > 100MB bị từ chối ngay ở `ShareActivity`, báo bằng toast.
 - Chuỗi giao diện ở `values/strings.xml` (en) và `values-vi/strings.xml`.
@@ -157,10 +159,12 @@ type FileItem = {
 ```
 
 - Tab **Tất cả / Ảnh / File**. Mặc định tab Ảnh là lưới, tab Tất cả và File là list. Nút ▦/☰ đổi chế độ cho tab hiện tại (nhớ trong config).
-- Ô tìm kiếm lọc theo tên phía client trong danh sách đã tải.
+- Desktop tải toàn bộ danh sách (`kind=all`, tối đa 20 trang × 200 item; 30 ngày thì dư), chuyển tab và tìm kiếm đều lọc ở phía client nên tức thì.
+- Ô tìm kiếm không phân biệt hoa thường và dấu tiếng Việt ("da lat" tìm ra "Đà Lạt").
 - Nhóm theo ngày: "Hôm nay", "Hôm qua", rồi `dd/MM/yyyy` (en: "Today", "Yesterday", `MMM d, yyyy`).
 - **Click ảnh** mở lightbox (← → để chuyển, Esc để đóng). **Click file khác** thì tải về.
-- Menu `⋮` / chuột phải gồm: **Tải về**, **Copy ảnh** (chỉ có với ảnh), **Xóa** (có confirm).
+- Menu `⋮` / chuột phải gồm: **Tải về**, **Copy ảnh** (chỉ có với ảnh; HEIC thì copy thumbnail JPEG vì Chromium không decode được HEIC), **Xóa** (có confirm).
+- Phím tắt: `Ctrl/⌘+R` refresh, `Ctrl/⌘+F` tìm kiếm, `←/→/Esc` trong lightbox.
 - **Tải về**: main process tải vào `~/Downloads`, trùng tên thì thêm ` (1)`, ` (2)`…, xong gọi `shell.showItemInFolder`. Item đã tải về hiện ✓ (danh sách id lưu local trên từng máy).
 - Refresh: polling 60s, tự refresh khi cửa sổ focus, nút ↻ (xoay khi đang tải).
 - Trạng thái rỗng: minh họa nhỏ + "Share file từ Android để bắt đầu".
