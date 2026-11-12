@@ -14,3 +14,4 @@ android/local.properties
 android/*.jks
 android/*.keystore
 android/.idea/
+.env

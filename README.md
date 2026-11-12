@@ -32,6 +32,10 @@ File đi thẳng giữa thiết bị và R2 qua presigned URL. Worker chỉ cấ
 
 Cần tài khoản Cloudflare và Node 22.
 
+> **Lưu ý:** từ bước 2 trở đi, mọi lệnh đều chạy **trong thư mục `worker/`** (trừ khi có ghi khác). Chạy ở thư mục gốc sẽ báo lỗi `Missing script`.
+
+### Bước 1. Tải code và cài thư viện
+
 ```bash
 git clone https://github.com/ThanhPhat1080/fatup && cd fatup
 ```
@@ -40,51 +44,91 @@ git clone https://github.com/ThanhPhat1080/fatup && cd fatup
 npm install
 ```
 
+### Bước 2. Đăng nhập Cloudflare
+
 ```bash
-cd worker && npx wrangler login
+cd worker
 ```
 
-**Tạo bucket R2 và database D1:**
+```bash
+npx wrangler login
+```
+
+Trình duyệt sẽ mở ra, bạn bấm **Allow**.
+
+### Bước 3. Tạo bucket R2 (nơi chứa file)
 
 ```bash
 npx wrangler r2 bucket create fatup-files
 ```
 
+### Bước 4. Tạo database D1 (nơi lưu metadata)
+
 ```bash
 npx wrangler d1 create fatup
 ```
 
-Chép `database_id` mà lệnh trên in ra vào `worker/wrangler.toml` (thay chuỗi `00000000-…`). Sau đó tạo bảng:
+Lệnh in ra một đoạn có dòng `database_id = "xxxxxxxx-xxxx-…"`. Copy chuỗi UUID đó, mở file `worker/wrangler.toml` và thay vào dòng `database_id` (đang là chuỗi mẫu `00000000-…`):
+
+```toml
+[[d1_databases]]
+binding = "DB"
+database_name = "fatup"
+database_id = "dán-id-của-bạn-vào-đây"
+```
+
+Sau đó tạo các bảng trong database:
 
 ```bash
 npm run db:migrate:remote
 ```
 
-**Tạo R2 API token** để ký presigned URL. Vào Dashboard → **R2** → **Manage API tokens** → **Create API token**, chọn quyền **Object Read & Write**, giới hạn vào bucket `fatup-files`. Giữ lại *Access Key ID*, *Secret Access Key* và *Account ID* (Account ID nằm trong URL dashboard hoặc trang R2). Lưu chúng thành secret:
+Khi wrangler hỏi xác nhận, gõ `y`.
+
+### Bước 5. Tạo R2 API token
+
+Token này để Worker ký presigned URL.
+
+1. Vào Dashboard → **R2** → **Manage API tokens** → **Create API token**.
+2. Chọn quyền **Object Read & Write**, giới hạn vào bucket `fatup-files`.
+3. Sau khi tạo, giữ lại 3 giá trị: *Access Key ID*, *Secret Access Key* và *Account ID* (Account ID nằm trong URL dashboard hoặc trang R2). Secret Access Key chỉ hiện một lần.
+
+### Bước 6. Lưu 3 giá trị trên thành secret
+
+Mỗi lệnh dưới đây có phần tên secret cố định (`R2_ACCESS_KEY_ID`…), bạn gõ nguyên như vậy. Sau khi bấm Enter, wrangler hỏi `Enter a secret value:`, lúc đó bạn dán **giá trị** tương ứng rồi Enter. Khi dán, màn hình không hiện ký tự nào, đó là bình thường.
 
 ```bash
 npx wrangler secret put R2_ACCESS_KEY_ID
 ```
+→ dán *Access Key ID*
 
 ```bash
 npx wrangler secret put R2_SECRET_ACCESS_KEY
 ```
+→ dán *Secret Access Key*
 
 ```bash
 npx wrangler secret put R2_ACCOUNT_ID
 ```
+→ dán *Account ID*
 
-**Tạo token đăng nhập của riêng bạn**: lệnh dưới in ra một chuỗi ngẫu nhiên. Cất kỹ chuỗi này, rồi dán vào lệnh tiếp theo:
+Nếu wrangler hỏi có muốn tạo Worker mới không, chọn **Yes**.
+
+### Bước 7. Tạo token đăng nhập của riêng bạn
+
+Đây là "mật khẩu" để app máy tính và app Android nói chuyện với server. Lệnh dưới in ra một chuỗi ngẫu nhiên, hãy cất kỹ chuỗi này:
 
 ```bash
 npm run token:new
 ```
 
+Rồi lưu nó thành secret `API_TOKEN` (dán chuỗi vừa tạo khi được hỏi giá trị):
+
 ```bash
 npx wrangler secret put API_TOKEN
 ```
 
-**Deploy:**
+### Bước 8. Deploy
 
 ```bash
 npm run deploy
