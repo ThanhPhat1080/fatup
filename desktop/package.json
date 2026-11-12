@@ -1,0 +1,46 @@
+{
+  "name": "@fatup/desktop",
+  "productName": "FatUp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Receive photos and files from your Android phone",
+  "main": "out/main/index.js",
+  "author": "FatUp",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "e2e": "electron-vite build && node e2e/smoke.mjs",
+    "dist": "electron-vite build && electron-builder --publish never",
+    "dist:mac": "electron-vite build && electron-builder --mac --publish never",
+    "dist:win": "electron-vite build && electron-builder --win --publish never",
+    "dist:linux": "electron-vite build && electron-builder --linux --publish never"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@fatup/shared": "*",
+    "@types/node": "^22.15.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "45.3.1",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "lucide-react": "^1.72.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.0"
+  },
+  "desktopName": "fatup.desktop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ThanhPhat1080/fatup.git"
+  }
+}

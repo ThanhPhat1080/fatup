@@ -1,0 +1,31 @@
+appId: dev.fatup.desktop
+productName: FatUp
+executableName: fatup
+directories:
+  output: release/${version}
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - "!**/*.map"
+asar: true
+mac:
+  target: [dmg]
+  category: public.app-category.utilities
+  identity: null
+dmg:
+  artifactName: FatUp-${version}-mac-${arch}.${ext}
+win:
+  target: [nsis]
+  artifactName: FatUp-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+linux:
+  target: [AppImage, deb]
+  category: Utility
+  executableName: fatup
+  syncDesktopName: true
+  maintainer: FatUp
+  artifactName: FatUp-${version}-linux-${arch}.${ext}
+npmRebuild: false
