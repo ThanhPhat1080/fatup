@@ -53,7 +53,7 @@ Một khu vực để **cất file ra khỏi danh sách chính**. Chỉ xem đư
 - **Xóa file trong két:** file ra khỏi két và vào thùng rác thường. Bấm **Hoàn tác** sẽ đưa nó về két.
 - **Lưu ý quan trọng:** két sắt là lớp che ở giao diện app, **không phải mã hóa**. File vẫn nằm bình thường trên R2, và ai có API token (ví dụ app Android hay client khác) vẫn có thể thấy chúng qua API. File trong két vẫn tính vào dung lượng và vẫn tự xóa sau 30 ngày như mọi file.
 
-Thiết kế chi tiết nằm ở [SPEC.md](SPEC.md).
+Thiết kế chi tiết nằm ở [SPEC.md](SPEC.md). Lịch sử thay đổi theo từng phiên bản nằm ở [CHANGELOG.md](CHANGELOG.md).
 
 ## Cấu trúc
 
