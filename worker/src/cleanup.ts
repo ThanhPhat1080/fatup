@@ -30,7 +30,7 @@ export async function cleanup(env: Env, now = Date.now()): Promise<number> {
   for (;;) {
     const { results } = await env.DB.prepare(
       `SELECT id FROM files
-       WHERE (status = 'ready' AND deleted_at IS NULL AND COALESCE(retain_from, created_at) < ?)
+       WHERE (status = 'ready' AND kind != 'link' AND deleted_at IS NULL AND COALESCE(retain_from, created_at) < ?)
           OR (status = 'ready' AND deleted_at IS NOT NULL AND deleted_at < ?)
           OR (status = 'pending' AND created_at < ?)
        LIMIT ?`,

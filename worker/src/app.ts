@@ -10,6 +10,11 @@ import {
   DEFAULT_QUOTA_BYTES,
   type UsageResponse,
   kindFromMime,
+  LINK_MIME,
+  MAX_URL_LENGTH,
+  normalizeUrl,
+  siteOf,
+  type CreateLinkRequest,
   type CreateUploadRequest,
   type CreateUploadResponse,
   type EmptyTrashResponse,
@@ -36,6 +41,9 @@ type Row = {
   in_vault: number;
   tags: string;
   retain_from: number | null;
+  url: string | null;
+  previewed_at: number | null;
+  title_set: number;
 };
 
 type AppEnv = { Bindings: Env; Variables: { presigner: Presigner } };
@@ -57,6 +65,13 @@ async function tokenMatches(given: string, expected: string): Promise<boolean> {
   ]);
   return crypto.subtle.timingSafeEqual(a, b);
 }
+
+/** Link titles are free text, so unlike file names they keep slashes. */
+export function sanitizeTitle(raw: string): string {
+  return raw.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 255);
+}
+
+const hostOf = (url: string) => new URL(url).hostname;
 
 /** Strips directory parts and control characters from a client-supplied name. */
 export function sanitizeName(raw: string): string {
@@ -96,6 +111,9 @@ async function toItem(row: Row, presigner: Presigner): Promise<FileItem> {
     deletedAt: row.deleted_at,
     inVault: row.in_vault === 1,
     tags: parseTags(row.tags),
+    url: row.kind === 'link' ? row.url : null,
+    site: row.kind === 'link' && row.url ? siteOf(row.url) : null,
+    previewed: row.previewed_at !== null,
   };
 }
 
@@ -187,9 +205,51 @@ export function createApp(options: AppOptions = {}) {
     return c.json(await toItem({ ...row, status: 'ready', has_thumb: hasThumb ? 1 : 0, created_at: now }, c.get('presigner')));
   });
 
+  app.post('/links', async (c) => {
+    let body: Partial<CreateLinkRequest>;
+    try {
+      body = await c.req.json();
+    } catch {
+      return fail(c, 400, 'bad_request', 'Body must be JSON');
+    }
+    if (typeof body.url !== 'string') return fail(c, 400, 'bad_request', 'url is required');
+    const url = normalizeUrl(body.url);
+    if (!url) return fail(c, 400, 'bad_url', `url must be an http(s) address of at most ${MAX_URL_LENGTH} characters`);
+
+    const existing = await c.env.DB.prepare(`SELECT * FROM files WHERE kind = 'link' AND url = ? AND deleted_at IS NULL`).bind(url).first<Row>();
+    if (existing) return c.json(await toItem(existing, c.get('presigner')));
+
+    const title = typeof body.title === 'string' ? sanitizeTitle(body.title) : '';
+    const row: Row = {
+      id: ulid(),
+      name: title || hostOf(url),
+      mime: LINK_MIME,
+      size: 0,
+      kind: 'link',
+      has_thumb: 0,
+      status: 'ready',
+      device: typeof body.device === 'string' ? body.device.slice(0, 64) : null,
+      created_at: Date.now(),
+      deleted_at: null,
+      in_vault: 0,
+      tags: '',
+      retain_from: null,
+      url,
+      previewed_at: null,
+      title_set: title ? 1 : 0,
+    };
+    await c.env.DB.prepare(
+      `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, device, created_at, url, title_set)
+       VALUES (?, ?, ?, 0, 'link', 0, 'ready', ?, ?, ?, ?)`,
+    )
+      .bind(row.id, row.name, row.mime, row.device, row.created_at, url, row.title_set)
+      .run();
+    return c.json(await toItem(row, c.get('presigner')), 201);
+  });
+
   app.get('/files', async (c) => {
     const kind = c.req.query('kind') ?? 'all';
-    if (!['all', 'image', 'file'].includes(kind)) return fail(c, 400, 'bad_request', 'Invalid kind');
+    if (!['all', 'image', 'file', 'link'].includes(kind)) return fail(c, 400, 'bad_request', 'Invalid kind');
     const limitRaw = Number(c.req.query('limit') ?? DEFAULT_PAGE_SIZE);
     const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_PAGE_SIZE, 1), MAX_PAGE_SIZE);
 
@@ -200,7 +260,10 @@ export function createApp(options: AppOptions = {}) {
     const vault = c.req.query('vault') === '1';
     const where = [`status = 'ready'`, trash ? 'deleted_at IS NOT NULL' : `deleted_at IS NULL AND in_vault = ${vault ? 1 : 0}`];
     const params: unknown[] = [];
-    if (kind !== 'all') {
+    // Links are only returned when asked for (or in the trash), so clients that predate them never see one.
+    if (kind === 'all') {
+      if (!trash) where.push(`kind != 'link'`);
+    } else {
       where.push('kind = ?');
       params.push(kind);
     }
@@ -230,6 +293,7 @@ export function createApp(options: AppOptions = {}) {
     const id = c.req.param('id');
     const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
     if (!row) return fail(c, 404, 'not_found', 'File not found');
+    if (row.kind === 'link') return fail(c, 400, 'not_a_file', 'Links have nothing to download');
     const url = await c.get('presigner').get(fileKey(id), { filename: row.name, contentType: row.mime });
     return c.json({ url });
   });
@@ -247,16 +311,16 @@ export function createApp(options: AppOptions = {}) {
     return c.body(null, 204);
   });
 
-  // Updates a file's display name and/or colour tags. The R2 objects are keyed by id, so a rename never touches them.
+  // Updates a file's display name and/or colour tags, and for links also the address. The R2 objects are keyed by id, so a rename never touches them.
   app.patch('/files/:id', async (c) => {
     const id = c.req.param('id');
-    let body: { name?: unknown; tags?: unknown };
+    let body: { name?: unknown; tags?: unknown; url?: unknown };
     try {
       body = await c.req.json();
     } catch {
       return fail(c, 400, 'bad_request', 'Body must be JSON');
     }
-    if (body.name === undefined && body.tags === undefined) return fail(c, 400, 'bad_request', 'Provide name and/or tags');
+    if (body.name === undefined && body.tags === undefined && body.url === undefined) return fail(c, 400, 'bad_request', 'Provide name, tags and/or url');
     if (body.name !== undefined) {
       if (typeof body.name !== 'string' || body.name.trim() === '') return fail(c, 400, 'bad_request', 'name must be a non-empty string');
       if (body.name.length > 255) return fail(c, 400, 'bad_request', 'name must be at most 255 characters');
@@ -264,10 +328,31 @@ export function createApp(options: AppOptions = {}) {
     if (body.tags !== undefined && !isTagList(body.tags)) return fail(c, 400, 'bad_request', `tags must be at most ${MAX_TAGS} distinct colours`);
     const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
     if (!row) return fail(c, 404, 'not_found', 'File not found');
-    const name = typeof body.name === 'string' ? sanitizeName(body.name) : row.name;
-    const tags = isTagList(body.tags) ? body.tags.join(',') : row.tags;
-    await c.env.DB.prepare('UPDATE files SET name = ?, tags = ? WHERE id = ?').bind(name, tags, id).run();
-    return c.json(await toItem({ ...row, name, tags }, c.get('presigner')));
+
+    let next: Row = { ...row };
+    if (typeof body.name === 'string') {
+      next.name = row.kind === 'link' ? sanitizeTitle(body.name) || row.name : sanitizeName(body.name);
+      if (row.kind === 'link') next.title_set = 1;
+    }
+    if (isTagList(body.tags)) next.tags = body.tags.join(',');
+
+    if (body.url !== undefined) {
+      if (row.kind !== 'link') return fail(c, 400, 'bad_request', 'Only links have a url');
+      const url = typeof body.url === 'string' ? normalizeUrl(body.url) : null;
+      if (!url) return fail(c, 400, 'bad_url', `url must be an http(s) address of at most ${MAX_URL_LENGTH} characters`);
+      if (url !== row.url) {
+        const clash = await c.env.DB.prepare(`SELECT id FROM files WHERE kind = 'link' AND url = ? AND deleted_at IS NULL AND id != ?`).bind(url, id).first();
+        if (clash) return fail(c, 409, 'duplicate_url', 'This link is already saved');
+        // The old preview describes another page: drop it so it is fetched again for the new address.
+        await c.env.BUCKET.delete(thumbKey(id));
+        next = { ...next, url, has_thumb: 0, previewed_at: null };
+        if (!next.title_set) next.name = hostOf(url);
+      }
+    }
+    await c.env.DB.prepare('UPDATE files SET name = ?, tags = ?, url = ?, has_thumb = ?, previewed_at = ?, title_set = ? WHERE id = ?')
+      .bind(next.name, next.tags, next.url, next.has_thumb, next.previewed_at, next.title_set, id)
+      .run();
+    return c.json(await toItem(next, c.get('presigner')));
   });
 
   // Moves a file into or out of the Vault.

@@ -392,6 +392,109 @@ describe('cleanup and the trash', () => {
   });
 });
 
+const patchJson = (path: string, body: unknown) =>
+  call(path, { method: 'PATCH', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } });
+
+async function addLink(url: string, title?: string): Promise<FileItem> {
+  const res = await postJson('/links', { url, title, device: 'Pixel' });
+  expect([200, 201]).toContain(res.status);
+  return (await res.json()) as FileItem;
+}
+
+describe('links', () => {
+  it('creates a link named after its host, or after the title when given', async () => {
+    const bare = await addLink('https://www.Example.com/a#frag');
+    expect(bare).toMatchObject({ kind: 'link', url: 'https://www.example.com/a', name: 'www.example.com', site: 'internet', mime: 'text/uri-list', size: 0, previewed: false, thumbUrl: null });
+    const titled = await addLink('https://youtu.be/abc', 'My video');
+    expect(titled).toMatchObject({ name: 'My video', site: 'youtube' });
+    const row = await env.DB.prepare('SELECT title_set FROM files WHERE id = ?').bind(titled.id).first<{ title_set: number }>();
+    expect(row?.title_set).toBe(1);
+  });
+
+  it('rejects bad URLs', async () => {
+    expect((await postJson('/links', { url: 'ftp://x.com' })).status).toBe(400);
+    expect((await postJson('/links', { url: 'nope' })).status).toBe(400);
+    expect((await postJson('/links', {})).status).toBe(400);
+    expect((await postJson('/links', { url: `https://a.com/${'x'.repeat(2100)}` })).status).toBe(400);
+  });
+
+  it('does not duplicate a URL, unless the first copy is in the trash', async () => {
+    const a = await addLink('https://a.com/x');
+    const res = await postJson('/links', { url: 'HTTPS://A.com/x#top' });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as FileItem).id).toBe(a.id);
+    await call(`/files/${a.id}`, { method: 'DELETE' });
+    const again = await postJson('/links', { url: 'https://a.com/x' });
+    expect(again.status).toBe(201);
+    expect(((await again.json()) as FileItem).id).not.toBe(a.id);
+  });
+
+  it('keeps links out of kind=all but lists them with kind=link, in the vault and in the trash', async () => {
+    await upload('a.txt', 'text/plain');
+    const link = await addLink('https://a.com');
+    const all = (await (await call('/files')).json()) as ListFilesResponse;
+    expect(all.items.map((i) => i.kind)).toEqual(['file']);
+    const links = (await (await call('/files?kind=link')).json()) as ListFilesResponse;
+    expect(links.items.map((i) => i.id)).toEqual([link.id]);
+    await call(`/files/${link.id}/vault`, { method: 'PUT', body: JSON.stringify({ inVault: true }), headers: { 'Content-Type': 'application/json' } });
+    expect(((await (await call('/files?kind=link')).json()) as ListFilesResponse).items).toHaveLength(0);
+    expect(((await (await call('/files?vault=1&kind=link')).json()) as ListFilesResponse).items).toHaveLength(1);
+    await call(`/files/${link.id}`, { method: 'DELETE' });
+    const trash = (await (await call('/files?trash=1')).json()) as ListFilesResponse;
+    expect(trash.items.map((i) => i.id)).toEqual([link.id]);
+  });
+
+  it('cannot be downloaded and does not count towards usage', async () => {
+    const link = await addLink('https://a.com');
+    expect((await call(`/files/${link.id}/download`)).status).toBe(400);
+    expect(((await (await call('/usage')).json()) as { usedBytes: number }).usedBytes).toBe(0);
+  });
+
+  it('edits the title and marks it as chosen by the user', async () => {
+    const link = await addLink('https://a.com');
+    const res = await patchJson(`/files/${link.id}`, { name: 'Renamed.pdf' });
+    expect(((await res.json()) as FileItem).name).toBe('Renamed.pdf');
+    const row = await env.DB.prepare('SELECT title_set FROM files WHERE id = ?').bind(link.id).first<{ title_set: number }>();
+    expect(row?.title_set).toBe(1);
+  });
+
+  it('edits the URL: clears the preview and the thumbnail, falls back to the new host unless the title was chosen', async () => {
+    const link = await addLink('https://a.com');
+    await env.BUCKET.put(thumbKey(link.id), 'jpeg');
+    await env.DB.prepare('UPDATE files SET has_thumb = 1, previewed_at = 5, name = ? WHERE id = ?').bind('Page title from a.com', link.id).run();
+    const res = await patchJson(`/files/${link.id}`, { url: 'HTTPS://B.com/p#x' });
+    expect(res.status).toBe(200);
+    const item = (await res.json()) as FileItem;
+    expect(item).toMatchObject({ url: 'https://b.com/p', name: 'b.com', thumbUrl: null, previewed: false });
+    expect(await env.BUCKET.head(thumbKey(link.id))).toBeNull();
+
+    const chosen = await addLink('https://c.com', 'My title');
+    const kept = (await (await patchJson(`/files/${chosen.id}`, { url: 'https://d.com' })).json()) as FileItem;
+    expect(kept).toMatchObject({ name: 'My title', url: 'https://d.com/' });
+  });
+
+  it('refuses a URL that is invalid, already saved, or sent for a plain file', async () => {
+    const a = await addLink('https://a.com');
+    await addLink('https://b.com');
+    expect((await patchJson(`/files/${a.id}`, { url: 'ftp://x' })).status).toBe(400);
+    const dup = await patchJson(`/files/${a.id}`, { url: 'https://b.com' });
+    expect(dup.status).toBe(409);
+    expect(((await dup.json()) as { error: { code: string } }).error.code).toBe('duplicate_url');
+    const file = await upload('a.txt', 'text/plain');
+    expect((await patchJson(`/files/${file.id}`, { url: 'https://x.com' })).status).toBe(400);
+  });
+
+  it('survives the 30-day expiry but is purged 30 days after being trashed', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const link = await addLink('https://a.com');
+    await env.DB.prepare('UPDATE files SET created_at = ? WHERE id = ?').bind(Date.now() - 40 * day, link.id).run();
+    expect(await cleanup(env)).toBe(0);
+    await call(`/files/${link.id}`, { method: 'DELETE' });
+    expect(await cleanup(env)).toBe(0);
+    expect(await cleanup(env, Date.now() + 31 * day)).toBe(1);
+  });
+});
+
 describe('helpers', () => {
   it('sanitizes names', () => {
     expect(sanitizeName('C:\\Users\\me\\a.txt')).toBe('a.txt');
