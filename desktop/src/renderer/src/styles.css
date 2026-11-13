@@ -2973,6 +2973,14 @@ body {
   background: var(--panel);
   box-shadow: 0 0 0 1px var(--border);
 }
+/* A thin divider between the pinned platforms and the box. */
+.site-chips__sep {
+  flex: none;
+  width: 1px;
+  height: 24px;
+  margin: 0 6px;
+  background: var(--border);
+}
 /* The platforms that left the box: they hop out to its right, like the colour dots of the tag box. */
 .site-chips__hop {
   display: flex;

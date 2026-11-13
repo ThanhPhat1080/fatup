@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Package, PackageOpen } from 'lucide-react';
+import { Share2 } from 'lucide-react';
 import type { SiteCategory } from '@fatup/shared';
 import { BOXED_SITES, PINNED_SITES, type SiteFilter } from '../lib/format';
 import { useI18n } from '../lib/i18n';
@@ -10,7 +10,7 @@ const CLOSE_STEP_MS = 30;
 const SLOT = 48; // icon button width + gap, used to start each icon from inside the box
 
 /**
- * The link filter: "All", then the icons of Internet and YouTube, then a box. Opening the box hops the other platforms out to its
+ * The link filter: "All", then the icons of Internet, YouTube, X and Threads, a divider, then a box. Opening the box hops the other platforms out to its
  * right, one after another (the same hop as the colour-tag box); closing hops them back in. Closing keeps the filter, and the box
  * shows the logo of the platform that is still selected.
  */
@@ -57,7 +57,6 @@ export function SiteFilterBar({ value, onChange, counts }: { value: SiteFilter; 
   };
 
   const shown = open && !closing;
-  const Icon = shown ? PackageOpen : Package;
   const hidden = !shown && (BOXED_SITES as string[]).includes(value) ? (value as SiteCategory) : null; // a selected platform tucked inside the box
   return (
     <nav className="site-chips" aria-label={t.tabLinks}>
@@ -66,6 +65,7 @@ export function SiteFilterBar({ value, onChange, counts }: { value: SiteFilter; 
         <span className="chip__count">{counts.all}</span>
       </button>
       {PINNED_SITES.map((site) => platformButton(site))}
+      <span className="site-chips__sep" aria-hidden />
       <button
         key={bounce}
         type="button"
@@ -75,7 +75,7 @@ export function SiteFilterBar({ value, onChange, counts }: { value: SiteFilter; 
         aria-expanded={shown}
         onClick={toggle}
       >
-        <Icon size={28} strokeWidth={1.6} />
+        <Share2 size={26} strokeWidth={1.75} />
         {hidden && (
           <span className="site-box__badge">
             <SiteBadge site={hidden} size={14} />

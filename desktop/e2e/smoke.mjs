@@ -140,17 +140,21 @@ try {
   await page.getByText('Thread về AI', { exact: true }).waitFor();
   const linkRows = page.locator('.list__row:not(.list__row--head)');
   assert.equal(await linkRows.count(), 6);
-  // Only Internet and YouTube sit next to "All"; the other platforms hide in the box.
-  await page.getByRole('button', { name: 'Chỉ hiện link YouTube', exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Chỉ hiện link X', exact: true }).count(), 0, 'X starts inside the box');
+  // Internet, YouTube, X and Threads sit next to "All"; the other platforms hide in the box.
+  for (const name of ['Internet', 'YouTube', 'X', 'Threads']) await page.getByRole('button', { name: `Chỉ hiện link ${name}`, exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Chỉ hiện link Facebook', exact: true }).count(), 0, 'Facebook starts inside the box');
+  await shot(page, '04a-links-box-closed');
   await page.getByRole('button', { name: 'Các nền tảng khác' }).click();
-  await page.getByRole('button', { name: 'Chỉ hiện link X', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Chỉ hiện link Facebook', exact: true }).waitFor();
   await page.waitForTimeout(900); // let the icons finish hopping out
   await shot(page, '04a-links-box-open');
-  await page.getByRole('button', { name: 'Chỉ hiện link X', exact: true }).click();
+  await page.getByRole('button', { name: 'Chỉ hiện link X', exact: true }).click(); // a pinned platform filters without opening anything
   await page.waitForFunction(() => document.querySelectorAll('.list__row:not(.list__row--head)').length === 1);
   await page.getByText('Thread về AI', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Chỉ hiện link X', exact: true }).click(); // clicking the active platform clears the filter
+  await page.getByRole('button', { name: 'Chỉ hiện link Facebook', exact: true }).click(); // a boxed platform switches the filter
+  await page.getByText('Bài viết hay trên Facebook', { exact: true }).waitFor();
+  assert.equal(await linkRows.count(), 1);
+  await page.getByRole('button', { name: 'Chỉ hiện link Facebook', exact: true }).click(); // clicking the active platform clears the filter
   await page.waitForFunction(() => document.querySelectorAll('.list__row:not(.list__row--head)').length === 6);
   // The list has a platform column (sortable) instead of the cow and the host after the name.
   assert.equal(await page.locator('.list .cow-thumb').count(), 0, 'no cow in the list');

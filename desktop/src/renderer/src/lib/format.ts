@@ -112,8 +112,8 @@ export function matchesLink(item: { name: string; url: string | null }, query: s
 export type SiteFilter = SiteCategory | 'all';
 
 /** Filter icons shown next to "All"; every other platform hides in the box. Together they cover all of SITE_CATEGORIES. */
-export const PINNED_SITES: SiteCategory[] = ['internet', 'youtube'];
-export const BOXED_SITES: SiteCategory[] = ['facebook', 'instagram', 'threads', 'x', 'shopee', 'tiktok'];
+export const PINNED_SITES: SiteCategory[] = ['internet', 'youtube', 'x', 'threads'];
+export const BOXED_SITES: SiteCategory[] = ['facebook', 'instagram', 'shopee', 'tiktok'];
 
 export function matchesSite(item: { url: string | null }, site: SiteFilter): boolean {
   return site === 'all' || (item.url !== null && siteOf(item.url) === site);
