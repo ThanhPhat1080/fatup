@@ -486,10 +486,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
 
       <main className="panel">
         {inVault && !vaultUnlocked ? (
-          <>
-            <div className="chips-row">{vaultBackBar}</div>
-            <VaultGate onUnlocked={() => setVaultUnlocked(true)} />
-          </>
+          <VaultGate onUnlocked={() => setVaultUnlocked(true)} onBack={leaveVault} />
         ) : (
           <>
         {picked.length > 0 ? (

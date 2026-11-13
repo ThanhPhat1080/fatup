@@ -68,7 +68,7 @@ export function Boom({ cx, cy }: { cx: number; cy: number }) {
         strokeWidth={11}
         paintOrder="stroke"
         strokeLinejoin="round"
-        style={{ transformOrigin: `${cx}px ${cy - 10}px` }}
+        style={{ transformOrigin: `${cx}px calc(${cy - 10}px + var(--lower, 0px))` }}
       >
         BOOM!
       </text>

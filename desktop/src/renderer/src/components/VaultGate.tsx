@@ -1,26 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { VaultHeist } from './VaultHeist';
+import { LockBackdrop } from './LockBackdrop';
+import { BOMB_LANDS_S, LockWizard } from './LockWizard';
+import { ArrowLeft } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
 import { PinInput } from './PinInput';
 
-const BOOM_MS = 1250;
+const BOOM_MS = Math.round((BOMB_LANDS_S + 0.95) * 1000);
+const LEAVE_MS = 3400; // long enough to read what the wizard says
 
 const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-const pad = (n: number) => String(n).padStart(2, '0');
-
-/** Digits that jump around at random, just for fun. Static when the user asked for less motion. */
-function useJumpingTimer(): string {
-  const [text, setText] = useState('00:59');
-  useEffect(() => {
-    if (prefersReducedMotion()) return;
-    const timer = setInterval(() => setText(`${pad(Math.floor(Math.random() * 60))}:${pad(Math.floor(Math.random() * 60))}`), 90);
-    return () => clearInterval(timer);
-  }, []);
-  return text;
-}
 
 /** Shown every time the Vault is opened: the PIN has to be entered again. */
-export function VaultGate({ onUnlocked }: { onUnlocked: () => void }) {
+export function VaultGate({ onUnlocked, onBack }: { onUnlocked: () => void; onBack: () => void }) {
   const { t } = useI18n();
   const [message, setMessage] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState(0);
@@ -28,9 +19,16 @@ export function VaultGate({ onUnlocked }: { onUnlocked: () => void }) {
   const [now, setNow] = useState(Date.now());
   const locked = lockedUntil > now;
   const [boom, setBoom] = useState(false);
-  const timer = useJumpingTimer();
+  const [leaving, setLeaving] = useState(false);
   const boomTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => () => clearTimeout(boomTimer.current), []);
+
+  // Turning back: the wizard lowers his staff, has his say, and then the Vault closes.
+  function goBack() {
+    if (leaving || boom) return;
+    setLeaving(true);
+    boomTimer.current = setTimeout(onBack, prefersReducedMotion() ? 0 : LEAVE_MS);
+  }
 
   useEffect(() => {
     if (!locked) return;
@@ -65,15 +63,21 @@ export function VaultGate({ onUnlocked }: { onUnlocked: () => void }) {
   }
 
   return (
-    <div className="vault-gate">
-      <VaultHeist boom={boom} panicKey={errorKey} timer={timer}>
-        <PinInput label={t.vaultPrompt} onComplete={submit} errorKey={errorKey} disabled={locked || boom} />
-      </VaultHeist>
-      <h2>{t.vault}</h2>
-      <p className="muted">{t.vaultPrompt}</p>
-      <p className={`error ${message || locked ? '' : 'error--hidden'}`} role="alert">
-        {locked ? t.lockedFor(Math.ceil((lockedUntil - now) / 1000)) : (message ?? ' ')}
-      </p>
+    <div className="lockscreen vaultscreen">
+      <LockBackdrop />
+      <div className="center-screen lockscreen__center">
+        <div className="lockstage">
+          <LockWizard boom={boom} panicKey={errorKey} message={leaving ? 'GO BACK TO THE SHADOW!' : undefined} calm={leaving}>
+            <PinInput label={t.vaultPrompt} onComplete={submit} errorKey={errorKey} disabled={locked || boom || leaving} />
+          </LockWizard>
+          <p className={`error ${message || locked ? '' : 'error--hidden'}`} role="alert">
+            {locked ? t.lockedFor(Math.ceil((lockedUntil - now) / 1000)) : (message ?? ' ')}
+          </p>
+          <button className="btn btn--text" onClick={goBack} disabled={boom || leaving}>
+            <ArrowLeft size={18} /> {t.goBack}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

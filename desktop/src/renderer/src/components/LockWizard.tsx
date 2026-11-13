@@ -4,15 +4,45 @@ import { Boom } from './Boom';
 /** Seconds from the right PIN until the thrown bomb lands; the explosion is held back until then. */
 export const BOMB_LANDS_S = 0.9;
 
+/** Outline of a comic "shouting" bubble: a spiky rectangle with a tail pointing down at the wizard's hat. */
+function shoutBubblePath(): string {
+  const x0 = 64;
+  const x1 = 416;
+  const y0 = 8;
+  const y1 = 64;
+  const step = 16;
+  const tooth = 8;
+  const pts: [number, number][] = [];
+  for (let x = x0; x < x1; x += step) pts.push([x, y0], [x + step / 2, y0 - tooth]);
+  for (let y = y0; y < y1; y += step) pts.push([x1, y], [x1 + tooth, y + step / 2]);
+  pts.push([x1, y1]);
+  let tail = false;
+  for (let x = x1; x > x0; x -= step) {
+    if (x <= 266) {
+      if (!tail) {
+        pts.push([266, y1], [236, y1 + 28], [214, y1]);
+        tail = true;
+      }
+      if (x > 214) continue;
+    }
+    pts.push([x - step / 2, y1 + tooth], [x - step, y1]);
+  }
+  for (let y = y1; y > y0; y -= step) pts.push([x0, y], [x0 - tooth, y - step / 2]);
+  return `M${pts.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join('L')}Z`;
+}
+const SHOUT_BUBBLE = shoutBubblePath();
+
 /** Cheap seeded noise: irregular, but identical on every render. */
 const noise = (i: number, k: number) => {
   const v = Math.sin(i * 97.13 + k * 12.9898) * 43758.5453;
   return v - Math.floor(v);
 };
 
+/** How far the bridge, the wizard and his bubble sit lower in the frame; the PIN board stays where it is, so its chains are shorter. */
+const LOWER = 150;
 const DECK_TOP = 330;
 const DECK_BOTTOM = 358;
-const BODY_END = 1520; // the piers run on down into the fire, past the bottom of the frame
+const BODY_END = 1520; // the piers run on down into the fire, past the bottom of the screen
 const ARCH_W = 100; // half width of an arch opening
 const ARCH_GAP = 260; // distance between arch centres
 const SPRING = 440; // where an arch starts to curve
@@ -73,6 +103,10 @@ type Props = {
   boom: boolean;
   /** Changes on every wrong PIN; the wizard shakes his head. */
   panicKey: number;
+  /** What the wizard bellows; defaults to the usual warning. */
+  message?: string;
+  /** The staff is lowered and planted, and the wizard stops bouncing (used when the visitor turns back). */
+  calm?: boolean;
   /** The PIN field, which sits on the wooden board in front of the bridge. */
   children: ReactNode;
 };
@@ -82,7 +116,7 @@ type Props = {
  * Lock-screen scene: a grumpy grey wizard on a stone bridge over a fiery chasm, a staff in one hand and a
  * no-entry sign in the other. An original cartoon, pure SVG + CSS.
  */
-export function LockWizard({ boom, panicKey, children }: Props) {
+export function LockWizard({ boom, panicKey, message = 'YOU SHALL NOT PASS!', calm = false, children }: Props) {
   const frame = useRef<HTMLDivElement>(null);
   // The bridge is half the screen wide (at least as wide as the frame), so work out how far past the 480-unit frame it runs.
   const [extra, setExtra] = useState(0);
@@ -96,10 +130,14 @@ export function LockWizard({ boom, panicKey, children }: Props) {
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
   }, []);
+  // Raised high and pumping, or lowered and planted on the deck.
+  const staffBottom = calm ? 332 : 300;
+  const armPath = calm ? 'M206 250Q182 252 170 262' : 'M206 250Q182 246 168 216';
+  const handY = calm ? 262 : 211;
   const bridge = useMemo(() => buildBridge(-extra, 480 + extra), [extra]);
 
   return (
-    <div ref={frame} className={`lockheist${boom ? ' lockheist--boom' : ''}`} style={{ ['--boom-delay' as string]: `${BOMB_LANDS_S}s` }}>
+    <div ref={frame} className={`lockheist${boom ? ' lockheist--boom' : ''}`} style={{ ['--boom-delay' as string]: `${BOMB_LANDS_S}s`, ['--lower' as string]: `${LOWER}px` }}>
       <svg className="heist__svg" viewBox="0 0 480 560" aria-hidden>
         <defs>
           <pattern id="lock-brick" width="64" height="32" patternUnits="userSpaceOnUse">
@@ -108,6 +146,7 @@ export function LockWizard({ boom, panicKey, children }: Props) {
           </pattern>
         </defs>
 
+        <g transform={`translate(0 ${LOWER})`}>
         {/* The sky and the fire are the screen's backdrop. This is the bridge: half a screen wide, cracked and crumbling. */}
         <path d={bridge.body} fill="url(#lock-brick)" fillRule="evenodd" stroke="#20242b" strokeWidth={3} strokeLinejoin="round" />
         <rect x={-extra} y={DECK_TOP} width={480 + extra * 2} height={DECK_BOTTOM - DECK_TOP} rx={6} fill="#6f747e" stroke="#20242b" strokeWidth={3} />
@@ -130,7 +169,7 @@ export function LockWizard({ boom, panicKey, children }: Props) {
         </g>
 
         {/* wizard */}
-        <g key={panicKey} className={`wizard${panicKey ? ' wizard--no' : ''}`}>
+        <g key={panicKey} className={`wizard${panicKey ? ' wizard--no' : ''}${calm ? ' wizard--calm' : ''}`}>
           <g className="wizard__body">
             {/* shoes and robe */}
             <ellipse cx={218} cy={331} rx={16} ry={7} fill="#6b4524" stroke="#20242b" strokeWidth={2.5} />
@@ -143,16 +182,16 @@ export function LockWizard({ boom, panicKey, children }: Props) {
             {/* staff arm: raised high, the whole arm and staff pump up and down */}
             <g className="wizard__raise">
               <g className="wizard__staff">
-                <path d="M165 138V300" stroke="#20242b" strokeWidth={11} strokeLinecap="round" />
-                <path d="M165 138V300" stroke="#8a5a2b" strokeWidth={7} strokeLinecap="round" />
-                <path d="M165 291V300" stroke="#9aa0ab" strokeWidth={7} strokeLinecap="round" />
+                <path d={`M165 138V${staffBottom}`} stroke="#20242b" strokeWidth={11} strokeLinecap="round" />
+                <path d={`M165 138V${staffBottom}`} stroke="#8a5a2b" strokeWidth={7} strokeLinecap="round" />
+                <path d={`M165 ${staffBottom - 9}V${staffBottom}`} stroke="#9aa0ab" strokeWidth={7} strokeLinecap="round" />
                 <path d="M165 150Q152 142 158 128Q170 120 175 132" fill="none" stroke="#8a5a2b" strokeWidth={6} strokeLinecap="round" />
                 <circle className="wizard__orb" cx={166} cy={122} r={11} fill="#8fe3ff" stroke="#20242b" strokeWidth={2.5} />
                 <circle cx={162} cy={118} r={3.5} fill="#fff" />
               </g>
-              <path d="M206 250Q182 246 168 216" fill="none" stroke="#20242b" strokeWidth={20} strokeLinecap="round" />
-              <path d="M206 250Q182 246 168 216" fill="none" stroke="#b9bcc4" strokeWidth={14} strokeLinecap="round" />
-              <circle cx={166} cy={211} r={9} fill="#f0c9a0" stroke="#20242b" strokeWidth={2.5} />
+              <path d={armPath} fill="none" stroke="#20242b" strokeWidth={20} strokeLinecap="round" />
+              <path d={armPath} fill="none" stroke="#b9bcc4" strokeWidth={14} strokeLinecap="round" />
+              <circle cx={166} cy={handY} r={9} fill="#f0c9a0" stroke="#20242b" strokeWidth={2.5} />
             </g>
 
             {/* sign arm (his left, our right) */}
@@ -210,28 +249,35 @@ export function LockWizard({ boom, panicKey, children }: Props) {
 
         {/* what he says */}
         {!boom && (
-          <g key={`b${panicKey}`} className="lockheist__bubble">
-            <path d="M82 10H398Q412 10 412 24V50Q412 64 398 64H258L236 90L222 64H82Q68 64 68 50V24Q68 10 82 10Z" fill="#fff" stroke="#20242b" strokeWidth={3} strokeLinejoin="round" />
-            <text x={240} y={46} textAnchor="middle" fontSize={28} fontWeight={900} fontFamily="Impact, 'Arial Black', sans-serif" fill="#20242b" textLength={310} lengthAdjust="spacingAndGlyphs">
-              YOU SHALL NOT PASS!
+          <g key={`b${panicKey}${message}`} className={`lockheist__bubble${calm ? ' lockheist__bubble--calm' : ''}`}>
+            <path d={SHOUT_BUBBLE} fill="#fff" stroke="#20242b" strokeWidth={3} strokeLinejoin="round" />
+            <text className="shout-text" x={240} y={46} textAnchor="middle" fontSize={28} fontWeight={900} fontFamily="Impact, 'Arial Black', sans-serif" fill="#20242b" textLength={Math.min(330, message.length * 16.3)} lengthAdjust="spacingAndGlyphs">
+              {message}
             </text>
+            {/* sound lines, as if the whole thing is being bellowed */}
+            <g className="shout-lines" fill="none" stroke="#fff" strokeWidth={4} strokeLinecap="round">
+              <path d="M40 16L52 24M34 36H50M40 56L52 48" />
+              <path d="M440 16L428 24M446 36H430M440 56L428 48" />
+            </g>
           </g>
         )}
 
+        </g>
+
         {/* wooden board hanging under the deck on two chains; it carries the PIN */}
-        <path d="M152 364V398M328 364V398" stroke="#20242b" strokeWidth={7} strokeDasharray="7 4" strokeLinecap="round" />
-        <path d="M152 364V398M328 364V398" stroke="#9aa0ab" strokeWidth={3.5} strokeDasharray="7 4" strokeLinecap="round" />
-        <rect x={130} y={396} width={220} height={62} rx={9} fill="#9a6a38" stroke="#4b2f14" strokeWidth={4} />
-        <path d="M136 416H344M136 436H344" stroke="#7d5229" strokeWidth={2} opacity={0.6} />
+        <path d="M152 508V612M328 508V612" stroke="#20242b" strokeWidth={7} strokeDasharray="7 4" strokeLinecap="round" />
+        <path d="M152 508V612M328 508V612" stroke="#9aa0ab" strokeWidth={3.5} strokeDasharray="7 4" strokeLinecap="round" />
+        <rect x={130} y={610} width={220} height={62} rx={9} fill="#9a6a38" stroke="#4b2f14" strokeWidth={4} />
+        <path d="M136 630H344M136 650H344" stroke="#7d5229" strokeWidth={2} opacity={0.6} />
         <g fill="#4b2f14">
-          <circle cx={142} cy={406} r={2.5} />
-          <circle cx={338} cy={406} r={2.5} />
-          <circle cx={142} cy={448} r={2.5} />
-          <circle cx={338} cy={448} r={2.5} />
+          <circle cx={142} cy={620} r={2.5} />
+          <circle cx={338} cy={620} r={2.5} />
+          <circle cx={142} cy={662} r={2.5} />
+          <circle cx={338} cy={662} r={2.5} />
         </g>
 
         {boom && (
-          <>
+          <g transform={`translate(0 ${LOWER})`}>
             {/* the thrown bomb */}
             <g transform="translate(46 520)">
               <g className="lockheist__bomb">
@@ -246,7 +292,7 @@ export function LockWizard({ boom, panicKey, children }: Props) {
               FIRE IN THE HOLE!
             </text>
             <Boom cx={240} cy={262} />
-          </>
+          </g>
         )}
       </svg>
 
