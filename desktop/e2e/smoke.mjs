@@ -12,6 +12,7 @@ import { TOKEN, startMockServer } from './mock-server.mjs';
 const require = createRequire(import.meta.url);
 const { _electron: electron } = require('playwright-core');
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const WATCHDOG_MS = 120_000;
 const shots = process.env.SCREENSHOT_DIR;
 if (shots) mkdirSync(shots, { recursive: true });
 
@@ -32,6 +33,7 @@ async function launch(lang = 'vi') {
   page.on('console', (m) => m.type() === 'error' && console.error('[renderer console]', m.text()));
   await page.setViewportSize({ width: 1180, height: 760 });
   current = app;
+  currentProc = app.process();
   return { app, page };
 }
 
@@ -45,7 +47,16 @@ async function typePin(page, pin) {
 
 let step = 'start';
 let current;
+let currentProc; // kept separately: app.process() throws once the app is closed
 const log = (s) => { step = s; if (process.env.E2E_VERBOSE) console.log('→', s); };
+
+// Watchdog: Playwright's waits all time out, but closing the app or the process itself can hang
+// (seen on CI under xvfb). Fail loudly with the step name instead of stalling the runner.
+const watchdog = setTimeout(() => {
+  console.error(`✘ smoke test hung for ${WATCHDOG_MS / 1000}s at step "${step}"`);
+  currentProc?.kill('SIGKILL');
+  process.exit(1);
+}, WATCHDOG_MS);
 try {
   // 1. First run: setup
   let { app, page } = await launch();
@@ -156,6 +167,11 @@ try {
   console.error(err);
   process.exitCode = 1;
 } finally {
-  await current?.close().catch(() => {});
+  clearTimeout(watchdog);
+  log('cleanup');
+  await Promise.race([current?.close().catch(() => {}), new Promise((r) => setTimeout(r, 10_000))]);
+  currentProc?.kill('SIGKILL');
   server.close();
 }
+// Exit explicitly so a lingering Electron child or socket can never keep the process alive.
+process.exit(process.exitCode ?? 0);

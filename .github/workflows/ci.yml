@@ -13,6 +13,7 @@ jobs:
   node:
     name: Worker + desktop
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,6 +25,8 @@ jobs:
       - run: npm test
       - name: Desktop smoke test
         working-directory: desktop
+        env:
+          E2E_VERBOSE: "1"
         run: |
           npx electron-vite build
           xvfb-run -a node e2e/smoke.mjs
