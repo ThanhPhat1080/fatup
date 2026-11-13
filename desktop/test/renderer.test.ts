@@ -175,10 +175,10 @@ describe('links', () => {
   });
 
   it('filters and counts by site category', () => {
-    const items = [link('https://youtu.be/a'), link('https://www.youtube.com/b'), link('https://shopee.vn/c'), link('https://example.com')];
+    const items = [link('https://youtu.be/a'), link('https://www.youtube.com/b'), link('https://shopee.vn/c'), link('https://example.com'), link('https://x.com/a/status/1')];
     expect(items.filter((i) => matchesSite(i, 'youtube'))).toHaveLength(2);
-    expect(items.filter((i) => matchesSite(i, 'all'))).toHaveLength(4);
-    expect(siteCounts(items)).toEqual({ all: 4, facebook: 0, youtube: 2, instagram: 0, threads: 0, shopee: 1, tiktok: 0, internet: 1 });
+    expect(items.filter((i) => matchesSite(i, 'all'))).toHaveLength(5);
+    expect(siteCounts(items)).toEqual({ all: 5, facebook: 0, youtube: 2, instagram: 0, threads: 0, x: 1, shopee: 1, tiktok: 0, internet: 1 });
   });
 
   it('keeps links out of the other tabs and everything else out of the link tab', () => {
@@ -194,7 +194,7 @@ describe('links', () => {
   it('translates the new strings in both languages', () => {
     for (const lang of ['en', 'vi'] as const) {
       const t = dictionaries[lang];
-      expect(Object.keys(t.siteNames).sort()).toEqual(['facebook', 'instagram', 'internet', 'shopee', 'threads', 'tiktok', 'youtube']);
+      expect(Object.keys(t.siteNames).sort()).toEqual(['facebook', 'instagram', 'internet', 'shopee', 'threads', 'tiktok', 'x', 'youtube']);
       expect(t.tabLinks).toBeTruthy();
       expect(errorText(t, 'duplicate_url')).not.toBe(t.err_generic);
       expect(errorText(t, 'bad_url')).not.toBe(t.err_generic);

@@ -153,7 +153,7 @@ const en = {
   server: 'Server',
   // links
   tabLinks: 'Links',
-  siteNames: { facebook: 'Facebook', youtube: 'YouTube', instagram: 'Instagram', threads: 'Threads', shopee: 'Shopee', tiktok: 'TikTok', internet: 'Internet' },
+  siteNames: { facebook: 'Facebook', youtube: 'YouTube', instagram: 'Instagram', threads: 'Threads', x: 'X', shopee: 'Shopee', tiktok: 'TikTok', internet: 'Internet' },
   allSites: 'All',
   filterBySite: (s: string) => `Show only ${s} links`,
   addLink: 'Add link',
@@ -335,7 +335,7 @@ const vi: Dict = {
   server: 'Server',
   // links
   tabLinks: 'Liên kết',
-  siteNames: { facebook: 'Facebook', youtube: 'YouTube', instagram: 'Instagram', threads: 'Threads', shopee: 'Shopee', tiktok: 'TikTok', internet: 'Internet' },
+  siteNames: { facebook: 'Facebook', youtube: 'YouTube', instagram: 'Instagram', threads: 'Threads', x: 'X', shopee: 'Shopee', tiktok: 'TikTok', internet: 'Internet' },
   allSites: 'Tất cả',
   filterBySite: (s) => `Chỉ hiện link ${s}`,
   addLink: 'Thêm liên kết',
