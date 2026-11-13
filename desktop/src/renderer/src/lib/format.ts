@@ -122,3 +122,8 @@ export function splitExt(name: string): { stem: string; ext: string } {
   if (dot <= 0 || dot === name.length - 1) return { stem: name, ext: '' };
   return { stem: name.slice(0, dot), ext: name.slice(dot) };
 }
+
+/** An empty filter matches everything; otherwise a file matches when it carries at least one of the chosen colours. */
+export function matchesTags(tags: readonly string[], filter: readonly string[]): boolean {
+  return filter.length === 0 || tags.some((c) => filter.includes(c));
+}

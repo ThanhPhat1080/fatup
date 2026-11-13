@@ -1,4 +1,4 @@
-import type { CreateUploadRequest, CreateUploadResponse, DownloadResponse, EmptyTrashResponse, UsageResponse, FileItem, ListFilesResponse } from '@fatup/shared';
+import type { TagColor, CreateUploadRequest, CreateUploadResponse, DownloadResponse, EmptyTrashResponse, UsageResponse, FileItem, ListFilesResponse } from '@fatup/shared';
 
 export class ApiError extends Error {
   constructor(
@@ -81,8 +81,8 @@ export class ApiClient {
     return this.request(`/uploads/${encodeURIComponent(id)}/complete`, { method: 'POST' });
   }
 
-  rename(id: string, name: string): Promise<FileItem> {
-    return this.request(`/files/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ name }) });
+  update(id: string, patch: { name?: string; tags?: TagColor[] }): Promise<FileItem> {
+    return this.request(`/files/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
 
   setVault(id: string, inVault: boolean): Promise<FileItem> {

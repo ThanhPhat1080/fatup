@@ -183,9 +183,9 @@ export function installBrowserApi(): void {
 
     listTrash: () => guarded(async (): Promise<Item[]> => (await client().listAll({ trash: true })).map((it) => ({ ...it, downloaded: false }))),
 
-    rename: (id, name) =>
+    updateFile: (id, patch) =>
       guarded(async (): Promise<Item> => {
-        const item = await client().rename(id, name);
+        const item = await client().update(id, patch);
         itemCache.set(id, item);
         return { ...item, downloaded: data.downloaded.includes(id) };
       }),

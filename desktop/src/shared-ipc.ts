@@ -1,5 +1,5 @@
 /** Contract between the preload bridge and the renderer. */
-import type { FileItem, UsageResponse } from '@fatup/shared';
+import type { FileItem, TagColor, UsageResponse } from '@fatup/shared';
 
 export type Lang = 'auto' | 'en' | 'vi';
 export type Theme = 'system' | 'light' | 'dark';
@@ -72,10 +72,11 @@ export type FatupApi = {
   /** Fails with error 'vault_locked' unless vaultOpen succeeded. */
   listVault(): Promise<Result<Item[]>>;
   setVault(id: string, inVault: boolean): Promise<Result>;
-  /** Renames a file (the display name only). Fails with 'not_found' if it is gone or in the trash. */
-  rename(id: string, name: string): Promise<Result<Item>>;
+  /** Changes a file's display name and/or colour tags. Fails with 'not_found' if it is gone or in the trash. */
+  updateFile(id: string, patch: { name?: string; tags?: TagColor[] }): Promise<Result<Item>>;
   previewUrl(id: string): Promise<Result<string>>;
-  download(id: string): Promise<Result<string>>;
+  /** Saves a file to the downloads folder. `reveal` (default true) also shows it in the file manager; bulk downloads pass false for all but the last. */
+  download(id: string, reveal?: boolean): Promise<Result<string>>;
   copyImage(id: string): Promise<Result>;
   /** Moves a file to the trash (it can be restored for 30 days). */
   remove(id: string): Promise<Result>;

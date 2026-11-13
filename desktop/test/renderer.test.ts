@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems, splitExt } from '../src/renderer/src/lib/format';
+import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems, splitExt, matchesTags } from '../src/renderer/src/lib/format';
 import { dictionaries, errorText, resolveLocale } from '../src/renderer/src/lib/i18n';
 
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime();
@@ -123,5 +123,27 @@ describe('splitExt', () => {
     expect(splitExt('README')).toEqual({ stem: 'README', ext: '' });
     expect(splitExt('.gitignore')).toEqual({ stem: '.gitignore', ext: '' });
     expect(splitExt('trailing.')).toEqual({ stem: 'trailing.', ext: '' });
+  });
+});
+
+describe('matchesTags', () => {
+  it('matches everything when no colour is chosen', () => {
+    expect(matchesTags([], [])).toBe(true);
+    expect(matchesTags(['red'], [])).toBe(true);
+  });
+
+  it('matches files carrying at least one chosen colour', () => {
+    expect(matchesTags(['red', 'blue'], ['blue'])).toBe(true);
+    expect(matchesTags(['red'], ['blue', 'red'])).toBe(true);
+    expect(matchesTags(['red'], ['blue'])).toBe(false);
+    expect(matchesTags([], ['blue'])).toBe(false);
+  });
+});
+
+describe('tag translations', () => {
+  it('names every colour in both languages', () => {
+    for (const lang of ['en', 'vi'] as const) {
+      expect(Object.keys(dictionaries[lang].tagNames).sort()).toEqual(['blue', 'gray', 'green', 'orange', 'purple', 'red', 'yellow']);
+    }
   });
 });

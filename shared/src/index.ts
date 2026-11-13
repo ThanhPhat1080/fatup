@@ -14,6 +14,15 @@ export function kindFromMime(mime: string): FileKind {
   return mime.toLowerCase().startsWith('image/') ? 'image' : 'file';
 }
 
+/** Finder-style colour tags, in display order. */
+export const TAG_COLORS = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray'] as const;
+export type TagColor = (typeof TAG_COLORS)[number];
+export const MAX_TAGS = 3;
+
+export function isTagColor(value: unknown): value is TagColor {
+  return typeof value === 'string' && (TAG_COLORS as readonly string[]).includes(value);
+}
+
 export type FileItem = {
   id: string;
   name: string;
@@ -29,6 +38,8 @@ export type FileItem = {
   deletedAt: number | null;
   /** True when the file lives in the Vault (hidden from the main list). */
   inVault: boolean;
+  /** Up to MAX_TAGS distinct colour tags, in the order they were added. */
+  tags: TagColor[];
 };
 
 export type CreateUploadRequest = {

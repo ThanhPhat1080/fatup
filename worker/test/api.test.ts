@@ -200,6 +200,50 @@ describe('rename', () => {
   });
 });
 
+describe('tags', () => {
+  const patch = (id: string, body: unknown) =>
+    call(`/files/${id}`, { method: 'PATCH', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } });
+
+  it('starts empty, then stores tags in the order given and returns them in lists', async () => {
+    const a = await upload('a.txt', 'text/plain');
+    expect(a.tags).toEqual([]);
+    const res = await patch(a.id, { tags: ['green', 'red'] });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as FileItem).tags).toEqual(['green', 'red']);
+    const listed = ((await (await call('/files')).json()) as ListFilesResponse).items;
+    expect(listed[0].tags).toEqual(['green', 'red']);
+  });
+
+  it('can change name and tags together or separately, without losing the other', async () => {
+    const a = await upload('a.txt', 'text/plain');
+    await patch(a.id, { tags: ['blue'] });
+    const renamed = (await (await patch(a.id, { name: 'b.txt' })).json()) as FileItem;
+    expect(renamed).toMatchObject({ name: 'b.txt', tags: ['blue'] });
+    const both = (await (await patch(a.id, { name: 'c.txt', tags: [] })).json()) as FileItem;
+    expect(both).toMatchObject({ name: 'c.txt', tags: [] });
+  });
+
+  it('rejects unknown colours, duplicates, more than three, non-arrays and empty bodies', async () => {
+    const a = await upload('a.txt', 'text/plain');
+    expect((await patch(a.id, { tags: ['pink'] })).status).toBe(400);
+    expect((await patch(a.id, { tags: ['red', 'red'] })).status).toBe(400);
+    expect((await patch(a.id, { tags: ['red', 'green', 'blue', 'gray'] })).status).toBe(400);
+    expect((await patch(a.id, { tags: 'red' })).status).toBe(400);
+    expect((await patch(a.id, {})).status).toBe(400);
+    expect(((await (await call('/files')).json()) as ListFilesResponse).items[0].tags).toEqual([]);
+  });
+
+  it('does not tag missing or trashed files, but trashed files keep their tags', async () => {
+    const a = await upload('a.txt', 'text/plain');
+    await patch(a.id, { tags: ['red'] });
+    expect((await patch('01HZZZZZZZZZZZZZZZZZZZZZZZ', { tags: ['red'] })).status).toBe(404);
+    await call(`/files/${a.id}`, { method: 'DELETE' });
+    expect((await patch(a.id, { tags: ['blue'] })).status).toBe(404);
+    const trashed = ((await (await call('/files?trash=1')).json()) as ListFilesResponse).items;
+    expect(trashed[0].tags).toEqual(['red']);
+  });
+});
+
 describe('vault', () => {
   const list =async (path: string) => ((await (await call(path)).json()) as ListFilesResponse).items;
   const setVault = (id: string, inVault: unknown) =>

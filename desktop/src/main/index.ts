@@ -6,7 +6,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import QRCode from 'qrcode';
-import type { FileItem } from '@fatup/shared';
+import type { FileItem, TagColor } from '@fatup/shared';
 import { autoUpdater } from 'electron-updater';
 import type { AppState, Item, Prefs, Result, UnlockResult, UpdateCheck } from '../shared-ipc';
 import { ApiClient, ApiError, normalizeServerUrl } from './api';
@@ -248,9 +248,9 @@ function registerIpc() {
   );
 
   ipcMain.handle(
-    'rename',
-    guarded(async (id: string, name: string): Promise<Item> => {
-      const item = await client().rename(id, name);
+    'updateFile',
+    guarded(async (id: string, patch: { name?: string; tags?: TagColor[] }): Promise<Item> => {
+      const item = await client().update(id, patch);
       itemCache.set(id, item);
       return { ...item, downloaded: config.snapshot.downloaded.includes(id) };
     }),
@@ -301,7 +301,7 @@ function registerIpc() {
 
   ipcMain.handle(
     'download',
-    guarded(async (id: string) => {
+    guarded(async (id: string, reveal = true) => {
       const item = itemCache.get(id);
       const url = await client().downloadUrl(id);
       const res = await fetch(url, { signal: AbortSignal.timeout(10 * 60_000) });
@@ -319,7 +319,7 @@ function registerIpc() {
         throw err;
       }
       config.markDownloaded(id);
-      shell.showItemInFolder(target);
+      if (reveal) shell.showItemInFolder(target);
       return target;
     }),
   );

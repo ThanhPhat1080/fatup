@@ -4,6 +4,9 @@ import {
   DEFAULT_PAGE_SIZE,
   MAX_FILE_SIZE,
   MAX_PAGE_SIZE,
+  MAX_TAGS,
+  isTagColor,
+  type TagColor,
   DEFAULT_QUOTA_BYTES,
   type UsageResponse,
   kindFromMime,
@@ -31,6 +34,7 @@ type Row = {
   created_at: number;
   deleted_at: number | null;
   in_vault: number;
+  tags: string;
   retain_from: number | null;
 };
 
@@ -61,6 +65,15 @@ export function sanitizeName(raw: string): string {
   return clean || 'file';
 }
 
+function parseTags(raw: string | null | undefined): TagColor[] {
+  return (raw ?? '').split(',').filter(isTagColor).slice(0, MAX_TAGS);
+}
+
+/** A valid tag list is an array of at most MAX_TAGS distinct known colours. */
+function isTagList(value: unknown): value is TagColor[] {
+  return Array.isArray(value) && value.length <= MAX_TAGS && value.every(isTagColor) && new Set(value).size === value.length;
+}
+
 function encodeCursor(sortValue: number, id: string) {
   return `${sortValue}_${id}`;
 }
@@ -82,6 +95,7 @@ async function toItem(row: Row, presigner: Presigner): Promise<FileItem> {
     createdAt: row.created_at,
     deletedAt: row.deleted_at,
     inVault: row.in_vault === 1,
+    tags: parseTags(row.tags),
   };
 }
 
@@ -233,22 +247,27 @@ export function createApp(options: AppOptions = {}) {
     return c.body(null, 204);
   });
 
-  // Renames a file. Only the display name changes; the R2 objects are keyed by id.
+  // Updates a file's display name and/or colour tags. The R2 objects are keyed by id, so a rename never touches them.
   app.patch('/files/:id', async (c) => {
     const id = c.req.param('id');
-    let body: { name?: unknown };
+    let body: { name?: unknown; tags?: unknown };
     try {
       body = await c.req.json();
     } catch {
       return fail(c, 400, 'bad_request', 'Body must be JSON');
     }
-    if (typeof body.name !== 'string' || body.name.trim() === '') return fail(c, 400, 'bad_request', 'name must be a non-empty string');
-    if (body.name.length > 255) return fail(c, 400, 'bad_request', 'name must be at most 255 characters');
+    if (body.name === undefined && body.tags === undefined) return fail(c, 400, 'bad_request', 'Provide name and/or tags');
+    if (body.name !== undefined) {
+      if (typeof body.name !== 'string' || body.name.trim() === '') return fail(c, 400, 'bad_request', 'name must be a non-empty string');
+      if (body.name.length > 255) return fail(c, 400, 'bad_request', 'name must be at most 255 characters');
+    }
+    if (body.tags !== undefined && !isTagList(body.tags)) return fail(c, 400, 'bad_request', `tags must be at most ${MAX_TAGS} distinct colours`);
     const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
     if (!row) return fail(c, 404, 'not_found', 'File not found');
-    const name = sanitizeName(body.name);
-    await c.env.DB.prepare('UPDATE files SET name = ? WHERE id = ?').bind(name, id).run();
-    return c.json(await toItem({ ...row, name }, c.get('presigner')));
+    const name = typeof body.name === 'string' ? sanitizeName(body.name) : row.name;
+    const tags = isTagList(body.tags) ? body.tags.join(',') : row.tags;
+    await c.env.DB.prepare('UPDATE files SET name = ?, tags = ? WHERE id = ?').bind(name, tags, id).run();
+    return c.json(await toItem({ ...row, name, tags }, c.get('presigner')));
   });
 
   // Moves a file into or out of the Vault.

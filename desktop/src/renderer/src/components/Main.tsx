@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, LayoutGrid, List, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Trash2, Upload, UploadCloud, X } from 'lucide-react';
+import { ArrowLeft, Download, LayoutGrid, List, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Trash2, Upload, UploadCloud, X } from 'lucide-react';
 import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shared-ipc';
-import { DEFAULT_QUOTA_BYTES } from '@fatup/shared';
-import { DEFAULT_SORT, groupByDay, matchesQuery, singleGroup, sortItems, type SortKey, type SortState } from '../lib/format';
+import { DEFAULT_QUOTA_BYTES, type TagColor } from '@fatup/shared';
+import { DEFAULT_SORT, groupByDay, matchesQuery, matchesTags, singleGroup, sortItems, type SortKey, type SortState } from '../lib/format';
 import { errorText, useI18n } from '../lib/i18n';
 import { ConfirmDialog } from './Dialog';
 import { EmptyState, FileGrid, FileList } from './Files';
@@ -11,8 +11,11 @@ import { Logo } from './Logo';
 import { ContextMenu, type MenuState } from './Menu';
 import { Settings } from './Settings';
 import { VaultIcon } from './VaultIcon';
+import { TrashIcon } from './TrashIcon';
+import { InfoPopover } from './InfoPopover';
 import { VaultGate } from './VaultGate';
 import { StorageMeter } from './StorageMeter';
+import { EditPopover, TagFilter } from './Tags';
 import { useToast } from './Toast';
 import { UploadPanel } from './UploadPanel';
 
@@ -28,6 +31,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const [tab, setTab] = useState<Tab>('all');
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
+  const [editing, setEditing] = useState<{ id: string; anchor: DOMRect } | null>(null);
+  const [tagFilter, setTagFilter] = useState<TagColor[]>([]);
   const [lightboxId, setLightboxId] = useState<string | null>(null);
   const [trashItems, setTrashItems] = useState<Item[] | null>(null);
   const [inTrash, setInTrash] = useState(false);
@@ -35,6 +40,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const [inVault, setInVault] = useState(false);
   const [vaultUnlocked, setVaultUnlocked] = useState(false);
   const [vaultItems, setVaultItems] = useState<Item[] | null>(null);
+  const [shiver, setShiver] = useState(0);
+  const [trashKick, setTrashKick] = useState(0); // bumped when the trash opens, to replay its lid animation
+  const [trashInfoOpen, setTrashInfoOpen] = useState(false);
   const vaultActive = inVault && vaultUnlocked;
   const vaultActiveRef = useRef(false);
   vaultActiveRef.current = vaultActive;
@@ -118,8 +126,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   );
   const loaded = inTrash ? trashItems !== null : inVault ? vaultItems !== null : items !== null;
   const visible = useMemo(
-    () => source.filter((it) => (inTrash || tab === 'all' || it.kind === tab) && matchesQuery(it.name, query)),
-    [source, inTrash, tab, query],
+    () => source.filter((it) => (inTrash || tab === 'all' || it.kind === tab) && matchesQuery(it.name, query) && matchesTags(it.tags, tagFilter)),
+    [source, inTrash, tab, query, tagFilter],
   );
   const sorted = useMemo(() => sortItems(visible, sort), [visible, sort]);
   // Day headings only make sense when ordered by upload time.
@@ -172,6 +180,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
 
   const toggleTrash = () => {
     if (inVault) leaveVault();
+    if (!inTrash) setTrashKick((n) => n + 1);
+    setTrashInfoOpen(false);
     setInTrash((v) => !v);
     clearSelection();
   };
@@ -187,6 +197,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     clearSelection();
   };
   const toggleVault = () => {
+    setShiver((n) => n + 1);
     if (inVault) leaveVault();
     else {
       setInTrash(false);
@@ -196,7 +207,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   };
 
   /** Runs `fn` over the targets four at a time; returns the ids that succeeded. "Already gone" counts as success. */
-  async function batch(targets: Item[], fn: (id: string) => Promise<{ ok: boolean; error?: string }>) {
+  async function batch(targets: Item[], fn: (id: string) => Promise<{ ok: boolean; error?: string }>, limit = 4) {
     const done = new Set<string>();
     let locked = false;
     let cursor = 0;
@@ -208,7 +219,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
         else if (res.error === 'locked') locked = true;
       }
     };
-    await Promise.all(Array.from({ length: Math.min(4, targets.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(limit, targets.length) }, worker));
     if (locked) onLocked();
     return { done, failed: targets.length - done.size, locked };
   }
@@ -363,17 +374,34 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     } else toast(errorText(t, res.error), true);
   }
 
-  async function rename(item: Item, name: string) {
-    const res = await window.fatup.rename(item.id, name);
-    if (!res.ok) {
-      if (res.error === 'locked') onLocked();
-      else toast(errorText(t, res.error), true);
-      return;
-    }
-    const apply = (list: Item[] | null) => list?.map((it) => (it.id === item.id ? { ...it, name: res.value.name } : it)) ?? null;
+  /** Saves every selected file, one after another; the folder is opened once, on the last one. */
+  async function downloadMany(targets: Item[]) {
+    if (targets.length === 0) return;
+    const last = targets[targets.length - 1].id;
+    const { done, failed, locked } = await batch(targets, (id) => window.fatup.download(id, id === last), 1);
+    if (locked) return;
+    const mark = (list: Item[] | null) => list?.map((it) => (done.has(it.id) ? { ...it, downloaded: true } : it)) ?? null;
+    setItems(mark);
+    setVaultItems(mark);
+    clearSelection();
+    report(done.size, failed, t.downloadedN(done.size));
+  }
+
+  /** Applies a name/tag change right away and rolls back by reloading if the server refuses it. */
+  async function updateFile(item: Item, patch: { name?: string; tags?: TagColor[] }) {
+    const apply = (list: Item[] | null) => list?.map((it) => (it.id === item.id ? { ...it, ...patch } : it)) ?? null;
     setItems(apply);
     setVaultItems(apply);
+    const res = await window.fatup.updateFile(item.id, patch);
+    if (res.ok) return;
+    if (res.error === 'locked') onLocked();
+    else toast(errorText(t, res.error), true);
+    refresh();
   }
+
+  const closeEditor = useCallback(() => setEditing(null), []);
+  const editItem = editing ? [...(items ?? []), ...(vaultItems ?? [])].find((it) => it.id === editing.id) ?? null : null;
+  const openEditor = (item: Item, anchor: DOMRect) => setEditing((cur) => (cur?.id === item.id ? null : { id: item.id, anchor }));
 
   async function copy(item: Item) {
     const res = await window.fatup.copyImage(item.id);
@@ -444,11 +472,11 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               <span className="upload-btn__label">{t.upload}</span>
             </button>
           )}
-          <button className={`icon-btn${inVault ? ' is-active' : ''}`} onClick={toggleVault} title={inVault ? t.closeVault : t.vault} aria-label={inVault ? t.closeVault : t.vault} aria-pressed={inVault}>
+          <button key={shiver} className={`icon-btn${inVault ? ' is-active' : ''}${shiver > 0 ? ' vault-btn--shiver' : ''}`} onClick={toggleVault} title={inVault ? t.closeVault : t.vault} aria-label={inVault ? t.closeVault : t.vault} aria-pressed={inVault}>
             <VaultIcon size={26} />
           </button>
-          <button className={`icon-btn${inTrash ? ' is-active' : ''}`} onClick={toggleTrash} title={inTrash ? t.backToFiles : t.trash} aria-label={inTrash ? t.backToFiles : t.trash} aria-pressed={inTrash}>
-            <Trash2 size={20} />
+          <button key={`trash${trashKick}`} className={`icon-btn${inTrash ? ' is-active trash-btn--active' : ''}${trashKick > 0 && inTrash ? ' trash-btn--open' : ''}`} onClick={toggleTrash} title={inTrash ? t.backToFiles : t.trash} aria-label={inTrash ? t.backToFiles : t.trash} aria-pressed={inTrash}>
+            <TrashIcon size={20} />
           </button>
           <button className="icon-btn" onClick={() => setSettingsOpen(true)} title={t.settings} aria-label={t.settings}>
             <SettingsIcon size={20} />
@@ -490,6 +518,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
                 <button className="btn btn--text" onClick={() => void (vaultActive ? removeFromVault(picked) : moveToVault(picked))}>
                   <VaultIcon size={18} /> {vaultActive ? t.removeFromVault : t.moveToVault}
                 </button>
+                <button className="btn btn--outlined" onClick={() => void downloadMany(picked)}>
+                  <Download size={18} /> {t.downloadAll}
+                </button>
                 <button className="btn btn--text btn--danger-text" onClick={() => void moveToTrash(picked)}>
                   <Trash2 size={18} /> {t.moveToTrash}
                 </button>
@@ -504,6 +535,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
                   <ArrowLeft size={20} />
                 </button>
                 <h2 className="trashbar__title">{t.trash}</h2>
+                <InfoPopover label={t.trashInfo} open={trashInfoOpen} onOpenChange={setTrashInfoOpen}>
+                  {t.trashNote}
+                </InfoPopover>
                 {(trashItems?.length ?? 0) > 0 && (
                   <button className="btn btn--text" onClick={() => setConfirm({ kind: 'empty' })}>
                     {t.emptyTrash}
@@ -523,6 +557,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               </div>
             )}
             <div className="chips-row__tools">
+              <TagFilter value={tagFilter} onChange={setTagFilter} />
               <button className="icon-btn" onClick={refresh} title={`${t.refresh} (Ctrl+R)`} aria-label={t.refresh} disabled={loading}>
                 <RotateCw size={20} className={loading ? 'spin' : ''} />
               </button>
@@ -551,9 +586,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           {!loaded ? (
             <div className="skeleton" aria-busy />
           ) : visible.length === 0 ? (
-            <EmptyState searching={query !== '' && source.length > 0} trash={inTrash} vault={vaultActive} />
+            <EmptyState searching={(query !== '' || tagFilter.length > 0) && source.length > 0} trash={inTrash} vault={vaultActive} />
           ) : view === 'grid' ? (
-            <FileGrid groups={groups} selected={selected} onToggle={toggle} onOpen={open} onMenu={openMenu} onRename={inTrash ? undefined : rename} />
+            <FileGrid groups={groups} selected={selected} onToggle={toggle} onOpen={open} onMenu={openMenu} onEdit={inTrash ? undefined : openEditor} />
           ) : (
             <FileList
               groups={groups}
@@ -561,7 +596,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               onToggle={toggle}
               onOpen={open}
               onMenu={openMenu}
-              onRename={inTrash ? undefined : rename}
+              onEdit={inTrash ? undefined : openEditor}
               sort={sort}
               onSort={changeSort}
               allSelected={allSelected}
@@ -570,7 +605,6 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               timeLabel={inTrash ? t.colDeleted : t.colTime}
             />
           )}
-          {inTrash && visible.length > 0 && <p className="footnote">{t.trashNote}</p>}
         </div>
           </>
         )}
@@ -641,6 +675,16 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           <UploadCloud size={56} />
           <p>{t.dropToUpload}</p>
         </div>
+      )}
+      {editing && editItem && (
+        <EditPopover
+          key={editItem.id}
+          item={editItem}
+          anchor={editing.anchor}
+          onClose={closeEditor}
+          onRename={(name) => void updateFile(editItem, { name })}
+          onTags={(tags) => void updateFile(editItem, { tags })}
+        />
       )}
       {toastNode}
     </div>
