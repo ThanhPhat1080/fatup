@@ -25,7 +25,7 @@ export type ConfigData = {
 export const DEFAULT_PREFS: Prefs = {
   lang: 'auto',
   theme: 'system',
-  viewModes: { all: 'list', image: 'grid', file: 'list' },
+  viewModes: { all: 'list', image: 'grid', file: 'list', link: 'list' },
 };
 
 const MAX_DOWNLOADED = 2000;

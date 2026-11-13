@@ -2919,3 +2919,95 @@ body {
     height: 4.4cqw;
   }
 }
+
+/* ---------- Links ---------- */
+.site-badge {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 5px;
+  color: #fff;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  overflow: hidden;
+}
+.site-badge--internet {
+  background: var(--surface-strong);
+  color: var(--text-2);
+}
+.site-chips {
+  display: flex;
+  gap: 8px;
+  padding: 0 20px 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.site-chips::-webkit-scrollbar {
+  display: none;
+}
+.chip--site {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+.chip__count {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+.link-host {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 40%;
+  flex: none;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--text-3);
+}
+.thumb-fallback--cow {
+  color: var(--text-2);
+  --cow-fill: var(--surface);
+  background: var(--surface);
+}
+.cow-thumb {
+  flex: none;
+}
+.list__cow {
+  color: var(--text-2);
+  --cow-fill: var(--surface);
+}
+.popover--link .popover__field {
+  display: block;
+  margin-bottom: 8px;
+}
+.popover--link .popover__field span {
+  display: block;
+  font-size: 12px;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+.popover--link .rename__input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.rename__input--error {
+  border-color: var(--danger);
+}
+.popover__error {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+@media (max-width: 720px) {
+  .link-host {
+    display: none;
+  }
+  .site-chips {
+    padding: 0 12px 8px;
+  }
+}

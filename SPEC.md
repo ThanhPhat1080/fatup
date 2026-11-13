@@ -1,4 +1,4 @@
-# FatUp — Spec v3
+# FatUp — Spec v4
 
 Chuyển ảnh và file giữa **điện thoại Android** và **máy tính** (macOS / Ubuntu / Windows) qua một server cá nhân trên Cloudflare. Dùng cá nhân, một người dùng.
 
@@ -7,6 +7,8 @@ Chuyển ảnh và file giữa **điện thoại Android** và **máy tính** (m
 > **v2** cập nhật spec v1 theo những gì đã được làm thêm trong quá trình phát triển: upload từ máy tính, bản web (PWA), chọn nhiều file, sắp xếp, **thùng rác**, **két sắt (Secret Vault)**, thanh dung lượng, dark mode, kiểm tra cập nhật.
 >
 > **v3** đánh dấu **Phase 1 hoàn thành** (bản `v0.1.6`): thêm **đổi tên file**, **thẻ màu (tag)** và bộ lọc theo màu, nút **Tải tất cả**, và hai màn hình khóa có hoạt họa (cổng Moria, két sắt). Mục [12](#12-khác-với-v1) liệt kê các điểm khác v1, mục [13](#13-lộ-trình) là lộ trình, trong đó **Phase 2** là bản web PWA đầy đủ.
+>
+> **v4** thêm **liên kết (bookmark)** vào Phase 2: chia sẻ link từ Android/PWA hoặc bấm **Thêm liên kết**, loại file mới `link` ([mục 4.1](#41-liên-kết-bookmark), [9.2c](#92c-liên-kết)), không hết hạn, phân loại theo tên miền, sửa được tiêu đề và URL, xem trước tải khi mở app. Thiết kế chi tiết: `docs/superpowers/specs/2026-11-13-link-bookmarks-design.md`.
 
 ---
 
@@ -56,9 +58,10 @@ npm workspaces cho `shared`, `worker`, `desktop`, `web`. `android/` là project 
 |---|---|
 | Android → cloud → desktop/web, mọi loại file, ≤ 100 MB/file | Android xem/tải lại file đã gửi |
 | Desktop và **bản web** tải file lên (chọn file, kéo-thả, chụp ảnh trên điện thoại) | Upload cả thư mục |
-| Share nhiều file một lúc (Android) | Share text/link (schema có sẵn `kind = 'text'`) |
+| Share nhiều file một lúc (Android) | Share text thuần (không có link) |
+| **Liên kết**: share từ Android/PWA hoặc "Thêm liên kết", không hết hạn, phân loại theo tên miền, sửa tiêu đề/URL | Lưu bản sao nội dung trang, nhập bookmark từ trình duyệt |
 | Thumbnail ảnh (Android và desktop tạo) | Video thumbnail |
-| Tự xóa sau 30 ngày | Lưu trữ vĩnh viễn |
+| File tự xóa sau 30 ngày (link thì không) | Lưu trữ vĩnh viễn cho file |
 | **Thùng rác** 30 ngày, khôi phục, xóa vĩnh viễn | Chia sẻ link công khai |
 | **Két sắt**: che file sau PIN nhập lại mỗi lần mở | Mã hóa nội dung file (xem [mục 7](#7-bảo-mật)) |
 | Chọn nhiều file, sắp xếp, xóa hàng loạt, **Tải tất cả** | Thư mục, album |
@@ -96,6 +99,11 @@ ALTER TABLE files ADD COLUMN in_vault INTEGER NOT NULL DEFAULT 0;   -- 1 = đang
 
 -- 0004_tags.sql
 ALTER TABLE files ADD COLUMN tags TEXT NOT NULL DEFAULT '';          -- tên màu cách nhau bằng dấu phẩy, tối đa 3, theo thứ tự thêm
+
+-- 0005_links.sql: dựng lại bảng (SQLite không sửa được CHECK) để kind nhận thêm 'link', cộng 3 cột:
+--   url TEXT                       -- địa chỉ đã chuẩn hóa của link, NULL với file
+--   previewed_at INTEGER           -- lần thử tải xem trước (kể cả thất bại), NULL = chưa thử
+--   title_set INTEGER NOT NULL DEFAULT 0  -- 1 = tiêu đề do người dùng/share sheet đặt, xem trước không được ghi đè
 ```
 
 - `kind = 'image'` khi `mime` bắt đầu bằng `image/`, còn lại là `'file'`.
@@ -142,6 +150,21 @@ type FileItem = {
 ```
 
 Phân trang dùng cursor `<sortValue>_<id>`, với `sortValue` là `created_at` (danh sách thường, két sắt) hoặc `deleted_at` (thùng rác).
+
+### 4.1 Liên kết (bookmark)
+
+Một link là một row `files` với `kind = 'link'`, `mime = 'text/uri-list'`, `size = 0` (không tính vào dung lượng), `status = 'ready'`, `name` là tiêu đề, `url` là địa chỉ. Không có object `files/<id>` trên R2; ảnh xem trước (nếu có) lưu ở `thumbs/<id>.jpg`. `FileItem` có thêm `url`, `site` (`facebook | youtube | instagram | threads | shopee | tiktok | internet`, tính từ `url` bằng `siteOf` ở `shared/`) và `previewed`.
+
+| Method | Path | Mô tả |
+|---|---|---|
+| `POST` | `/links` | Body `{ url, title?, device? }`. Chỉ nhận `http`/`https`, tối đa 2048 ký tự; chuẩn hóa URL (bỏ fragment, hạ chữ thường tên miền). URL đã có link **không ở thùng rác** thì trả bản cũ (200), không tạo bản sao. Có `title` thì `title_set = 1`, không thì tên = tên miền. 201 khi tạo mới. Lỗi: `400 bad_url`. |
+| `POST` | `/links/:id/preview` | Worker tải trang đích (timeout 4 giây, tối đa 3 lần redirect, đọc ≤ 512 KB HTML, ảnh ≤ 1,5 MB và phải là `image/*`, từ chối localhost/IP nội bộ) rồi cập nhật tên (chỉ khi `title_set = 0`) và ảnh. YouTube và TikTok dùng oEmbed. Không bao giờ lỗi vì trang đích: luôn đặt `previewed_at`. Chỉ tải một lần; `?force=1` để tải lại. |
+| `PATCH` | `/files/:id` | Với link nhận thêm `url`: đổi URL thì xóa xem trước (`previewed_at = NULL`, xóa `thumbs/<id>.jpg`), tên quay về tên miền mới nếu `title_set = 0`. Đổi `name` đặt `title_set = 1`. URL trùng link khác: `409 duplicate_url`. Gửi `url` cho file thường: `400`. |
+
+- `GET /files?kind=all` **không trả link** (để bản app cũ không thấy chúng); lấy link bằng `kind=link` (kết hợp được với `vault=1`). Thùng rác trả mọi loại.
+- `GET /files/:id/download` với link: `400 not_a_file`.
+- Cron **bỏ qua link** ở nhóm hết hạn 30 ngày. Link ở thùng rác quá 30 ngày vẫn bị xóa như file.
+- Thùng rác, két sắt, khôi phục, xóa vĩnh viễn, thẻ màu dùng nguyên.
 
 ---
 
@@ -206,7 +229,7 @@ Một khu vực để **cất file ra khỏi danh sách chính**, chỉ xem đư
 
 - **Kotlin**, `minSdk 28`, `compileSdk`/`targetSdk 37`, package `dev.fatup.app`. AGP 9 + Gradle 9.
 - **Không có màn hình chính**, chỉ có:
-  1. `ShareActivity` (trong suốt) nhận `ACTION_SEND` / `ACTION_SEND_MULTIPLE` với `*/*`: copy URI vào cache, enqueue `UploadWorker`, hiện toast rồi đóng. File > 100 MB bị từ chối ngay.
+  1. `ShareActivity` (trong suốt) nhận `ACTION_SEND` / `ACTION_SEND_MULTIPLE` với `*/*`: copy URI vào cache, enqueue `UploadWorker`, hiện toast rồi đóng. File > 100 MB bị từ chối ngay. **Share text có link** (không có file): tách link đầu tiên bằng `Links.extractUrl`, lấy tiêu đề từ `EXTRA_SUBJECT`/`EXTRA_TITLE` nếu nó không chỉ là chính link, enqueue `LinkWorker` (WorkManager, cần mạng, retry exponential, tối đa 8 lần) gọi `POST /links`. Không có link thì toast "Không tìm thấy liên kết".
   2. `SetupActivity` mở khi chưa có config hoặc từ icon launcher: **Quét QR** (zxing-android-embedded) hoặc nhập tay URL + token; nút "Gửi thử" gọi `/health` có auth.
 - `UploadWorker` (WorkManager, cần mạng, retry exponential backoff): tạo thumbnail (cạnh dài 400px, JPEG q80, theo EXIF) → `POST /uploads` → PUT file → PUT thumbnail → `complete` → xóa cache. Mỗi lần share là một batch; 401 dừng cả batch, 4xx khác bỏ file đó, lỗi mạng/5xx retry tối đa 8 lần.
 - Notification foreground hiện tiến độ; xong hoặc lỗi thì báo.
@@ -257,6 +280,15 @@ Một khu vực để **cất file ra khỏi danh sách chính**, chỉ xem đư
 - **Thẻ màu:** 7 màu (đỏ, cam, vàng, xanh lá, xanh dương, tím, xám), **tối đa 3 màu mỗi file**. Bấm chấm màu để gắn/bỏ ngay (không cần lưu); đủ 3 màu thì các chấm còn lại mờ đi và dòng chú thích báo đã đủ. Chấm màu hiện cạnh tên file ở lưới và danh sách.
 - **Lọc theo màu:** nút hình **chiếc hộp** cạnh nút làm mới. Mở hộp thì các chấm màu nhảy ra bên trái từng chấm một; chấm đang chọn **phình to và nhích cao hơn**. Chọn nhiều màu = file có **bất kỳ** màu nào trong số đó. Đóng hộp thì bộ lọc được xóa.
 - **Tải tất cả:** khi chọn nhiều file, thanh chọn có thêm nút **Tải tất cả** (viền outline, không có trong thùng rác), tải lần lượt mọi file đang chọn.
+
+### 9.2c Liên kết
+
+- **Tab Liên kết** cạnh Tất cả/Ảnh/File. Tất cả/Ảnh/File chỉ gồm file. Tab Liên kết có chế độ xem riêng (mặc định danh sách) và hàng chip lọc loại: **Tất cả · Facebook · YouTube · Instagram · Threads · Shopee · TikTok · Internet**, kèm số lượng. Kết hợp được với lọc màu và ô tìm kiếm (theo tiêu đề và URL). Chip loại dùng huy hiệu SVG tự vẽ (không dùng logo thật).
+- Mỗi link: ảnh xem trước, tiêu đề, huy hiệu và tên miền, thời gian, chấm màu. **Không có ảnh thì hiện con bò cowsay SVG nhỏ** (`CowThumb`).
+- **Bấm vào link** mở URL ở tab mới (desktop: trình duyệt mặc định, chỉ `http`/`https`). Menu `⋮`/chuột phải: Mở liên kết, Sao chép link, **Sửa liên kết**, Tải lại xem trước, Chuyển vào Két sắt, Chuyển vào thùng rác. "Tải tất cả" bỏ qua link.
+- **Sửa liên kết:** bút chì mở popover có ô **Tiêu đề**, ô **Liên kết (URL)** và chấm màu. `Enter` lưu (URL sai hoặc trùng thì ô đỏ và hiện lý do, popover vẫn mở); bấm ra ngoài lưu phần hợp lệ; `Esc` bỏ.
+- **Nút Thêm liên kết** (sợi xích, cạnh Tải lên): hộp thoại URL + tiêu đề tùy chọn; tự điền link nếu clipboard có link; dán cả đoạn text cũng được (tách link đầu tiên). Đang mở Két sắt thì link vào thẳng két.
+- **Xem trước tải khi mở app:** sau khi danh sách tải xong, các link chưa xem trước được gọi `POST /links/:id/preview` mới nhất trước, **2 link cùng lúc, tối đa 20 link mỗi lần mở app**; link vừa thêm được tải ngay. Facebook, Instagram, Threads, Shopee thường không cho đọc nên có thể không có ảnh (hiện con bò).
 
 ### 9.3 Trình xem ảnh (Lightbox)
 
@@ -324,6 +356,8 @@ Hai màn hình nhập PIN vẽ hoàn toàn bằng **SVG + CSS** (không có file
 - **CORS của R2 là bắt buộc để upload** (`npm run r2:cors` áp dụng `worker/r2-cors.json`: `GET`, `HEAD`, `PUT`, header `content-type`). Thiếu thì upload báo lỗi mạng. "Copy ảnh" cũng cần CORS; thiếu thì copy ảnh xem trước.
 - Lưu ý bảo mật của token trên web: xem [mục 7](#7-bảo-mật).
 
+- **Nhận link từ Chia sẻ (Web Share Target):** manifest có `share_target` (`GET /` với `title`, `text`, `url`). Android Chrome thường để link trong `text`, nên `takeSharedLink` (`web/src/share.ts`) ưu tiên `url` rồi tách link từ `text`. Link được giữ trong `sessionStorage` **qua màn hình khóa PIN** (token chỉ giải mã được sau PIN), thanh địa chỉ được dọn, và khi app mở khóa thì gọi `addLink`, hiện toast và chuyển sang tab Liên kết. Chia sẻ không có link thì toast báo không tìm thấy. Android cập nhật mục Chia sẻ của PWA đã cài khá chậm (tới ~1 ngày), có thể phải cài lại PWA.
+
 ### 10.1 Upload từ web
 
 - `WebUploadManager` (`web/src/uploader.ts`) cùng giao diện hàng đợi với `UploadManager` của desktop nên **bảng tiến trình dùng chung**: 2 file cùng lúc, tiến độ, hủy từng file, tick khi xong. Luồng `POST /uploads` → PUT file → PUT thumbnail → `complete` (→ `PUT /files/:id/vault` nếu đang mở két).
@@ -364,10 +398,10 @@ Hai màn hình nhập PIN vẽ hoàn toàn bằng **SVG + CSS** (không có file
 
 ### Kiểm thử
 
-- **Worker** (vitest + Workers pool, D1/R2 giả lập, 33 test): auth, upload/complete, phân trang; đổi tên và thẻ màu (`PATCH`); thùng rác (xóa mềm, liệt kê, khôi phục, xóa vĩnh viễn, dọn sạch); két sắt (chuyển vào/ra, validate, xóa từ két); `/usage`; cron (hạn 30 ngày, hạn thùng rác, `retain_from`).
-- **Desktop** (vitest, 43 test): nhóm theo ngày, sắp xếp, ngưỡng và định dạng dung lượng, đặt tên tránh trùng, PIN lockout, i18n, `ApiClient`, so sánh version cập nhật, hàng đợi upload (server HTTP giả: stream, tiến độ, lỗi, hủy, upload vào két).
-- **Web** (10 test): mã hóa token bằng PIN, quy tắc khóa sau 5 lần sai, và hàng đợi upload web (thứ tự file/thumbnail/complete, 2 file cùng lúc, giới hạn 100 MB, lỗi, hủy, vào két, đặt tên thiết bị).
-- **Chưa có:** test tự động cho UI (chọn nhiều file, thùng rác, két sắt, dark mode, viewer) và cho luồng nhập PIN két sắt. Script `desktop/e2e/smoke.mjs` (Playwright) viết từ v1 và **chưa được cập nhật** theo giao diện mới. Android chỉ có unit test cho logic thuần.
+- **Worker** (vitest + Workers pool, D1/R2 giả lập, 60 test, gồm link: tạo, trùng URL, danh sách, sửa tiêu đề/URL, cron và xem trước với `fetch` giả): auth, upload/complete, phân trang; đổi tên và thẻ màu (`PATCH`); thùng rác (xóa mềm, liệt kê, khôi phục, xóa vĩnh viễn, dọn sạch); két sắt (chuyển vào/ra, validate, xóa từ két); `/usage`; cron (hạn 30 ngày, hạn thùng rác, `retain_from`).
+- **Desktop** (vitest, 71 test, gồm `siteOf`/`normalizeUrl`/`extractUrl`, lọc link theo loại, `ApiClient` cho link): nhóm theo ngày, sắp xếp, ngưỡng và định dạng dung lượng, đặt tên tránh trùng, PIN lockout, i18n, `ApiClient`, so sánh version cập nhật, hàng đợi upload (server HTTP giả: stream, tiến độ, lỗi, hủy, upload vào két).
+- **Web** (17 test, gồm share target giữ link qua khóa PIN): mã hóa token bằng PIN, quy tắc khóa sau 5 lần sai, và hàng đợi upload web (thứ tự file/thumbnail/complete, 2 file cùng lúc, giới hạn 100 MB, lỗi, hủy, vào két, đặt tên thiết bị).
+- **Chưa có:** test tự động cho UI (chọn nhiều file, thùng rác, két sắt, dark mode, viewer) và cho luồng nhập PIN két sắt. Script `desktop/e2e/smoke.mjs` (Playwright) viết từ v1 và **chưa được cập nhật** theo giao diện mới. Android chỉ có unit test cho logic thuần (kể cả `Links.extractUrl`, `Api.createLink`); các test Android chạy trên CI vì máy phát triển có thể không có Android SDK.
 
 ---
 
@@ -390,6 +424,7 @@ Hai màn hình nhập PIN vẽ hoàn toàn bằng **SVG + CSS** (không có file
 | Chọn nhiều file | Xóa | Thêm **Tải tất cả** |
 | Màn hình khóa | Ô nhập PIN tĩnh | Cổng Moria hoạt họa; cổng két sắt với ông phù thủy |
 | Ghi chú tải về | Item đã tải hiện ✓ | Đã bỏ dấu ✓ (vẫn lưu danh sách id đã tải trong config) |
+| Liên kết | Không có | `kind = 'link'`: share từ Android/PWA hoặc "Thêm liên kết", không hết hạn, loại theo tên miền, sửa tiêu đề/URL, xem trước tải khi mở app (migration `0005`, `POST /links`, `POST /links/:id/preview`) |
 
 ## 13. Lộ trình
 
@@ -399,12 +434,14 @@ Android share target, app desktop (xem, tải lên, tải về, tìm kiếm, s�
 
 **Phần server cần chạy khi nâng cấp lên bản có thẻ màu:** `npm run db:migrate:remote` (áp dụng `0004`) rồi `npm run deploy`, theo thứ tự đó.
 
+**Nâng cấp lên bản có liên kết:** `0005` **dựng lại bảng `files`**; nên sao lưu D1 trước, rồi `npm run db:migrate:remote` và `npm run deploy`, theo thứ tự đó.
+
 ### Phase 2: bản web PWA đầy đủ, cài lên Android và các thiết bị khác
 
 Mục tiêu: bản web đủ dùng để **thay thế việc cài app** trên Android, máy tính hoặc iOS, với giao diện giống hệt app desktop.
 
-- **Đã làm:** upload từ web ([10.1](#101-upload-từ-web)), giao diện điện thoại ([10.2](#102-giao-diện-điện-thoại)), CORS cho R2 (`npm run r2:cors`).
-- **Chưa làm:** nhận file khi Chia sẻ từ app khác (Web Share Target), nút "Cài FatUp" và hướng dẫn cài iOS, icon maskable, màn hình offline.
+- **Đã làm:** upload từ web ([10.1](#101-upload-từ-web)), giao diện điện thoại ([10.2](#102-giao-diện-điện-thoại)), CORS cho R2 (`npm run r2:cors`), **liên kết/bookmark** (share từ Android và PWA, nút Thêm liên kết, [mục 4.1](#41-liên-kết-bookmark), [9.2c](#92c-liên-kết)).
+- **Chưa làm:** nhận **file** khi Chia sẻ vào PWA (Web Share Target mới nhận link), nút "Cài FatUp" và hướng dẫn cài iOS, icon maskable, màn hình offline.
 - **Cần kiểm tra trên thiết bị thật:** cảm ứng (giữ lâu, chụm, vuốt) và upload qua mạng di động. Phần này mới được thử bằng giả lập.
 
 ### Hướng mở rộng khác

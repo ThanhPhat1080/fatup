@@ -1,9 +1,11 @@
 import { useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import { ArrowDown, ArrowUp, MoreVertical, Pencil, SearchX } from 'lucide-react';
 import type { Item } from '../../../shared-ipc';
-import { cowsay, formatSize, formatTime, type DateGroup, type SortKey, type SortState } from '../lib/format';
+import { cowsay, formatSize, formatTime, linkHost, type DateGroup, type SortKey, type SortState } from '../lib/format';
 import { useI18n } from '../lib/i18n';
+import { CowThumb } from './CowThumb';
 import { FileIcon } from './FileIcon';
+import { SiteBadge } from './SiteBadge';
 
 type ViewProps = {
   groups: DateGroup<Item>[];
@@ -100,13 +102,14 @@ function MoreButton({ item, onMenu }: { item: Item; onMenu: ViewProps['onMenu'] 
   );
 }
 
-function RenameButton({ onClick }: { onClick: (anchor: DOMRect) => void }) {
+function RenameButton({ onClick, link }: { onClick: (anchor: DOMRect) => void; link?: boolean }) {
   const { t } = useI18n();
+  const label = link ? t.editLink : t.rename;
   return (
     <button
       className="icon-btn icon-btn--sm rename-btn"
-      aria-label={t.rename}
-      title={t.rename}
+      aria-label={label}
+      title={label}
       onClick={(e) => {
         e.stopPropagation();
         onClick(e.currentTarget.getBoundingClientRect());
@@ -136,11 +139,34 @@ function Thumb({ item }: { item: Item }) {
   if (item.thumbUrl && !failed) {
     return <img src={item.thumbUrl} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} />;
   }
+  if (item.kind === 'link') {
+    // No preview image (yet, or the page has none): a little cow keeps the card from looking broken.
+    return (
+      <div className="thumb-fallback thumb-fallback--cow">
+        <CowThumb size={84} />
+      </div>
+    );
+  }
   return (
     <div className="thumb-fallback">
       <FileIcon name={item.name} mime={item.mime} size={48} />
     </div>
   );
+}
+
+/** The little picture before a name in the list: the thumbnail, or (when there is none or it fails to load) the file icon or the cow. */
+function MiniThumb({ item }: { item: Item }) {
+  const [failed, setFailed] = useState(false);
+  if (item.thumbUrl && !failed) {
+    return <img className="list__mini" src={item.thumbUrl} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} />;
+  }
+  return item.kind === 'link' ? <CowThumb size={28} className="list__cow" /> : <FileIcon name={item.name} mime={item.mime} />;
+}
+
+/** The small icon before a file's name: the site badge for links, the file-type icon otherwise. */
+function KindIcon({ item, size }: { item: Item; size: number }) {
+  if (item.kind === 'link' && item.site) return <SiteBadge site={item.site} size={size} />;
+  return <FileIcon name={item.name} mime={item.mime} size={size} />;
 }
 
 type ItemProps = Pick<ViewProps, 'selected' | 'onToggle' | 'onOpen' | 'onMenu' | 'onEdit'> & { item: Item };
@@ -159,12 +185,12 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit }: ItemProps) {
         <span className="tile__check">
           <Check item={item} selected={selected.has(item.id)} onToggle={onToggle} />
         </span>
-        <FileIcon name={item.name} mime={item.mime} size={18} />
+        <KindIcon item={item} size={18} />
         <span className="tile__name" title={item.name}>
           {item.name}
         </span>
         <TagDots tags={item.tags} />
-        {onEdit && <RenameButton onClick={(r) => onEdit(item, r)} />}
+        {onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
         <MoreButton item={item} onMenu={onMenu} />
       </div>
       <div className="tile__thumb">
@@ -182,12 +208,18 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit }: ItemProps) {
         <Check item={item} selected={selected.has(item.id)} onToggle={onToggle} />
       </span>
       <span className="list__name" role="cell">
-        {item.thumbUrl ? <img className="list__mini" src={item.thumbUrl} alt="" loading="lazy" draggable={false} /> : <FileIcon name={item.name} mime={item.mime} />}
-        <span className="ellipsis" title={item.name}>
+        <MiniThumb item={item} />
+        <span className="ellipsis" title={item.url ?? item.name}>
           {item.name}
         </span>
+        {item.kind === 'link' && item.url && (
+          <span className="link-host">
+            {item.site && <SiteBadge site={item.site} size={16} />}
+            <span className="ellipsis">{linkHost(item.url)}</span>
+          </span>
+        )}
         <TagDots tags={item.tags} />
-        {onEdit && <RenameButton onClick={(r) => onEdit(item, r)} />}
+        {onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
       </span>
       <span role="cell" className="muted col-from ellipsis">
         {item.device ?? '—'}
@@ -196,7 +228,7 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit }: ItemProps) {
         {formatTime(item.createdAt)}
       </span>
       <span role="cell" className="muted col-size">
-        {formatSize(item.size)}
+        {item.kind === 'link' ? '—' : formatSize(item.size)}
       </span>
       <span role="cell">
         <MoreButton item={item} onMenu={onMenu} />
@@ -281,7 +313,7 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, s
   );
 }
 
-export function EmptyState({ searching, trash, vault }: { searching: boolean; trash?: boolean; vault?: boolean }) {
+export function EmptyState({ searching, trash, vault, links }: { searching: boolean; trash?: boolean; vault?: boolean; links?: boolean }) {
   const { t } = useI18n();
   return (
     <div className="empty">
@@ -293,11 +325,11 @@ export function EmptyState({ searching, trash, vault }: { searching: boolean; tr
           <h2>{t.noMatches}</h2>
         </>
       ) : (
-        <pre className="cowsay" role="img" aria-label={trash ? t.trashEmptyTitle : vault ? t.vaultEmptyTitle : t.emptyTitle}>
-          {cowsay(trash ? t.cowTrash : vault ? t.cowVault : t.cowEmpty)}
+        <pre className="cowsay" role="img" aria-label={trash ? t.trashEmptyTitle : vault ? t.vaultEmptyTitle : links ? t.cowLinks : t.emptyTitle}>
+          {cowsay(trash ? t.cowTrash : vault ? t.cowVault : links ? t.cowLinks : t.cowEmpty)}
         </pre>
       )}
-      {!searching && <p className="muted">{trash ? t.trashEmptyHint : vault ? t.vaultEmptyHint : t.emptyHint}</p>}
+      {!searching && <p className="muted">{trash ? t.trashEmptyHint : vault ? t.vaultEmptyHint : links ? t.emptyLinksHint : t.emptyHint}</p>}
     </div>
   );
 }

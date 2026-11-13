@@ -14,7 +14,7 @@
     <string name="disconnect">Ngắt kết nối</string>
     <string name="disconnect_confirm">Điện thoại sẽ không gửi được file cho tới khi bạn kết nối lại.</string>
     <string name="how_to_title">Cách gửi</string>
-    <string name="how_to_body">1. Mở Thư viện ảnh, Files hoặc bất kỳ app nào.\n2. Chọn một hoặc nhiều ảnh/file.\n3. Bấm Chia sẻ, chọn FatUp.\n\nFile sẽ hiện trên máy tính trong vòng một phút (hoặc bấm Làm mới ở đó).</string>
+    <string name="how_to_body">1. Mở Thư viện ảnh, Files hoặc bất kỳ app nào.\n2. Chọn một hoặc nhiều ảnh/file.\n3. Bấm Chia sẻ, chọn FatUp.\n\nFile sẽ hiện trên máy tính trong vòng một phút (hoặc bấm Làm mới ở đó).\n\nĐể lưu một trang web, chia sẻ liên kết từ trình duyệt theo cách tương tự: nó nằm trong tab Liên kết.</string>
     <string name="channel_uploads">Tải lên</string>
     <string name="sending">Đang gửi…</string>
     <string name="sending_progress">Đang gửi %1$d/%2$d</string>
@@ -24,6 +24,9 @@
     <string name="error_network">Không kết nối được server. Kiểm tra URL và mạng.</string>
     <string name="error_invalid_qr">Đây không phải mã QR của FatUp.</string>
     <string name="error_invalid_input">Nhập đủ URL server và token.</string>
+    <string name="sending_link">Đang lưu liên kết lên FatUp</string>
+    <string name="no_link_found">Không tìm thấy liên kết trong nội dung bạn chia sẻ</string>
+    <string name="link_send_failed">Không lưu được liên kết %1$s</string>
     <plurals name="sending_files">
         <item quantity="other">Đang gửi %d file tới FatUp</item>
     </plurals>

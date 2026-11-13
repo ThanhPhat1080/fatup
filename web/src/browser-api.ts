@@ -3,6 +3,7 @@ import type { AppState, FatupApi, Item, Prefs, Result, UnlockResult, UploadJob }
 import { ApiClient, ApiError, normalizeServerUrl } from '../../desktop/src/main/api';
 import { nextAttempt, open, seal, type Lockout, type Sealed } from './vault';
 import { WebUploadManager, deviceName } from './uploader';
+import { popSharedLink } from './share';
 
 const STORAGE_KEY = 'fatup.web.v1';
 const MAX_DOWNLOADED = 2000;
@@ -15,7 +16,7 @@ type Stored = {
   downloaded: string[];
 };
 
-const DEFAULT_PREFS: Prefs = { lang: 'auto', theme: 'system', viewModes: { all: 'list', image: 'grid', file: 'list' } };
+const DEFAULT_PREFS: Prefs = { lang: 'auto', theme: 'system', viewModes: { all: 'list', image: 'grid', file: 'list', link: 'list' } };
 
 function load(): Stored {
   const base: Stored = { serverUrl: null, token: null, lockout: { failedAttempts: 0, lockedUntil: 0 }, prefs: structuredClone(DEFAULT_PREFS), downloaded: [] };
@@ -206,14 +207,14 @@ export function installBrowserApi(): void {
 
     list: () =>
       guarded(async (): Promise<Item[]> => {
-        const items = await client().listAll();
+        const items = await client().listEverything();
         itemCache.clear();
         for (const it of items) itemCache.set(it.id, it);
         const downloaded = new Set(data.downloaded);
         return items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) }));
       }),
 
-    listTrash: () => guarded(async (): Promise<Item[]> => (await client().listAll({ trash: true })).map((it) => ({ ...it, downloaded: false }))),
+    listTrash: () => guarded(async (): Promise<Item[]> => (await client().listEverything({ trash: true })).map((it) => ({ ...it, downloaded: false }))),
 
     updateFile: (id, patch) =>
       guarded(async (): Promise<Item> => {
@@ -221,6 +222,27 @@ export function installBrowserApi(): void {
         itemCache.set(id, item);
         return { ...item, downloaded: data.downloaded.includes(id) };
       }),
+
+    addLink: (url, title, vault) =>
+      guarded(async (): Promise<Item> => {
+        let item = await client().addLink({ url, title, device: deviceName() });
+        if (vault) item = await client().setVault(item.id, true);
+        itemCache.set(item.id, item);
+        return { ...item, downloaded: false };
+      }),
+
+    previewLink: (id, force) =>
+      guarded(async (): Promise<Item> => {
+        const item = await client().previewLink(id, force === true);
+        itemCache.set(id, item);
+        return { ...item, downloaded: false };
+      }),
+
+    takePendingLink: async () => popSharedLink(),
+
+    openExternal: async (url) => {
+      if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener,noreferrer');
+    },
 
     vaultOpen: async (pin) => {
       if (!unlockedToken) return { ok: false, reason: 'wrong', attemptsLeft: 0 };
@@ -235,7 +257,7 @@ export function installBrowserApi(): void {
       if (!unlockedToken) return { ok: false, error: 'locked' };
       if (!vaultIsOpen) return { ok: false, error: 'vault_locked' };
       try {
-        const items = await client().listAll({ vault: true });
+        const items = await client().listEverything({ vault: true });
         for (const it of items) itemCache.set(it.id, it);
         const downloaded = new Set(data.downloaded);
         return { ok: true, value: items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) })) };
