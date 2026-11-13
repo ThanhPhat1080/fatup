@@ -63,6 +63,13 @@ class Api(
         )
     }
 
+    /** Bookmarks a link; the server fetches its preview later. [title] is optional (share sheets rarely send a useful one). */
+    fun createLink(url: String, title: String?, device: String) {
+        val payload = JSONObject().put("url", url).put("device", device)
+        if (title != null) payload.put("title", title)
+        execute(request("/links").post(payload.toString().toRequestBody(json)).build())
+    }
+
     fun complete(id: String) {
         execute(request("/uploads/$id/complete").post(ByteArray(0).toRequestBody(json)).build())
     }

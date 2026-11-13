@@ -27,6 +27,7 @@ class ShareActivity : ComponentActivity() {
         }
         val uris = sharedUris(intent)
         if (uris.isEmpty()) {
+            shareLink()
             finish()
             return
         }
@@ -40,6 +41,20 @@ class ShareActivity : ComponentActivity() {
             }
             finish()
         }
+    }
+
+    /** A share with no file but some text: bookmark the first web link in it. */
+    private fun shareLink() {
+        if (intent.action != Intent.ACTION_SEND) return
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+        val url = Links.extractUrl(text)
+        if (url == null) {
+            toast(getString(R.string.no_link_found))
+            return
+        }
+        val title = Links.cleanTitle(intent.getStringExtra(Intent.EXTRA_SUBJECT) ?: intent.getStringExtra(Intent.EXTRA_TITLE), url)
+        LinkWorker.enqueue(applicationContext, url, title)
+        toast(getString(R.string.sending_link))
     }
 
     private fun sharedUris(intent: Intent): List<Uri> = when (intent.action) {

@@ -130,3 +130,61 @@ class ApiTest {
         }
     }
 }
+
+class LinksTest {
+    @Test
+    fun findsTheLinkInsideSharedText() {
+        assertEquals("https://a.com/p?q=1", Links.extractUrl("Xem cái này https://a.com/p?q=1. ok"))
+        assertEquals("https://a.com/x", Links.extractUrl("(https://a.com/x)"))
+        assertEquals("https://example.com/", Links.extractUrl("HTTPS://Example.COM"))
+    }
+
+    @Test
+    fun takesTheFirstOfSeveralLinks() {
+        assertEquals("https://x.com/", Links.extractUrl("a https://x.com b https://y.com"))
+    }
+
+    @Test
+    fun returnsNullWithoutAWebLink() {
+        assertNull(Links.extractUrl(null))
+        assertNull(Links.extractUrl(""))
+        assertNull(Links.extractUrl("no link here"))
+        assertNull(Links.extractUrl("ftp://files.example.com/a"))
+    }
+
+    @Test
+    fun dropsATitleThatIsJustTheLink() {
+        assertEquals("Cool page", Links.cleanTitle("  Cool page ", "https://a.com/"))
+        assertNull(Links.cleanTitle("https://a.com/", "https://a.com/"))
+        assertNull(Links.cleanTitle("   ", "https://a.com/"))
+        assertNull(Links.cleanTitle(null, "https://a.com/"))
+    }
+
+    @Test
+    fun postsTheLinkToTheServer() {
+        MockWebServer().use { server ->
+            server.start()
+            val api = Api(Connection(server.url("").toString().trimEnd('/'), "tok"))
+            server.enqueue(MockResponse.Builder().code(201).body("""{"id":"L1"}""").build())
+            api.createLink("https://a.com/", "Cool page", "Pixel")
+            val req = server.takeRequest()
+            assertEquals("/links", req.url.encodedPath)
+            assertEquals("Bearer tok", req.headers["Authorization"])
+            val body = JSONObject(req.body!!.utf8())
+            assertEquals("https://a.com/", body.getString("url"))
+            assertEquals("Cool page", body.getString("title"))
+            assertEquals("Pixel", body.getString("device"))
+        }
+    }
+
+    @Test
+    fun omitsAMissingTitle() {
+        MockWebServer().use { server ->
+            server.start()
+            val api = Api(Connection(server.url("").toString().trimEnd('/'), "tok"))
+            server.enqueue(MockResponse.Builder().code(200).body("""{"id":"L1"}""").build())
+            api.createLink("https://a.com/", null, "Pixel")
+            assertFalse(JSONObject(server.takeRequest().body!!.utf8()).has("title"))
+        }
+    }
+}
