@@ -23,6 +23,7 @@ import {
   type ListFilesResponse,
 } from '@fatup/shared';
 import { purge } from './cleanup';
+import { fetchPreview } from './preview';
 import type { Env } from './env';
 import { createPresigner, fileKey, thumbKey, type Presigner } from './presign';
 import { isUlid, ulid } from './ulid';
@@ -51,6 +52,8 @@ type AppEnv = { Bindings: Env; Variables: { presigner: Presigner } };
 export type AppOptions = {
   /** Lets tests swap in a presigner that does not need real R2 credentials. */
   presigner?: (env: Env) => Presigner;
+  /** Lets tests replace the network when a link's page is fetched for its preview. */
+  fetch?: typeof fetch;
 };
 
 function fail(c: Context, status: 400 | 401 | 404 | 409 | 413, code: string, message: string) {
@@ -245,6 +248,25 @@ export function createApp(options: AppOptions = {}) {
       .bind(row.id, row.name, row.mime, row.device, row.created_at, url, row.title_set)
       .run();
     return c.json(await toItem(row, c.get('presigner')), 201);
+  });
+
+  // Fetches a link's title and image the first time it is asked for (when the app opens), or again with ?force=1.
+  app.post('/links/:id/preview', async (c) => {
+    const id = c.req.param('id');
+    const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND kind = 'link' AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
+    if (!row || !row.url) return fail(c, 404, 'not_found', 'Link not found');
+    const presigner = c.get('presigner');
+    if (row.previewed_at !== null && c.req.query('force') !== '1') return c.json(await toItem(row, presigner));
+
+    const found = await fetchPreview(row.url, options.fetch);
+    const next: Row = { ...row, previewed_at: Date.now() };
+    if (found.title && !row.title_set) next.name = found.title;
+    if (found.image) {
+      await c.env.BUCKET.put(thumbKey(id), found.image.bytes, { httpMetadata: { contentType: 'image/jpeg' } });
+      next.has_thumb = 1;
+    }
+    await c.env.DB.prepare('UPDATE files SET name = ?, has_thumb = ?, previewed_at = ? WHERE id = ?').bind(next.name, next.has_thumb, next.previewed_at, id).run();
+    return c.json(await toItem(next, presigner));
   });
 
   app.get('/files', async (c) => {
