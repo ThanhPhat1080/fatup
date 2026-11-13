@@ -1900,16 +1900,16 @@ h2 {
 }
 .lockheist {
   position: relative;
-  width: min(480px, 100%, 67vh);
-  aspect-ratio: 480 / 440;
+  width: min(480px, 100%, 60vh);
+  aspect-ratio: 480 / 560;
   container-type: inline-size;
   animation: heist-in 0.5s ease-out;
 }
 .lockheist__pin {
   left: 27.08%;
-  top: 82.73%;
+  top: 70.71%;
   width: 45.83%;
-  height: 14.09%;
+  height: 11.07%;
 }
 .lockheist .heist__pin .pin__cell {
   background: #f5e9cf;
@@ -1937,8 +1937,13 @@ h2 {
   transform-origin: 335px 332px;
   animation: sign-wobble 1.7s ease-in-out infinite alternate;
 }
-.wizard__staff {
-  animation: staff-tap 3s ease-in-out infinite;
+.wizard__body {
+  transform-origin: 240px 331px;
+  animation: wizard-bounce 0.7s ease-in-out infinite;
+}
+.wizard__raise {
+  transform-origin: 206px 250px;
+  animation: staff-pump 0.7s ease-in-out infinite;
 }
 .wizard__orb {
   transform-box: fill-box;
@@ -1965,9 +1970,13 @@ h2 {
   from { transform: rotate(-3deg); }
   to { transform: rotate(3deg); }
 }
-@keyframes staff-tap {
-  0%, 82%, 94%, 100% { transform: translateY(0); }
-  88% { transform: translateY(5px); }
+@keyframes wizard-bounce {
+  0%, 100% { transform: scale(1.02, 0.96); }
+  50% { transform: translateY(-5px) scale(0.99, 1.03); }
+}
+@keyframes staff-pump {
+  0%, 100% { transform: rotate(6deg); }
+  50% { transform: rotate(-7deg); }
 }
 @keyframes orb-pulse {
   0%, 100% { transform: scale(1); filter: brightness(1); }
@@ -1996,7 +2005,8 @@ h2 {
 .lockheist--boom .wizard__beard,
 .lockheist--boom .wizard__head,
 .lockheist--boom .wizard__sign,
-.lockheist--boom .wizard__staff {
+.lockheist--boom .wizard__body,
+.lockheist--boom .wizard__raise {
   animation: none;
 }
 .lockheist__bomb {
@@ -2013,9 +2023,9 @@ h2 {
 }
 @keyframes bomb-throw {
   0% { transform: translate(0, 0) rotate(0); opacity: 1; }
-  50% { transform: translate(100px, -215px) rotate(360deg); }
-  99% { transform: translate(194px, -138px) rotate(720deg); opacity: 1; }
-  100% { transform: translate(194px, -138px) rotate(720deg); opacity: 0; }
+  50% { transform: translate(100px, -350px) rotate(360deg); }
+  99% { transform: translate(194px, -258px) rotate(720deg); opacity: 1; }
+  100% { transform: translate(194px, -258px) rotate(720deg); opacity: 0; }
 }
 @keyframes fire-in {
   0% { opacity: 0; transform: scale(0.2) rotate(-6deg); }

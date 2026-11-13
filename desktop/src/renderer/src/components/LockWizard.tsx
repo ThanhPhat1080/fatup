@@ -12,44 +12,56 @@ const noise = (i: number, k: number) => {
 
 const DECK_TOP = 330;
 const DECK_BOTTOM = 358;
-const BODY_BOTTOM = 440;
-const ARCH_W = 80; // half width of an arch opening
-const ARCH_GAP = 190; // distance between arch centres
+const BODY_END = 1520; // the piers run on down into the fire, past the bottom of the frame
+const ARCH_W = 100; // half width of an arch opening
+const ARCH_GAP = 260; // distance between arch centres
+const SPRING = 440; // where an arch starts to curve
+const CROWN = 392; // the top of an arch
 
-/** Stone body (with arch openings and broken ends), cracks and railing posts for a bridge spanning x0..x1 in frame units. */
+/** The stone body seen from below: arches between thick piers that reach down into the fire, plus cracks and railing posts. */
 function buildBridge(x0: number, x1: number) {
   const edges: string[] = [`M${x0 + 4} ${DECK_BOTTOM - 2}H${x1 - 4}`];
-  for (let y = DECK_BOTTOM; y <= BODY_BOTTOM; y += 14) edges.push(`L${(x1 - 2 - noise(y, 1) * 12).toFixed(1)} ${y + 7}`);
-  for (let x = x1; x >= x0; x -= 26) edges.push(`L${x.toFixed(1)} ${(BODY_BOTTOM + noise(x, 2) * 10 - 4).toFixed(1)}`);
-  for (let y = BODY_BOTTOM; y >= DECK_BOTTOM; y -= 14) edges.push(`L${(x0 + 2 + noise(y, 3) * 12).toFixed(1)} ${y - 7}`);
+  for (let y = DECK_BOTTOM; y <= BODY_END; y += 16) edges.push(`L${(x1 - 2 - noise(y, 1) * 14).toFixed(1)} ${y + 8}`);
+  edges.push(`L${x0} ${BODY_END}`);
+  for (let y = BODY_END; y >= DECK_BOTTOM; y -= 16) edges.push(`L${(x0 + 2 + noise(y, 3) * 14).toFixed(1)} ${y - 8}`);
   edges.push('Z');
 
   const centers: number[] = [];
-  for (let c = 240; c < x1 - ARCH_W - 20; c += ARCH_GAP) centers.push(c);
-  for (let c = 240 - ARCH_GAP; c > x0 + ARCH_W + 20; c -= ARCH_GAP) centers.push(c);
-  const arches = centers.map((c) => `M${c - ARCH_W} 432V398A${ARCH_W} 34 0 0 1 ${c + ARCH_W} 398V432Z`).join('');
+  for (let c = 240; c < x1 - ARCH_W; c += ARCH_GAP) centers.push(c);
+  for (let c = 240 - ARCH_GAP; c > x0 + ARCH_W; c -= ARCH_GAP) centers.push(c);
+  const arches = centers.map((c) => `M${c - ARCH_W} ${BODY_END - 20}V${SPRING}A${ARCH_W} ${SPRING - CROWN} 0 0 1 ${c + ARCH_W} ${SPRING}V${BODY_END - 20}Z`).join('');
 
-  const inArch = (x: number) => centers.some((c) => Math.abs(x - c) < ARCH_W + 4);
+  // pier centres sit halfway between two arches
+  const piers: number[] = [];
+  for (let c = 240 + ARCH_GAP / 2; c < x1 - 10; c += ARCH_GAP) piers.push(c);
+  for (let c = 240 - ARCH_GAP / 2; c > x0 + 10; c -= ARCH_GAP) piers.push(c);
+
   const cracks: { d: string; glow: boolean }[] = [];
-  const count = Math.round((x1 - x0) / 24);
-  for (let i = 0; i < count; i++) {
-    const onDeck = i % 3 === 0;
-    let x = x0 + 24 + noise(i, 10) * (x1 - x0 - 48);
-    if (!onDeck && inArch(x)) continue;
-    let y = onDeck ? DECK_TOP + 1 : DECK_BOTTOM + 4 + noise(i, 11) * 24;
-    const steps = onDeck ? 3 : 5 + Math.floor(noise(i, 12) * 3);
-    const stepLen = onDeck ? 9 : 11 + noise(i, 13) * 9;
+  const zigzag = (i: number, x: number, y: number, steps: number, len: number, maxY: number, spread: number) => {
     let d = `M${x.toFixed(1)} ${y.toFixed(1)}`;
     let branch = '';
     for (let k = 0; k < steps; k++) {
-      x += (noise(i, 20 + k) - 0.5) * 18;
-      y += stepLen;
-      if (y > (onDeck ? DECK_BOTTOM - 2 : 430)) break;
+      x += (noise(i, 20 + k) - 0.5) * spread;
+      y += len * (0.7 + noise(i, 40 + k) * 0.6);
+      if (y > maxY) break;
       d += `L${x.toFixed(1)} ${y.toFixed(1)}`;
-      if (!onDeck && k === 1 && noise(i, 14) > 0.2) branch = `M${x.toFixed(1)} ${y.toFixed(1)}l${((noise(i, 15) - 0.5) * 40).toFixed(1)} ${(8 + noise(i, 16) * 12).toFixed(1)}l${((noise(i, 17) - 0.5) * 20).toFixed(1)} 9`;
+      if (k === 1 && noise(i, 14) > 0.25) branch = `M${x.toFixed(1)} ${y.toFixed(1)}l${((noise(i, 15) - 0.5) * 46).toFixed(1)} ${(10 + noise(i, 16) * 14).toFixed(1)}l${((noise(i, 17) - 0.5) * 24).toFixed(1)} 11`;
     }
-    cracks.push({ d: d + branch, glow: noise(i, 18) > 0.45 });
-  }
+    return d + branch;
+  };
+  // deck face
+  const deckCount = Math.round((x1 - x0) / 70);
+  for (let i = 0; i < deckCount; i++) cracks.push({ d: zigzag(i, x0 + 20 + noise(i, 10) * (x1 - x0 - 40), DECK_TOP + 1, 3, 9, DECK_BOTTOM - 2, 16), glow: noise(i, 18) > 0.5 });
+  // spandrels above the arches
+  const spanCount = Math.round((x1 - x0) / 60);
+  for (let i = 0; i < spanCount; i++) cracks.push({ d: zigzag(i + 100, x0 + 20 + noise(i + 100, 10) * (x1 - x0 - 40), DECK_BOTTOM + 3, 3, 9, CROWN - 4, 12), glow: noise(i + 100, 18) > 0.5 });
+  // long cracks down the piers
+  piers.forEach((c, k) => {
+    for (let j = 0; j < 3; j++) {
+      const i = 200 + k * 7 + j;
+      cracks.push({ d: zigzag(i, c + (noise(i, 10) - 0.5) * 40, 400 + noise(i, 11) * 90, 6 + Math.floor(noise(i, 12) * 3), 18 + noise(i, 13) * 10, 700, 20), glow: noise(i, 18) > 0.4 });
+    }
+  });
 
   const posts: { x: number; h: number }[] = [];
   for (let x = x0 + 30; x < x1 - 20; x += 100) posts.push({ x, h: noise(x, 19) > 0.7 ? 11 : 22 });
@@ -88,7 +100,7 @@ export function LockWizard({ boom, panicKey, children }: Props) {
 
   return (
     <div ref={frame} className={`lockheist${boom ? ' lockheist--boom' : ''}`} style={{ ['--boom-delay' as string]: `${BOMB_LANDS_S}s` }}>
-      <svg className="heist__svg" viewBox="0 0 480 440" aria-hidden>
+      <svg className="heist__svg" viewBox="0 0 480 560" aria-hidden>
         <defs>
           <pattern id="lock-brick" width="64" height="32" patternUnits="userSpaceOnUse">
             <rect width="64" height="32" fill="#4a4f59" />
@@ -100,6 +112,11 @@ export function LockWizard({ boom, panicKey, children }: Props) {
         <path d={bridge.body} fill="url(#lock-brick)" fillRule="evenodd" stroke="#20242b" strokeWidth={3} strokeLinejoin="round" />
         <rect x={-extra} y={DECK_TOP} width={480 + extra * 2} height={DECK_BOTTOM - DECK_TOP} rx={6} fill="#6f747e" stroke="#20242b" strokeWidth={3} />
         <rect x={-extra + 3} y={DECK_BOTTOM - 10} width={480 + extra * 2 - 6} height={7} fill="#5b6069" opacity={0.6} />
+        {/* the underside of the deck, seen from below, with a row of corbel stones */}
+        <rect x={-extra} y={DECK_BOTTOM - 2} width={480 + extra * 2} height={9} fill="#3a3e47" stroke="#20242b" strokeWidth={2} />
+        {Array.from({ length: Math.ceil((480 + extra * 2) / 32) }, (_, i) => (
+          <rect key={i} x={-extra + 6 + i * 32} y={DECK_BOTTOM + 7} width={18} height={7} rx={2} fill="#59606b" stroke="#20242b" strokeWidth={1.5} />
+        ))}
         {bridge.posts.map((p) => (
           <rect key={p.x} x={p.x - 10} y={DECK_TOP - p.h} width={20} height={p.h + 2} rx={4} fill="#6f747e" stroke="#20242b" strokeWidth={3} />
         ))}
@@ -123,17 +140,20 @@ export function LockWizard({ boom, panicKey, children }: Props) {
             <rect x={206} y={282} width={68} height={10} rx={3} fill="#7a4a22" stroke="#20242b" strokeWidth={2.5} />
             <rect x={234} y={280} width={12} height={14} rx={2} fill="#e5c158" stroke="#20242b" strokeWidth={2} />
 
-            {/* staff arm (his right, our left) */}
-            <g className="wizard__staff">
-              <path d="M165 138V332" stroke="#20242b" strokeWidth={11} strokeLinecap="round" />
-              <path d="M165 138V332" stroke="#8a5a2b" strokeWidth={7} strokeLinecap="round" />
-              <path d="M165 150Q152 142 158 128Q170 120 175 132" fill="none" stroke="#8a5a2b" strokeWidth={6} strokeLinecap="round" />
-              <circle className="wizard__orb" cx={166} cy={122} r={11} fill="#8fe3ff" stroke="#20242b" strokeWidth={2.5} />
-              <circle cx={162} cy={118} r={3.5} fill="#fff" />
+            {/* staff arm: raised high, the whole arm and staff pump up and down */}
+            <g className="wizard__raise">
+              <g className="wizard__staff">
+                <path d="M165 138V300" stroke="#20242b" strokeWidth={11} strokeLinecap="round" />
+                <path d="M165 138V300" stroke="#8a5a2b" strokeWidth={7} strokeLinecap="round" />
+                <path d="M165 291V300" stroke="#9aa0ab" strokeWidth={7} strokeLinecap="round" />
+                <path d="M165 150Q152 142 158 128Q170 120 175 132" fill="none" stroke="#8a5a2b" strokeWidth={6} strokeLinecap="round" />
+                <circle className="wizard__orb" cx={166} cy={122} r={11} fill="#8fe3ff" stroke="#20242b" strokeWidth={2.5} />
+                <circle cx={162} cy={118} r={3.5} fill="#fff" />
+              </g>
+              <path d="M206 250Q182 246 168 216" fill="none" stroke="#20242b" strokeWidth={20} strokeLinecap="round" />
+              <path d="M206 250Q182 246 168 216" fill="none" stroke="#b9bcc4" strokeWidth={14} strokeLinecap="round" />
+              <circle cx={166} cy={211} r={9} fill="#f0c9a0" stroke="#20242b" strokeWidth={2.5} />
             </g>
-            <path d="M206 250Q182 252 170 262" fill="none" stroke="#20242b" strokeWidth={20} strokeLinecap="round" />
-            <path d="M206 250Q182 252 170 262" fill="none" stroke="#b9bcc4" strokeWidth={14} strokeLinecap="round" />
-            <circle cx={166} cy={262} r={9} fill="#f0c9a0" stroke="#20242b" strokeWidth={2.5} />
 
             {/* sign arm (his left, our right) */}
             <g className="wizard__sign">
@@ -198,20 +218,22 @@ export function LockWizard({ boom, panicKey, children }: Props) {
           </g>
         )}
 
-        {/* wooden board that carries the PIN */}
-        <rect x={130} y={364} width={220} height={62} rx={9} fill="#9a6a38" stroke="#4b2f14" strokeWidth={4} />
-        <path d="M136 384H344M136 404H344" stroke="#7d5229" strokeWidth={2} opacity={0.6} />
+        {/* wooden board hanging under the deck on two chains; it carries the PIN */}
+        <path d="M152 364V398M328 364V398" stroke="#20242b" strokeWidth={7} strokeDasharray="7 4" strokeLinecap="round" />
+        <path d="M152 364V398M328 364V398" stroke="#9aa0ab" strokeWidth={3.5} strokeDasharray="7 4" strokeLinecap="round" />
+        <rect x={130} y={396} width={220} height={62} rx={9} fill="#9a6a38" stroke="#4b2f14" strokeWidth={4} />
+        <path d="M136 416H344M136 436H344" stroke="#7d5229" strokeWidth={2} opacity={0.6} />
         <g fill="#4b2f14">
-          <circle cx={142} cy={374} r={2.5} />
-          <circle cx={338} cy={374} r={2.5} />
-          <circle cx={142} cy={416} r={2.5} />
-          <circle cx={338} cy={416} r={2.5} />
+          <circle cx={142} cy={406} r={2.5} />
+          <circle cx={338} cy={406} r={2.5} />
+          <circle cx={142} cy={448} r={2.5} />
+          <circle cx={338} cy={448} r={2.5} />
         </g>
 
         {boom && (
           <>
             {/* the thrown bomb */}
-            <g transform="translate(46 400)">
+            <g transform="translate(46 520)">
               <g className="lockheist__bomb">
                 <circle r={13} fill="#17181d" stroke="#000" strokeWidth={2.5} />
                 <circle cx={-4} cy={-5} r={3.5} fill="#5b5f6c" />
