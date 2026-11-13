@@ -6,6 +6,9 @@ Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy
 
 ## [0.3.1] — 2026-11-13
 
+### Thêm
+- **Nút copy trên từng link** (biểu tượng sao chép cạnh bút chì): bấm là chép URL, báo "Đã sao chép link". Ở dạng danh sách luôn hiện; ở dạng lưới hiện khi rê chuột, nổi đè lên đuôi tên nên tên không bị cắt ngắn đi.
+
 ### Đổi
 
 **Ảnh xem trước của link giờ do từng thiết bị giữ, server không lưu nữa**

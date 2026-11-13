@@ -653,18 +653,32 @@ h2 {
   flex: none;
   color: var(--text-2);
 }
-/* Hover-only on the grid; always visible (but quiet) in the list. */
-.rename-btn {
+/* The pencil and the copy-link button: always visible (but quiet) in the list. On the grid they sit in .tile__actions, which floats over
+   the end of the name (fading in from it) on hover or focus, so names keep the whole tile until then. */
+.rename-btn,
+.copy-btn {
   flex: none;
   color: var(--text-2);
 }
-.tile .rename-btn {
-  opacity: 0;
+.tile__head {
+  position: relative;
 }
-.tile:hover .rename-btn,
-.tile:focus-within .rename-btn,
-.rename-btn:focus-visible {
-  opacity: 1;
+.tile__actions {
+  display: none;
+  position: absolute;
+  top: 0;
+  right: 32px; /* just left of the ⋮ button */
+  height: 100%;
+  align-items: center;
+  padding-left: 16px;
+  background: linear-gradient(to right, transparent, var(--surface-strong) 16px);
+}
+.tile:hover .tile__actions,
+.tile:focus-within .tile__actions {
+  display: flex;
+}
+.tile--selected .tile__actions {
+  background: linear-gradient(to right, transparent, var(--primary-container) 16px);
 }
 
 /* ---------- Colour tags ---------- */
@@ -2837,10 +2851,10 @@ body {
   }
 }
 
-/* Touch screens have no hover: keep the pencil visible and make press-and-hold the "select" gesture (see usePress in Files.tsx). */
+/* Touch screens have no hover: keep the pencil and copy buttons visible and make press-and-hold the "select" gesture (see usePress in Files.tsx). */
 @media (hover: none) {
-  .tile .rename-btn {
-    opacity: 1;
+  .tile .tile__actions {
+    display: flex;
   }
   .tile,
   .list__row {
