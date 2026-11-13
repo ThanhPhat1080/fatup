@@ -4,6 +4,18 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [0.3.0] — 2026-11-13
+
+### Đổi
+
+**Tab Liên kết gọn hơn, dễ nhận ra hơn**
+- **Logo thật** của Facebook, YouTube, Instagram, Threads, X, Shopee, TikTok thay cho huy hiệu chữ cái (Internet vẫn là quả địa cầu). Logo lấy từ [Simple Icons](https://simpleicons.org) (CC0), chép thành đường vẽ SVG trong app nên không thêm thư viện.
+- **Hàng lọc chỉ còn icon:** nút **Tất cả**, icon **Internet**, **YouTube**, **X**, **Threads** (luôn hiện), một đường kẻ, rồi nút **chia sẻ** bấm vào để Facebook, Instagram, Shopee, TikTok nhảy ra (cùng kiểu nhảy với hộp thẻ màu, nút to hơn). Tên và số lượng hiện khi rê chuột. Đóng nút không bỏ lọc; nút hiện logo nền tảng đang chọn.
+- **Danh sách link:** có cột **Nguồn** ngay sau checkbox, bấm tiêu đề cột để sắp xếp theo nền tảng (A→Z). Bỏ con bò và bỏ tên miền sau tiêu đề; con bò chỉ còn ở dạng lưới.
+
+### Nâng cấp
+Không có migration và API không đổi. Bản **PWA** được Worker phục vụ nên chỉ cập nhật khi chạy `npm run deploy` trong `worker/` (lệnh này tự build lại PWA); mở lại PWA hai lần để service worker nhận bản mới. App desktop cập nhật qua bản release. Android không đổi.
+
 ## [0.2.1] — 2026-11-13
 
 ### Thêm

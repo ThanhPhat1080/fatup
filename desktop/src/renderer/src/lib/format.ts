@@ -37,18 +37,20 @@ export function groupByDay<T extends { createdAt: number }>(
   return groups;
 }
 
-export type SortKey = 'name' | 'createdAt' | 'size';
+export type SortKey = 'name' | 'createdAt' | 'size' | 'site';
 export type SortState = { key: SortKey; dir: 'asc' | 'desc' };
 export const DEFAULT_SORT: SortState = { key: 'createdAt', dir: 'desc' };
 
-/** Returns a sorted copy. Name uses natural, accent-insensitive order ("img2" before "img10"); ties fall back to name then id. */
-export function sortItems<T extends { id: string; name: string; size: number; createdAt: number }>(items: T[], sort: SortState): T[] {
+/**
+ * Returns a sorted copy. Name uses natural, accent-insensitive order ("img2" before "img10"). Site sorts by platform A to Z with
+ * items that have none (files) last. Ties fall back to name then id.
+ */
+export function sortItems<T extends { id: string; name: string; size: number; createdAt: number; site?: string | null }>(items: T[], sort: SortState): T[] {
   const sign = sort.dir === 'asc' ? 1 : -1;
   const byName = (a: T, b: T) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-  return [...items].sort((a, b) => {
-    const primary = sort.key === 'name' ? byName(a, b) : a[sort.key] - b[sort.key];
-    return sign * primary || byName(a, b) || (a.id < b.id ? -1 : 1);
-  });
+  const bySite = (a: T, b: T) => (a.site == null ? (b.site == null ? 0 : 1) : b.site == null ? -1 : a.site.localeCompare(b.site));
+  const primary = (a: T, b: T) => (sort.key === 'name' ? byName(a, b) : sort.key === 'site' ? bySite(a, b) : a[sort.key] - b[sort.key]);
+  return [...items].sort((a, b) => sign * primary(a, b) || byName(a, b) || (a.id < b.id ? -1 : 1));
 }
 
 /** One unlabeled bucket, for sort orders where day headings make no sense. */
@@ -101,14 +103,6 @@ export function matchesQuery(name: string, query: string): boolean {
   return q === '' || normalizeForSearch(name).includes(q);
 }
 
-/** The host of a link as shown under its title: "https://www.example.com/a" becomes "example.com". */
-export function linkHost(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
-}
 
 /** Links are found by title or by address. */
 export function matchesLink(item: { name: string; url: string | null }, query: string): boolean {
@@ -116,6 +110,10 @@ export function matchesLink(item: { name: string; url: string | null }, query: s
 }
 
 export type SiteFilter = SiteCategory | 'all';
+
+/** Filter icons shown next to "All"; every other platform hides in the box. Together they cover all of SITE_CATEGORIES. */
+export const PINNED_SITES: SiteCategory[] = ['internet', 'youtube', 'x', 'threads'];
+export const BOXED_SITES: SiteCategory[] = ['facebook', 'instagram', 'shopee', 'tiktok'];
 
 export function matchesSite(item: { url: string | null }, site: SiteFilter): boolean {
   return site === 'all' || (item.url !== null && siteOf(item.url) === site);

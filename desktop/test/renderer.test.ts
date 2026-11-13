@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems, splitExt, matchesTags, cowsay, linkHost, matchesLink, matchesSite, siteCounts, inTab } from '../src/renderer/src/lib/format';
+import { SITE_CATEGORIES } from '@fatup/shared';
+import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems, splitExt, matchesTags, cowsay, matchesLink, matchesSite, siteCounts, inTab, PINNED_SITES, BOXED_SITES } from '../src/renderer/src/lib/format';
 import { dictionaries, errorText, resolveLocale } from '../src/renderer/src/lib/i18n';
 
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime();
@@ -77,6 +78,12 @@ describe('sortItems', () => {
     expect(names('size', 'asc')).toEqual(['b', 'c', 'a']);
     expect(names('size', 'desc')).toEqual(['a', 'c', 'b']);
     expect(names('createdAt', 'desc')).toEqual(['b', 'c', 'a']);
+  });
+  it('sorts by platform A to Z, then by name, with items that have no platform last', () => {
+    const l = (id: string, name: string, site: string | null) => ({ id, name, size: 0, createdAt: 1, site });
+    const links = [l('1', 'b', 'youtube'), l('2', 'a', 'internet'), l('3', 'z', 'facebook'), l('4', 'a', 'youtube'), l('5', 'f', null)];
+    expect(sortItems(links, { key: 'site', dir: 'asc' }).map((i) => i.id)).toEqual(['3', '2', '4', '1', '5']);
+    expect(sortItems(links, { key: 'site', dir: 'desc' }).map((i) => i.id)).toEqual(['5', '4', '1', '2', '3']);
   });
   it('does not mutate the input and breaks ties by name', () => {
     const tied = [f('x', 'b', 5, 1), f('y', 'a', 5, 1)];
@@ -161,17 +168,15 @@ describe('cowsay', () => {
 describe('links', () => {
   const link = (url: string, name = 'T') => ({ kind: 'link' as const, name, url });
 
-  it('shows the host without www', () => {
-    expect(linkHost('https://www.example.com/a?b=1')).toBe('example.com');
-    expect(linkHost('https://m.facebook.com/x')).toBe('m.facebook.com');
-    expect(linkHost('garbage')).toBe('garbage');
-  });
-
   it('searches a link by title and by address, ignoring accents', () => {
     expect(matchesLink(link('https://a.com/cong-thuc', 'Món ngon'), 'mon ngon')).toBe(true);
     expect(matchesLink(link('https://a.com/cong-thuc', 'Món ngon'), 'cong-thuc')).toBe(true);
     expect(matchesLink(link('https://a.com/x', 'Món ngon'), 'zzz')).toBe(false);
     expect(matchesLink(link('https://a.com/x'), '')).toBe(true);
+  });
+
+  it('shows every platform in the filter bar exactly once', () => {
+    expect([...PINNED_SITES, ...BOXED_SITES].sort()).toEqual([...SITE_CATEGORIES].sort());
   });
 
   it('filters and counts by site category', () => {

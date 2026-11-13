@@ -2925,21 +2925,18 @@ body {
   flex: none;
   display: inline-grid;
   place-items: center;
-  border-radius: 5px;
-  color: #fff;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -0.02em;
-  overflow: hidden;
+  line-height: 0;
 }
 .site-badge--internet {
-  background: var(--surface-strong);
   color: var(--text-2);
 }
+/* The top padding (pulled back by the negative margin) leaves room for the icons to hop up without being clipped by the scroller. */
 .site-chips {
   display: flex;
+  align-items: center;
   gap: 8px;
-  padding: 0 20px 10px;
+  padding: 18px 20px 10px;
+  margin-top: -18px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -2954,21 +2951,63 @@ body {
   padding: 0 12px;
   white-space: nowrap;
 }
+.chip--icon {
+  width: 40px;
+  height: 36px;
+  padding: 0;
+  justify-content: center;
+}
+.site-box {
+  flex: none;
+  width: 44px;
+  height: 44px;
+}
+.site-box__badge {
+  position: absolute;
+  top: 2px;
+  right: 0;
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border-radius: 50%;
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--border);
+}
+/* A thin divider between the pinned platforms and the box. */
+.site-chips__sep {
+  flex: none;
+  width: 1px;
+  height: 24px;
+  margin: 0 6px;
+  background: var(--border);
+}
+/* The platforms that left the box: they hop out to its right, like the colour dots of the tag box. */
+.site-chips__hop {
+  display: flex;
+  gap: 8px;
+}
+.site-chips__hop .chip {
+  animation: tag-hop-out 0.55s ease-out backwards;
+  animation-delay: var(--hop-delay, 0ms);
+}
+.site-chips__hop.is-closing .chip {
+  pointer-events: none;
+  animation: tag-hop-in 0.26s ease-in forwards;
+  animation-delay: var(--hop-delay, 0ms);
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-chips__hop .chip,
+  .site-chips__hop.is-closing .chip {
+    animation: none;
+  }
+  .site-chips__hop.is-closing {
+    display: none;
+  }
+}
 .chip__count {
   font-size: 12px;
   font-weight: 600;
   opacity: 0.7;
-}
-.link-host {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 40%;
-  flex: none;
-  font-weight: 400;
-  font-size: 13px;
-  color: var(--text-3);
 }
 .thumb-fallback--cow {
   color: var(--text-2);
@@ -2978,9 +3017,12 @@ body {
 .cow-thumb {
   flex: none;
 }
-.list__cow {
-  color: var(--text-2);
-  --cow-fill: var(--surface);
+.list--site .list__row {
+  grid-template-columns: 24px 64px minmax(0, 1fr) 140px 90px 90px 40px;
+}
+.col-site {
+  display: flex;
+  justify-content: center;
 }
 .popover--link .popover__field {
   display: block;
@@ -3004,10 +3046,10 @@ body {
   font-size: 13px;
 }
 @media (max-width: 720px) {
-  .link-host {
-    display: none;
+  .list--site .list__row {
+    grid-template-columns: 24px 48px minmax(0, 1fr) 60px 40px;
   }
   .site-chips {
-    padding: 0 12px 8px;
+    padding: 18px 12px 8px;
   }
 }

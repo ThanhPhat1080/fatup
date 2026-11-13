@@ -135,6 +135,41 @@ try {
   await page.locator('.lightbox__title', { hasText: 'PXL_20261112_071503.heic' }).waitFor();
   await page.keyboard.press('Escape');
 
+  log('links');
+  await page.getByRole('tab', { name: 'Liên kết' }).click();
+  await page.getByText('Thread về AI', { exact: true }).waitFor();
+  const linkRows = page.locator('.list__row:not(.list__row--head)');
+  assert.equal(await linkRows.count(), 6);
+  // Internet, YouTube, X and Threads sit next to "All"; the other platforms hide in the box.
+  for (const name of ['Internet', 'YouTube', 'X', 'Threads']) await page.getByRole('button', { name: `Chỉ hiện link ${name}`, exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Chỉ hiện link Facebook', exact: true }).count(), 0, 'Facebook starts inside the box');
+  await shot(page, '04a-links-box-closed');
+  await page.getByRole('button', { name: 'Các nền tảng khác' }).click();
+  await page.getByRole('button', { name: 'Chỉ hiện link Facebook', exact: true }).waitFor();
+  await page.waitForTimeout(900); // let the icons finish hopping out
+  await shot(page, '04a-links-box-open');
+  await page.getByRole('button', { name: 'Chỉ hiện link X', exact: true }).click(); // a pinned platform filters without opening anything
+  await page.waitForFunction(() => document.querySelectorAll('.list__row:not(.list__row--head)').length === 1);
+  await page.getByText('Thread về AI', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Chỉ hiện link Facebook', exact: true }).click(); // a boxed platform switches the filter
+  await page.getByText('Bài viết hay trên Facebook', { exact: true }).waitFor();
+  assert.equal(await linkRows.count(), 1);
+  await page.getByRole('button', { name: 'Chỉ hiện link Facebook', exact: true }).click(); // clicking the active platform clears the filter
+  await page.waitForFunction(() => document.querySelectorAll('.list__row:not(.list__row--head)').length === 6);
+  // The list has a platform column (sortable) instead of the cow and the host after the name.
+  assert.equal(await page.locator('.list .cow-thumb').count(), 0, 'no cow in the list');
+  assert.equal(await page.getByText('example.com').count(), 0, 'no host after the link name');
+  await page.getByRole('button', { name: 'Nguồn', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.list__row:not(.list__row--head) .ellipsis')?.textContent === 'Bài viết hay trên Facebook');
+  await shot(page, '04b-links-list');
+  await page.getByRole('button', { name: 'Nguồn', exact: true }).click(); // second click reverses: YouTube first, then TikTok...
+  await page.waitForFunction(() => document.querySelector('.list__row:not(.list__row--head) .ellipsis')?.textContent === 'Cách nấu phở ngon');
+  await page.getByRole('button', { name: 'Dạng lưới', exact: true }).click();
+  await page.locator('.tile .cow-thumb').first().waitFor(); // the cow stays in the grid
+  await shot(page, '04c-links-grid');
+  await page.getByRole('button', { name: 'Dạng danh sách', exact: true }).click();
+  await page.getByRole('tab', { name: 'Tất cả' }).click();
+
   log('context menu + delete');
   await page.getByText('chi-tieu-2026.xlsx', { exact: true }).click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Chuyển vào thùng rác' }).waitFor();

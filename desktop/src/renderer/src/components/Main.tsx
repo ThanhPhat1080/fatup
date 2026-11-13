@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Download, LayoutGrid, Link2, List, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Trash2, Upload, UploadCloud, X } from 'lucide-react';
 import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shared-ipc';
-import { DEFAULT_QUOTA_BYTES, SITE_CATEGORIES, type TagColor } from '@fatup/shared';
+import { DEFAULT_QUOTA_BYTES, type TagColor } from '@fatup/shared';
 import { DEFAULT_SORT, groupByDay, inTab, matchesLink, matchesQuery, matchesSite, matchesTags, singleGroup, siteCounts, sortItems, type SiteFilter, type SortKey, type SortState } from '../lib/format';
 import { errorText, useI18n } from '../lib/i18n';
 import { AddLinkDialog } from './AddLinkDialog';
@@ -16,7 +16,7 @@ import { TrashIcon } from './TrashIcon';
 import { InfoPopover } from './InfoPopover';
 import { VaultGate } from './VaultGate';
 import { StorageMeter } from './StorageMeter';
-import { SiteBadge } from './SiteBadge';
+import { SiteFilterBar } from './SiteFilterBar';
 import { EditPopover, LinkEditPopover, TagFilter } from './Tags';
 import { useToast } from './Toast';
 import { UploadPanel } from './UploadPanel';
@@ -178,7 +178,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     setSelected(new Set());
     lastPicked.current = null;
   }, []);
-  const changeSort = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' ? 'asc' : 'desc' }));
+  const changeSort = (key: SortKey) => setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' || key === 'site' ? 'asc' : 'desc' }));
 
   // Drop selections for files that no longer exist (deleted elsewhere, expired).
   useEffect(() => {
@@ -696,23 +696,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           </div>
         )}
 
-        {linkTab && picked.length === 0 && (
-          <nav className="site-chips" aria-label={t.tabLinks}>
-            {(['all', ...SITE_CATEGORIES] as SiteFilter[]).map((site) => (
-              <button
-                key={site}
-                className={`chip chip--site ${siteFilter === site ? 'chip--on' : ''}`}
-                aria-pressed={siteFilter === site}
-                title={site === 'all' ? t.allSites : t.filterBySite(t.siteNames[site])}
-                onClick={() => setSiteFilter(site)}
-              >
-                {site !== 'all' && <SiteBadge site={site} size={16} />}
-                {site === 'all' ? t.allSites : t.siteNames[site]}
-                <span className="chip__count">{counts[site]}</span>
-              </button>
-            ))}
-          </nav>
-        )}
+        {linkTab && picked.length === 0 && <SiteFilterBar value={siteFilter} onChange={setSiteFilter} counts={counts} />}
 
         {error && (
           <div className="banner" role="alert">
@@ -744,6 +728,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               someSelected={picked.length > 0}
               onToggleAll={() => (allSelected ? clearSelection() : selectAll())}
               timeLabel={inTrash ? t.colDeleted : t.colTime}
+              siteColumn={linkTab}
             />
           )}
         </div>
