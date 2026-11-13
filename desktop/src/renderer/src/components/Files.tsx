@@ -1,9 +1,8 @@
 import { useRef, useState, type MouseEvent, type PointerEvent } from 'react';
-import { ArrowDown, ArrowUp, CloudUpload, MoreVertical, Pencil, SearchX, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, MoreVertical, Pencil, SearchX } from 'lucide-react';
 import type { Item } from '../../../shared-ipc';
-import { formatSize, formatTime, type DateGroup, type SortKey, type SortState } from '../lib/format';
+import { cowsay, formatSize, formatTime, type DateGroup, type SortKey, type SortState } from '../lib/format';
 import { useI18n } from '../lib/i18n';
-import { VaultIcon } from './VaultIcon';
 import { FileIcon } from './FileIcon';
 
 type ViewProps = {
@@ -286,8 +285,18 @@ export function EmptyState({ searching, trash, vault }: { searching: boolean; tr
   const { t } = useI18n();
   return (
     <div className="empty">
-      <div className="empty__art">{searching ? <SearchX size={56} /> : trash ? <Trash2 size={56} /> : vault ? <VaultIcon size={56} /> : <CloudUpload size={56} />}</div>
-      <h2>{searching ? t.noMatches : trash ? t.trashEmptyTitle : vault ? t.vaultEmptyTitle : t.emptyTitle}</h2>
+      {searching ? (
+        <>
+          <div className="empty__art">
+            <SearchX size={56} />
+          </div>
+          <h2>{t.noMatches}</h2>
+        </>
+      ) : (
+        <pre className="cowsay" role="img" aria-label={trash ? t.trashEmptyTitle : vault ? t.vaultEmptyTitle : t.emptyTitle}>
+          {cowsay(trash ? t.cowTrash : vault ? t.cowVault : t.cowEmpty)}
+        </pre>
+      )}
       {!searching && <p className="muted">{trash ? t.trashEmptyHint : vault ? t.vaultEmptyHint : t.emptyHint}</p>}
     </div>
   );

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems, splitExt, matchesTags } from '../src/renderer/src/lib/format';
+import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems, splitExt, matchesTags, cowsay } from '../src/renderer/src/lib/format';
 import { dictionaries, errorText, resolveLocale } from '../src/renderer/src/lib/i18n';
 
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime();
@@ -145,5 +145,15 @@ describe('tag translations', () => {
     for (const lang of ['en', 'vi'] as const) {
       expect(Object.keys(dictionaries[lang].tagNames).sort()).toEqual(['blue', 'gray', 'green', 'orange', 'purple', 'red', 'yellow']);
     }
+  });
+});
+
+describe('cowsay', () => {
+  it('sizes the bubble to the text and draws the cow', () => {
+    const lines = cowsay('Rỗng túi').split('\n');
+    expect(lines[0]).toBe(' __________');
+    expect(lines[1]).toBe('< Rỗng túi >');
+    expect(lines[2]).toBe(' ----------');
+    expect(lines[4]).toBe('         \\  (oo)\\_______');
   });
 });

@@ -127,3 +127,18 @@ export function splitExt(name: string): { stem: string; ext: string } {
 export function matchesTags(tags: readonly string[], filter: readonly string[]): boolean {
   return filter.length === 0 || tags.some((c) => filter.includes(c));
 }
+
+/** The classic Linux `cowsay`: a speech bubble sized to the text, and the cow underneath. */
+export function cowsay(text: string): string {
+  const width = Array.from(text).length;
+  return [
+    ` ${'_'.repeat(width + 2)}`,
+    `< ${text} >`,
+    ` ${'-'.repeat(width + 2)}`,
+    '        \\   ^__^',
+    '         \\  (oo)\\_______',
+    '            (__)\\       )\\/\\',
+    '                ||----w |',
+    '                ||     ||',
+  ].join('\n');
+}

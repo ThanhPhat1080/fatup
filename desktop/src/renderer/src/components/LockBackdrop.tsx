@@ -38,6 +38,25 @@ const FLAMES = Array.from({ length: 46 }, (_, i) => ({
   hot: noise(i + 300, 6) > 0.6,
 }));
 
+/** A taller, darker wall of fire behind the front flames, swaying slowly. */
+const BACK_FLAMES = Array.from({ length: 22 }, (_, i) => ({
+  x: ((i + noise(i + 400, 1) * 0.8) / 22) * 100 - 5,
+  w: 12 + noise(i + 400, 2) * 12,
+  h: 30 + noise(i + 400, 3) * 34,
+  dur: 0.9 + noise(i + 400, 4) * 0.9,
+  delay: -noise(i + 400, 5) * 2,
+}));
+
+/** Sparks thrown up out of the fire, flickering as they rise and fade. */
+const SPARKS = Array.from({ length: 40 }, (_, i) => ({
+  x: noise(i + 500, 1) * 100,
+  size: 2 + noise(i + 500, 2) * 3.5,
+  dur: 1.6 + noise(i + 500, 3) * 2.2,
+  delay: -noise(i + 500, 4) * 4,
+  dx: (noise(i + 500, 5) - 0.5) * 140,
+  rise: 30 + noise(i + 500, 6) * 45,
+}));
+
 type Vars = Record<`--${string}`, string>;
 const vars = (v: Vars) => v as React.CSSProperties;
 
@@ -49,9 +68,16 @@ export function LockBackdrop() {
   return (
     <div className="lockbg" aria-hidden>
       <div className="lockbg__fireglow" />
+      {BACK_FLAMES.map((f, i) => (
+        <span key={`b${i}`} className="lockbg__flame lockbg__flame--back" style={vars({ '--x': `${f.x.toFixed(1)}%`, '--w': `${f.w.toFixed(1)}vw`, '--h': `${f.h.toFixed(1)}vh`, '--dur': `${f.dur.toFixed(2)}s`, '--delay': `${f.delay.toFixed(2)}s` })} />
+      ))}
       {FLAMES.map((f, i) => (
         <span key={`f${i}`} className={`lockbg__flame${f.hot ? ' lockbg__flame--hot' : ''}`} style={vars({ '--x': `${f.x.toFixed(1)}%`, '--w': `${f.w.toFixed(1)}vw`, '--h': `${f.h.toFixed(1)}vh`, '--dur': `${f.dur.toFixed(2)}s`, '--delay': `${f.delay.toFixed(2)}s` })} />
       ))}
+      {SPARKS.map((p, i) => (
+        <span key={`s${i}`} className="lockbg__spark" style={vars({ '--x': `${p.x.toFixed(1)}%`, '--s': `${p.size.toFixed(1)}px`, '--dur': `${p.dur.toFixed(2)}s`, '--delay': `${p.delay.toFixed(2)}s`, '--dx': `${p.dx.toFixed(0)}px`, '--rise': `${p.rise.toFixed(0)}vh` })} />
+      ))}
+      <div className="lockbg__flicker" />
       {ASH.map((p, i) => (
         <span key={`a${i}`} className="lockbg__p lockbg__p--ash" style={vars({ '--x': `${p.x.toFixed(1)}%`, '--s': `${p.size.toFixed(1)}px`, '--dur': `${p.dur.toFixed(1)}s`, '--delay': `${p.delay.toFixed(1)}s`, '--dx': `${p.dx.toFixed(0)}px` })} />
       ))}

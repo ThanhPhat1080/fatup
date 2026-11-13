@@ -4,6 +4,10 @@ import { Boom } from './Boom';
 /** Seconds from the right PIN until the thrown bomb lands; the explosion is held back until then. */
 export const BOMB_LANDS_S = 0.9;
 
+const INK = '#1c1f26';
+const ROBE = 'M198 242Q180 264 170 300Q162 318 152 331Q172 337 190 330Q208 338 226 331Q240 337 254 331Q272 338 290 330Q308 337 328 331Q318 318 310 300Q300 264 282 242Q262 232 240 234Q218 232 198 242Z';
+const BEARD = 'M219 236Q212 262 222 288Q230 304 240 316Q250 304 258 288Q268 262 261 236Q252 248 240 246Q228 248 219 236Z';
+
 /** Outline of a comic "shouting" bubble: a spiky rectangle with a tail pointing down at the wizard's hat. */
 function shoutBubblePath(): string {
   const x0 = 64;
@@ -140,6 +144,52 @@ export function LockWizard({ boom, panicKey, message = 'YOU SHALL NOT PASS!', ca
     <div ref={frame} className={`lockheist${boom ? ' lockheist--boom' : ''}`} style={{ ['--boom-delay' as string]: `${BOMB_LANDS_S}s`, ['--lower' as string]: `${LOWER}px` }}>
       <svg className="heist__svg" viewBox="0 0 480 560" aria-hidden>
         <defs>
+          <linearGradient id="wiz-robe" x1="0" x2="1">
+            <stop offset="0" stopColor="#7d828d" />
+            <stop offset="0.45" stopColor="#b7bbc3" />
+            <stop offset="0.7" stopColor="#a6aab3" />
+            <stop offset="1" stopColor="#6f747e" />
+          </linearGradient>
+          <linearGradient id="wiz-firelit" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0.45" stopColor="#ff7a2a" stopOpacity={0} />
+            <stop offset="1" stopColor="#ff7a2a" stopOpacity={0.4} />
+          </linearGradient>
+          <linearGradient id="wiz-hat" x1="0" x2="1">
+            <stop offset="0" stopColor="#80858f" />
+            <stop offset="0.55" stopColor="#a9adb6" />
+            <stop offset="1" stopColor="#737882" />
+          </linearGradient>
+          <linearGradient id="wiz-brim" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stopColor="#9a9ea8" />
+            <stop offset="1" stopColor="#6c717b" />
+          </linearGradient>
+          <linearGradient id="wiz-beard" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stopColor="#ffffff" />
+            <stop offset="1" stopColor="#d2d6de" />
+          </linearGradient>
+          <linearGradient id="wiz-face-shade" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stopColor="#3a2416" stopOpacity={0.45} />
+            <stop offset="0.35" stopColor="#3a2416" stopOpacity={0} />
+          </linearGradient>
+          <radialGradient id="wiz-orb" cx="0.38" cy="0.35" r="0.7">
+            <stop offset="0" stopColor="#ffffff" />
+            <stop offset="0.4" stopColor="#bdf1ff" />
+            <stop offset="1" stopColor="#2b97d6" />
+          </radialGradient>
+          <radialGradient id="wiz-halo">
+            <stop offset="0" stopColor="#bdf1ff" stopOpacity={0.85} />
+            <stop offset="0.35" stopColor="#6fd3ff" stopOpacity={0.35} />
+            <stop offset="1" stopColor="#6fd3ff" stopOpacity={0} />
+          </radialGradient>
+          <radialGradient id="wiz-sign-shade" cx="0.35" cy="0.3" r="0.8">
+            <stop offset="0.5" stopColor="#000" stopOpacity={0} />
+            <stop offset="1" stopColor="#000" stopOpacity={0.3} />
+          </radialGradient>
+          <linearGradient id="wiz-firelight" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stopColor="#ff6a1a" stopOpacity={0} />
+            <stop offset="0.55" stopColor="#ff6a1a" stopOpacity={0.08} />
+            <stop offset="1" stopColor="#ff8a2a" stopOpacity={0.5} />
+          </linearGradient>
           <pattern id="lock-brick" width="64" height="32" patternUnits="userSpaceOnUse">
             <rect width="64" height="32" fill="#4a4f59" />
             <path d="M0 0H64M0 16H64M32 0V16M0 16V32M64 16V32" fill="none" stroke="#2c3038" strokeWidth="2" opacity="0.7" />
@@ -171,81 +221,107 @@ export function LockWizard({ boom, panicKey, message = 'YOU SHALL NOT PASS!', ca
         {/* wizard */}
         <g key={panicKey} className={`wizard${panicKey ? ' wizard--no' : ''}${calm ? ' wizard--calm' : ''}`}>
           <g className="wizard__body">
-            {/* shoes and robe */}
-            <ellipse cx={218} cy={331} rx={16} ry={7} fill="#6b4524" stroke="#20242b" strokeWidth={2.5} />
-            <ellipse cx={262} cy={331} rx={16} ry={7} fill="#6b4524" stroke="#20242b" strokeWidth={2.5} />
-            <path d="M200 238Q170 300 156 328Q175 334 190 326Q205 336 222 326Q240 336 258 326Q275 336 290 326Q305 334 324 328Q310 300 280 238Z" fill="#b9bcc4" stroke="#20242b" strokeWidth={3} strokeLinejoin="round" />
-            <path d="M214 262Q208 300 200 322M240 270V326M266 262Q272 300 280 322" fill="none" stroke="#8d919b" strokeWidth={3} strokeLinecap="round" />
-            <rect x={206} y={282} width={68} height={10} rx={3} fill="#7a4a22" stroke="#20242b" strokeWidth={2.5} />
-            <rect x={234} y={280} width={12} height={14} rx={2} fill="#e5c158" stroke="#20242b" strokeWidth={2} />
+            {/* boot tips peeking out under the robe */}
+            <path d="M212 333Q214 324 226 325Q236 326 238 333Z" fill="#3b2a1c" stroke={INK} strokeWidth={2.2} />
+            <path d="M242 333Q244 326 254 325Q266 324 270 333Z" fill="#3b2a1c" stroke={INK} strokeWidth={2.2} />
+            {/* long grey robe, wider at the hem, lit orange from the fire below */}
+            <path d={ROBE} fill="url(#wiz-robe)" stroke={INK} strokeWidth={3} strokeLinejoin="round" />
+            <path d={ROBE} fill="url(#wiz-firelit)" className="wizard__firelit" />
+            <path d="M228 252Q224 292 220 330L260 330Q256 292 252 252Z" fill="#7b808b" opacity={0.55} />
+            <path d="M206 262Q196 296 184 326M218 270Q212 300 206 328M262 270Q268 300 274 328M274 262Q284 296 296 326" fill="none" stroke="#6d727c" strokeWidth={2.2} strokeLinecap="round" />
+            <path d="M188 300Q176 316 168 328M292 300Q304 316 312 328" fill="none" stroke="#ffb072" strokeWidth={1.6} opacity={0.5} strokeLinecap="round" />
+            {/* rope belt, knotted, ends hanging */}
+            <path d="M203 284Q240 294 277 284" fill="none" stroke={INK} strokeWidth={7} strokeLinecap="round" />
+            <path d="M203 284Q240 294 277 284" fill="none" stroke="#8a6338" strokeWidth={4} strokeLinecap="round" />
+            <path d="M203 284Q240 294 277 284" fill="none" stroke="#b58a52" strokeWidth={1.2} strokeDasharray="3 3" />
+            <circle cx={252} cy={289} r={4.5} fill="#8a6338" stroke={INK} strokeWidth={2} />
+            <path d="M251 293Q249 306 253 316M255 293Q259 304 258 312" fill="none" stroke={INK} strokeWidth={4.4} strokeLinecap="round" />
+            <path d="M251 293Q249 306 253 316M255 293Q259 304 258 312" fill="none" stroke="#8a6338" strokeWidth={2.2} strokeLinecap="round" />
 
             {/* staff arm: raised high, the whole arm and staff pump up and down */}
             <g className="wizard__raise">
               <g className="wizard__staff">
-                <path d={`M165 138V${staffBottom}`} stroke="#20242b" strokeWidth={11} strokeLinecap="round" />
-                <path d={`M165 138V${staffBottom}`} stroke="#8a5a2b" strokeWidth={7} strokeLinecap="round" />
-                <path d={`M165 ${staffBottom - 9}V${staffBottom}`} stroke="#9aa0ab" strokeWidth={7} strokeLinecap="round" />
-                <path d="M165 150Q152 142 158 128Q170 120 175 132" fill="none" stroke="#8a5a2b" strokeWidth={6} strokeLinecap="round" />
-                <circle className="wizard__orb" cx={166} cy={122} r={11} fill="#8fe3ff" stroke="#20242b" strokeWidth={2.5} />
-                <circle cx={162} cy={118} r={3.5} fill="#fff" />
+                <circle className="wizard__halo" cx={166} cy={122} r={34} fill="url(#wiz-halo)" />
+                <path d={`M165 140Q161 ${(140 + staffBottom) / 2} 165 ${staffBottom}`} fill="none" stroke={INK} strokeWidth={10} strokeLinecap="round" />
+                <path d={`M165 140Q161 ${(140 + staffBottom) / 2} 165 ${staffBottom}`} fill="none" stroke="#7a5230" strokeWidth={6} strokeLinecap="round" />
+                <path d={`M164 150Q162 ${(140 + staffBottom) / 2} 164 ${staffBottom - 6}`} fill="none" stroke="#a87a4a" strokeWidth={1.6} strokeLinecap="round" opacity={0.7} />
+                <circle cx={163.4} cy={176} r={2.6} fill="#5a3a20" />
+                {/* twisted roots gripping the crystal */}
+                <path d="M165 144Q150 140 152 124Q156 110 166 108M165 144Q180 138 178 122Q176 110 168 108" fill="none" stroke={INK} strokeWidth={6.4} strokeLinecap="round" />
+                <path d="M165 144Q150 140 152 124Q156 110 166 108M165 144Q180 138 178 122Q176 110 168 108" fill="none" stroke="#7a5230" strokeWidth={3.4} strokeLinecap="round" />
+                <circle className="wizard__orb" cx={166} cy={124} r={9.5} fill="url(#wiz-orb)" stroke={INK} strokeWidth={2} />
+                <circle cx={163} cy={120.5} r={2.6} fill="#fff" />
               </g>
-              <path d={armPath} fill="none" stroke="#20242b" strokeWidth={20} strokeLinecap="round" />
-              <path d={armPath} fill="none" stroke="#b9bcc4" strokeWidth={14} strokeLinecap="round" />
-              <circle cx={166} cy={handY} r={9} fill="#f0c9a0" stroke="#20242b" strokeWidth={2.5} />
+              <path d={armPath} fill="none" stroke={INK} strokeWidth={21} strokeLinecap="round" />
+              <path d={armPath} fill="none" stroke="#a9adb6" strokeWidth={15} strokeLinecap="round" />
+              <circle cx={166} cy={handY} r={8} fill="#e9bf98" stroke={INK} strokeWidth={2.4} />
+              <path d={`M160 ${handY - 3}H172M160 ${handY + 1}H172M161 ${handY + 5}H171`} stroke="#b98560" strokeWidth={1.2} strokeLinecap="round" />
             </g>
 
             {/* sign arm (his left, our right) */}
             <g className="wizard__sign">
-              <path d="M335 176V332" stroke="#20242b" strokeWidth={10} strokeLinecap="round" />
+              <path d="M335 176V332" stroke={INK} strokeWidth={10} strokeLinecap="round" />
               <path d="M335 176V332" stroke="#9aa0ab" strokeWidth={6} strokeLinecap="round" />
-              <circle cx={335} cy={134} r={43} fill="#c0392b" stroke="#20242b" strokeWidth={4} />
-              <circle cx={335} cy={134} r={35} fill="none" stroke="#e8574a" strokeWidth={3} />
-              <rect x={308} y={125} width={54} height={17} rx={3} fill="#fff" stroke="#20242b" strokeWidth={3} />
+              <path d="M333 180V330" stroke="#d3d7de" strokeWidth={1.4} opacity={0.7} />
+              <circle cx={335} cy={134} r={43} fill="#c0392b" stroke={INK} strokeWidth={4} />
+              <circle cx={335} cy={134} r={43} fill="url(#wiz-sign-shade)" />
+              <circle cx={335} cy={134} r={36} fill="none" stroke="#f2f2f2" strokeWidth={3.4} />
+              <rect x={308} y={125} width={54} height={17} rx={3} fill="#fff" stroke={INK} strokeWidth={3} />
+              <path d="M310 100Q330 92 352 102" fill="none" stroke="#fff" strokeWidth={3} strokeLinecap="round" opacity={0.35} />
             </g>
-            <path d="M276 250Q310 250 330 262" fill="none" stroke="#20242b" strokeWidth={20} strokeLinecap="round" />
-            <path d="M276 250Q310 250 330 262" fill="none" stroke="#b9bcc4" strokeWidth={14} strokeLinecap="round" />
-            <circle cx={335} cy={262} r={9} fill="#f0c9a0" stroke="#20242b" strokeWidth={2.5} />
+            <path d="M276 250Q310 250 330 262" fill="none" stroke={INK} strokeWidth={21} strokeLinecap="round" />
+            <path d="M276 250Q310 250 330 262" fill="none" stroke="#a9adb6" strokeWidth={15} strokeLinecap="round" />
+            <circle cx={335} cy={262} r={8} fill="#e9bf98" stroke={INK} strokeWidth={2.4} />
+            <path d="M329 259H341M329 263H341M330 267H340" stroke="#b98560" strokeWidth={1.2} strokeLinecap="round" />
+            {/* shoulders of the robe over the sleeves */}
+            <path d="M200 244Q220 232 240 234Q260 232 280 244Q270 256 240 254Q210 256 200 244Z" fill="#9da1ab" stroke={INK} strokeWidth={2.4} strokeLinejoin="round" />
 
             {/* head */}
             <g className="wizard__head">
-              {/* ears and face */}
-              <ellipse cx={209} cy={225} rx={5.5} ry={8.5} fill="#eebd94" stroke="#20242b" strokeWidth={2.5} />
-              <ellipse cx={271} cy={225} rx={5.5} ry={8.5} fill="#eebd94" stroke="#20242b" strokeWidth={2.5} />
-              <ellipse cx={240} cy={222} rx={31} ry={29} fill="#f4d0a8" stroke="#20242b" strokeWidth={3} />
-              <circle cx={221} cy={234} r={6.5} fill="#ee9a8a" opacity={0.5} />
-              <circle cx={259} cy={234} r={6.5} fill="#ee9a8a" opacity={0.5} />
-              {/* stern eyes under heavy lids */}
-              <ellipse cx={227} cy={221} rx={6.5} ry={5} fill="#fff" stroke="#20242b" strokeWidth={1.8} />
-              <ellipse cx={253} cy={221} rx={6.5} ry={5} fill="#fff" stroke="#20242b" strokeWidth={1.8} />
-              <circle cx={228.5} cy={222} r={3} fill="#3b5d7a" />
-              <circle cx={251.5} cy={222} r={3} fill="#3b5d7a" />
-              <circle cx={228.5} cy={222} r={1.5} fill="#10141a" />
-              <circle cx={251.5} cy={222} r={1.5} fill="#10141a" />
-              <circle cx={229.6} cy={220.7} r={0.9} fill="#fff" />
-              <circle cx={252.6} cy={220.7} r={0.9} fill="#fff" />
-              <path d="M219.5 218.5Q227 214.5 234.5 218.5M245.5 218.5Q253 214.5 260.5 218.5" fill="none" stroke="#20242b" strokeWidth={2.6} strokeLinecap="round" />
-              {/* big bushy eyebrows, angry */}
-              <path d="M212 215Q219 205 238 214Q226 212 214 220Z" fill="#f1f1f6" stroke="#20242b" strokeWidth={2} strokeLinejoin="round" />
-              <path d="M268 215Q261 205 242 214Q254 212 266 220Z" fill="#f1f1f6" stroke="#20242b" strokeWidth={2} strokeLinejoin="round" />
-              {/* round wizard nose */}
-              <ellipse cx={240} cy={232} rx={7.5} ry={6.5} fill="#eba283" stroke="#20242b" strokeWidth={2} />
-              <ellipse cx={237.5} cy={229.5} rx={2.4} ry={1.7} fill="#fff" opacity={0.6} />
-              {/* hat */}
-              <ellipse cx={240} cy={193} rx={66} ry={15} fill="#8d919b" stroke="#20242b" strokeWidth={3} />
-              <path d="M194 190Q216 132 236 104Q250 84 276 90Q258 104 262 130Q270 164 288 190Z" fill="#9ea2ac" stroke="#20242b" strokeWidth={3} strokeLinejoin="round" />
-              <path d="M222 140Q238 120 262 132" fill="none" stroke="#b8bcc6" strokeWidth={4} strokeLinecap="round" />
-              <path d="M198 182Q240 196 285 182" fill="none" stroke="#6b6f79" strokeWidth={7} />
-              <ellipse cx={226} cy={187} rx={26} ry={4} fill="#b8bcc6" opacity={0.6} />
+              {/* long silver hair falling to the shoulders */}
+              <path d="M215 194Q198 220 202 256Q210 262 218 252Q214 232 224 206Z" fill="url(#wiz-beard)" stroke={INK} strokeWidth={2.2} strokeLinejoin="round" />
+              <path d="M265 194Q282 220 278 256Q270 262 262 252Q266 232 256 206Z" fill="url(#wiz-beard)" stroke={INK} strokeWidth={2.2} strokeLinejoin="round" />
+              <path d="M208 222Q206 238 210 250M272 222Q274 238 270 250" fill="none" stroke="#b9bec8" strokeWidth={1.4} strokeLinecap="round" />
+              {/* a long, lined face */}
+              <path d="M221 198Q219 226 229 240Q240 248 251 240Q261 226 259 198Z" fill="#efc8a2" stroke={INK} strokeWidth={2.6} strokeLinejoin="round" />
+              <path d="M221 198Q219 226 229 240Q240 248 251 240Q261 226 259 198Z" fill="url(#wiz-face-shade)" />
+              <path d="M226 226Q228 230 231 231M254 226Q252 230 249 231" fill="none" stroke="#c6936c" strokeWidth={1.3} strokeLinecap="round" />
+              {/* stern eyes in the shadow of the brim */}
+              <path d="M226 214Q231 210.5 236 214Q231 216.6 226 214Z" fill="#fff" stroke={INK} strokeWidth={1.4} />
+              <path d="M244 214Q249 210.5 254 214Q249 216.6 244 214Z" fill="#fff" stroke={INK} strokeWidth={1.4} />
+              <circle cx={232} cy={213.6} r={2.1} fill="#2f5b86" />
+              <circle cx={248} cy={213.6} r={2.1} fill="#2f5b86" />
+              <circle cx={232} cy={213.6} r={1} fill="#0b0f16" />
+              <circle cx={248} cy={213.6} r={1} fill="#0b0f16" />
+              <circle cx={232.7} cy={212.8} r={0.6} fill="#fff" />
+              <circle cx={248.7} cy={212.8} r={0.6} fill="#fff" />
+              {/* great bushy brows, drawn down in a scowl */}
+              <path d="M218 207Q225 200 239 210.5Q232 209 226 212Q221 212 218 207Z" fill="#f3f4f7" stroke={INK} strokeWidth={1.8} strokeLinejoin="round" />
+              <path d="M262 207Q255 200 241 210.5Q248 209 254 212Q259 212 262 207Z" fill="#f3f4f7" stroke={INK} strokeWidth={1.8} strokeLinejoin="round" />
+              <path d="M236 205L240 210L244 205" fill="none" stroke="#c6936c" strokeWidth={1.3} strokeLinecap="round" />
+              {/* long nose */}
+              <path d="M239 210Q235 222 236 228Q240 231 244 228Q244 220 241 210" fill="#e4ab86" stroke={INK} strokeWidth={1.9} strokeLinejoin="round" />
               <g className="wizard__beard">
-                {/* beard, then a big moustache over it */}
-                <path d="M211 234Q204 280 240 316Q276 280 269 234Q258 256 240 250Q222 256 211 234Z" fill="#fff" stroke="#20242b" strokeWidth={3} strokeLinejoin="round" />
-                <path d="M228 262Q233 282 240 298M252 262Q247 282 240 298M240 262V290" fill="none" stroke="#d6dae2" strokeWidth={3} strokeLinecap="round" />
-                <path d="M240 241Q224 231 211 241Q217 256 238 250Z" fill="#fff" stroke="#20242b" strokeWidth={2.5} strokeLinejoin="round" />
-                <path d="M240 241Q256 231 269 241Q263 256 242 250Z" fill="#fff" stroke="#20242b" strokeWidth={2.5} strokeLinejoin="round" />
+                {/* long beard in flowing locks, then the drooping moustache over it */}
+                <path d={BEARD} fill="url(#wiz-beard)" stroke={INK} strokeWidth={2.6} strokeLinejoin="round" />
+                <path d="M228 248Q226 272 234 296M240 250Q238 278 240 306M252 248Q254 272 246 296M222 244Q218 262 224 280M258 244Q262 262 256 280" fill="none" stroke="#b9bec8" strokeWidth={1.4} strokeLinecap="round" />
+                <path d={BEARD} fill="url(#wiz-firelit)" className="wizard__firelit" opacity={0.6} />
+                <path d="M240 231Q228 227 218 238Q214 246 220 250Q226 240 240 238Q254 240 260 250Q266 246 262 238Q252 227 240 231Z" fill="#f6f7fa" stroke={INK} strokeWidth={2.2} strokeLinejoin="round" />
+                <path d="M233 240Q237 243 240 240Q243 243 247 240" fill="none" stroke="#6b3a2a" strokeWidth={1.6} strokeLinecap="round" />
               </g>
+              {/* tall pointed hat, battered, its tip flopping back; a wide brim shading the eyes */}
+              <path d="M200 196Q214 156 228 128Q238 106 252 92Q266 80 286 88Q270 94 264 110Q258 136 268 164Q274 182 282 196Z" fill="url(#wiz-hat)" stroke={INK} strokeWidth={3} strokeLinejoin="round" />
+              <path d="M226 150Q236 140 252 146M236 120Q244 116 252 120" fill="none" stroke="#6d727c" strokeWidth={1.8} strokeLinecap="round" />
+              <path d="M262 112Q262 140 268 166" fill="none" stroke="#c8ccd4" strokeWidth={2} opacity={0.6} strokeLinecap="round" />
+              <path d="M204 190Q240 200 278 190L280 182Q240 192 206 182Z" fill="#5d626d" stroke={INK} strokeWidth={2} strokeLinejoin="round" />
+              <path d="M172 197Q200 186 240 186Q282 186 308 197Q284 205 240 205Q196 205 172 197Z" fill="url(#wiz-brim)" stroke={INK} strokeWidth={3} strokeLinejoin="round" />
+              <path d="M184 198Q240 192 296 198" fill="none" stroke="#c8ccd4" strokeWidth={1.6} opacity={0.5} strokeLinecap="round" />
             </g>
           </g>
         </g>
+
+        {/* flickering firelight from the chasm, washing over the bridge and the wizard */}
+        <rect className="lockheist__firelight" x={-extra} y={180} width={480 + extra * 2} height={1400} fill="url(#wiz-firelight)" />
 
         {/* what he says */}
         {!boom && (
