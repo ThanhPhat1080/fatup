@@ -4,6 +4,15 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [Chưa phát hành]
+
+### Đổi
+
+**Tab Liên kết gọn hơn, dễ nhận ra hơn**
+- **Logo thật** của Facebook, YouTube, Instagram, Threads, X, Shopee, TikTok thay cho huy hiệu chữ cái (Internet vẫn là quả địa cầu). Logo lấy từ [Simple Icons](https://simpleicons.org) (CC0), chép thành đường vẽ SVG trong app nên không thêm thư viện.
+- **Hàng lọc chỉ còn icon:** nút **Tất cả**, icon **Internet**, icon **YouTube**, rồi một **hộp** bấm vào để Facebook, Instagram, Threads, X, Shopee, TikTok nhảy ra (cùng kiểu với hộp thẻ màu, nhưng to hơn). Tên và số lượng hiện khi rê chuột. Đóng hộp không bỏ lọc; hộp hiện logo nền tảng đang chọn.
+- **Danh sách link:** có cột **Nguồn** ngay sau checkbox, bấm tiêu đề cột để sắp xếp theo nền tảng (A→Z). Bỏ con bò và bỏ tên miền sau tiêu đề; con bò chỉ còn ở dạng lưới.
+
 ## [0.2.1] — 2026-11-13
 
 ### Thêm

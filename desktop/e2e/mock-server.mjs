@@ -55,6 +55,31 @@ export function startMockServer() {
     img: mime.startsWith('image/') ? imageIndex++ : -1,
   }));
 
+  // A few saved links, returned only for `GET /files?kind=link`. Titles are in a mixed order so sorting by platform visibly moves them.
+  const linkSeed = [
+    ['Cách nấu phở ngon', 'https://www.youtube.com/watch?v=abc', 'youtube'],
+    ['Bài viết hay trên Facebook', 'https://fb.me/xyz', 'facebook'],
+    ['Thread về AI', 'https://x.com/someone/status/1', 'x'],
+    ['Blog của Kent', 'https://example.com/post', 'internet'],
+    ['Video TikTok vui', 'https://www.tiktok.com/@a/video/1', 'tiktok'],
+    ['Tổng hợp deal Shopee', 'https://shopee.vn/a-i.1.2', 'shopee'],
+  ];
+  const links = linkSeed.map(([name, url, site], i) => ({
+    id: `l${i}`.padStart(26, '0'),
+    name,
+    mime: 'text/uri-list',
+    size: 0,
+    kind: 'link',
+    device: 'Pixel 8',
+    createdAt: Math.round(now - (i + 1) * hour),
+    deletedAt: null,
+    inVault: false,
+    tags: [],
+    url,
+    site,
+    previewed: true,
+  }));
+
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     const send = (status, body, type = 'application/json') => {
@@ -74,8 +99,8 @@ export function startMockServer() {
     if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(401, { error: { code: 'unauthorized', message: 'bad token' } });
     if (url.pathname === '/me') return send(200, { ok: true });
     if (url.pathname === '/files' && req.method === 'GET') {
-      // Links are only returned when asked for; this mock holds none.
-      if (url.searchParams.get('kind') === 'link') return send(200, { items: [], nextCursor: null });
+      // Links are only returned when asked for.
+      if (url.searchParams.get('kind') === 'link') return send(200, { items: links.map((l) => ({ ...l, thumbUrl: null })), nextCursor: null });
       return send(200, {
         items: files.map(({ img, ...f }) => ({ ...f, thumbUrl: img >= 0 ? `${base}/thumb/${img}.svg` : null })),
         nextCursor: null,

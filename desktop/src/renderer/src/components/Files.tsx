@@ -1,7 +1,7 @@
 import { useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import { ArrowDown, ArrowUp, MoreVertical, Pencil, SearchX } from 'lucide-react';
 import type { Item } from '../../../shared-ipc';
-import { cowsay, formatSize, formatTime, linkHost, type DateGroup, type SortKey, type SortState } from '../lib/format';
+import { cowsay, formatSize, formatTime, type DateGroup, type SortKey, type SortState } from '../lib/format';
 import { useI18n } from '../lib/i18n';
 import { CowThumb } from './CowThumb';
 import { FileIcon } from './FileIcon';
@@ -154,13 +154,13 @@ function Thumb({ item }: { item: Item }) {
   );
 }
 
-/** The little picture before a name in the list: the thumbnail, or (when there is none or it fails to load) the file icon or the cow. */
+/** The little picture before a name in the list: the thumbnail, or (when there is none or it fails to load) the file icon, or the platform logo for a link. The cow is for the grid only. */
 function MiniThumb({ item }: { item: Item }) {
   const [failed, setFailed] = useState(false);
   if (item.thumbUrl && !failed) {
     return <img className="list__mini" src={item.thumbUrl} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} />;
   }
-  return item.kind === 'link' ? <CowThumb size={28} className="list__cow" /> : <FileIcon name={item.name} mime={item.mime} />;
+  return item.kind === 'link' ? <SiteBadge site={item.site ?? 'internet'} size={24} /> : <FileIcon name={item.name} mime={item.mime} />;
 }
 
 /** The small icon before a file's name: the site badge for links, the file-type icon otherwise. */
@@ -170,6 +170,7 @@ function KindIcon({ item, size }: { item: Item; size: number }) {
 }
 
 type ItemProps = Pick<ViewProps, 'selected' | 'onToggle' | 'onOpen' | 'onMenu' | 'onEdit'> & { item: Item };
+type RowProps = ItemProps & { siteColumn: boolean };
 
 function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit }: ItemProps) {
   const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
@@ -200,24 +201,23 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit }: ItemProps) {
   );
 }
 
-function Row({ item, selected, onToggle, onOpen, onMenu, onEdit }: ItemProps) {
+function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, siteColumn }: RowProps) {
   const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
   return (
     <div className={`list__row${selected.has(item.id) ? ' list__row--selected' : ''}`} role="row" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen(item)} {...press}>
       <span role="cell">
         <Check item={item} selected={selected.has(item.id)} onToggle={onToggle} />
       </span>
+      {siteColumn && (
+        <span role="cell" className="col-site">
+          <SiteBadge site={item.site ?? 'internet'} size={22} />
+        </span>
+      )}
       <span className="list__name" role="cell">
-        <MiniThumb item={item} />
+        {!siteColumn && <MiniThumb item={item} />}
         <span className="ellipsis" title={item.url ?? item.name}>
           {item.name}
         </span>
-        {item.kind === 'link' && item.url && (
-          <span className="link-host">
-            {item.site && <SiteBadge site={item.site} size={16} />}
-            <span className="ellipsis">{linkHost(item.url)}</span>
-          </span>
-        )}
         <TagDots tags={item.tags} />
         {onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
       </span>
@@ -262,6 +262,8 @@ type ListProps = ViewProps & {
   onToggleAll: () => void;
   /** Heading of the time column: "Uploaded", or "Deleted" in the trash. */
   timeLabel: string;
+  /** The links tab: adds a sortable column with each link's platform logo right after the checkbox. */
+  siteColumn?: boolean;
 };
 
 function SortHead({ id, label, sort, onSort, className }: { id: SortKey; label: string; sort: SortState; onSort: (k: SortKey) => void; className?: string }) {
@@ -276,10 +278,10 @@ function SortHead({ id, label, sort, onSort, className }: { id: SortKey; label: 
   );
 }
 
-export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, sort, onSort, allSelected, someSelected, onToggleAll, timeLabel }: ListProps) {
+export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, sort, onSort, allSelected, someSelected, onToggleAll, timeLabel, siteColumn = false }: ListProps) {
   const { t } = useI18n();
   return (
-    <div className="list" role="table">
+    <div className={`list${siteColumn ? ' list--site' : ''}`} role="table">
       <div className="list__row list__row--head" role="row">
         <span role="columnheader">
           <input
@@ -293,6 +295,7 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, s
             onChange={onToggleAll}
           />
         </span>
+        {siteColumn && <SortHead id="site" label={t.colSite} sort={sort} onSort={onSort} className="col-site" />}
         <SortHead id="name" label={t.colName} sort={sort} onSort={onSort} />
         <span role="columnheader" className="col-from">
           {t.colFrom}
@@ -305,7 +308,7 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, s
         <section key={g.key} role="rowgroup">
           {g.label && <h3 className="group__label group__label--list">{g.label}</h3>}
           {g.items.map((item) => (
-            <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} />
+            <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} siteColumn={siteColumn} />
           ))}
         </section>
       ))}
