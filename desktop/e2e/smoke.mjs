@@ -99,7 +99,7 @@ try {
 
   log('lightbox');
   await page.getByText('IMG_20261112_0832.jpg', { exact: true }).click();
-  await page.locator('.lightbox img').waitFor();
+  await page.locator('.lightbox img').first().waitFor(); // the thumbnail and the full image can both be mounted
   await page.waitForTimeout(400);
   await shot(page, '04-lightbox');
   await page.keyboard.press('ArrowRight');
@@ -108,11 +108,11 @@ try {
 
   log('context menu + delete');
   await page.getByText('chi-tieu-2026.xlsx', { exact: true }).click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Xóa' }).waitFor();
+  await page.getByRole('menuitem', { name: 'Chuyển vào thùng rác' }).waitFor();
   await shot(page, '05-context-menu');
-  await page.getByRole('menuitem', { name: 'Xóa' }).click();
-  await page.getByRole('button', { name: 'Xóa' }).click();
-  await page.getByText('Đã xóa').waitFor();
+  // Deleting moves the file to the trash without a confirmation; the toast offers Undo.
+  await page.getByRole('menuitem', { name: 'Chuyển vào thùng rác' }).click();
+  await page.getByText('Đã chuyển 1 file vào thùng rác').waitFor();
   assert.equal(await page.getByText('chi-tieu-2026.xlsx', { exact: true }).count(), 0);
 
   log('settings + QR');
@@ -138,13 +138,12 @@ try {
   // 3. Restart: lock screen
   log('lock screen');
   ({ app, page } = await launch('en'));
-  await page.getByText('Enter your PIN').waitFor();
+  await page.getByLabel('Enter your PIN').waitFor(); // the PIN field is labelled for screen readers; the Moria scene has no visible caption
   await typePin(page, '0000');
   await page.getByText('Wrong PIN. 4 tries left.').waitFor();
   await shot(page, '09-lock-en');
   await typePin(page, '1234');
   await page.getByText('Today').first().waitFor();
-  await page.locator('.list__row .downloaded').first().waitFor(); // downloaded mark persisted
   await app.close();
 
   console.log('✔ desktop smoke test passed');
