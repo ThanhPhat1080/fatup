@@ -1,6 +1,6 @@
 # Phase 2: Lưu liên kết (bookmark) — thiết kế
 
-Trạng thái: **chờ duyệt**. Viết ngày 2026-11-13. Thay đổi quyết định thì sửa file này trước, code sau; khi làm xong phải cập nhật `SPEC.md` (mục 2, 3, 4, 8, 9, 10, 12, 13).
+Trạng thái: **đã duyệt, đã triển khai** (2026-11-13). Viết ngày 2026-11-13. Thay đổi quyết định thì sửa file này trước, code sau; khi làm xong phải cập nhật `SPEC.md` (mục 2, 3, 4, 8, 9, 10, 12, 13).
 
 ## 1. Mục đích
 

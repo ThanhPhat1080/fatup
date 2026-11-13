@@ -16,13 +16,24 @@ Gửi ảnh và file giữa **điện thoại Android** và **máy tính** (macO
 - **Máy tính → cloud:** nút **Tải lên**, `Ctrl/⌘+U` hoặc kéo-thả file vào cửa sổ. Có bảng tiến trình kiểu Google Drive, hủy được từng file.
 - **Danh sách:** mới nhất lên đầu, nhóm theo ngày, tab **Tất cả / Ảnh / File**, tìm kiếm không phân biệt dấu, chế độ lưới hoặc danh sách. Bấm tiêu đề cột để **sắp xếp** theo Tên / Tải lên / Dung lượng.
 - **Chọn nhiều file:** mỗi file có checkbox. `Shift`+bấm chọn một dãy, `Ctrl/⌘+A` chọn tất cả. Chuyển vào thùng rác hoặc két sắt hàng loạt, hoặc **Tải tất cả**.
+- **Liên kết (bookmark):** chia sẻ một link từ Android (**Chia sẻ → FatUp**) hoặc từ bản web đã cài (PWA), hoặc bấm nút **Thêm liên kết** rồi dán URL. Link nằm ở tab **Liên kết**, tự phân loại theo tên miền (**Facebook, YouTube, Instagram, Threads, Shopee, TikTok, Internet**), sửa được tiêu đề và URL, gắn thẻ màu như file, **không bao giờ tự hết hạn**. Tiêu đề và ảnh xem trước được tải khi bạn mở app (YouTube, TikTok luôn có; Facebook, Instagram, Threads, Shopee thường không cho đọc nên hiện con bò cowsay thay ảnh). Xem [bên dưới](#liên-kết-bookmark).
 - **Đổi tên và thẻ màu:** bút chì cạnh mỗi file mở popover để đổi tên (giữ nguyên phần mở rộng) và gắn tối đa **3 chấm màu**. Nút hình hộp cạnh nút làm mới để **lọc theo màu**.
 - **Xem ảnh:** vừa khung, zoom 10–800% (nút, lăn chuột, `+`/`-`, phím **↓ phóng to / ↑ thu nhỏ**), kéo để di chuyển, `←`/`→` chuyển ảnh, bảng **Chi tiết** (tên, loại, dung lượng, kích thước, thời gian, thiết bị).
 - **Thùng rác:** xóa file là chuyển vào thùng rác, khôi phục được trong 30 ngày. Xem [bên dưới](#thùng-rác-trash).
 - **Két sắt (Secret Vault):** cất file ra khỏi danh sách chính, mỗi lần mở phải nhập lại PIN. Xem [bên dưới](#két-sắt-secret-vault).
 - **Thanh dung lượng (Store):** cạnh ô tìm kiếm, cho biết đã dùng bao nhiêu GB trên R2: xanh, **cam từ 70%**, **đỏ từ 90%**.
 - **Giao diện:** En/Vi, **sáng/tối** (công tắc mặt trời/mặt trăng trong Cài đặt, mặc định theo hệ điều hành). Bấm logo FatUp để về trang chủ. Màn hình khóa là cảnh hoạt họa cổng Moria; cổng két sắt có ông phù thủy trên cầu đá.
-- **Kiểm tra cập nhật** trong Cài đặt (app máy tính). File tự xóa sau **30 ngày**, giới hạn **100 MB/file**.
+- **Kiểm tra cập nhật** trong Cài đặt (app máy tính). File tự xóa sau **30 ngày** (link thì không), giới hạn **100 MB/file**.
+
+### Liên kết (bookmark)
+
+- **Ba đường vào:** (1) Android: trong trình duyệt hoặc app bất kỳ bấm **Chia sẻ → FatUp**; (2) PWA: sau khi cài, FatUp xuất hiện trong menu Chia sẻ của Android; link được giữ qua màn hình khóa PIN rồi lưu ngay khi bạn mở khóa; (3) nút **Thêm liên kết** (biểu tượng sợi xích cạnh Tải lên) trên desktop và web, tự điền link nếu clipboard đang có.
+- **Lưu ngay, xem trước sau:** link được lưu tức thì với tiêu đề lấy từ nơi chia sẻ (hoặc tên miền). Khi bạn mở app, Worker mới tải trang để lấy tiêu đề và ảnh xem trước (tối đa 20 link mỗi lần mở, mới nhất trước). **Tải lại xem trước** nằm trong menu `⋮`.
+- **Phân loại theo tên miền** (hàng chip trong tab Liên kết, kèm số lượng): Facebook, YouTube, Instagram, Threads, Shopee, TikTok, Internet (mọi tên miền khác). Kết hợp được với lọc theo màu và tìm kiếm (theo tiêu đề và URL).
+- **Sửa liên kết:** bút chì → popover có ô Tiêu đề, ô URL và chấm màu. Đổi URL thì xem trước được tải lại. URL đã lưu rồi thì báo "Liên kết này đã có".
+- Link có thể vào két sắt hoặc thùng rác như file; **không tự xóa sau 30 ngày**. Bản app cũ không thấy link (server không trả link cho danh sách file thường).
+- **PWA đã cài trước đây:** Android cập nhật mục "Chia sẻ" của PWA chậm (tới khoảng một ngày sau khi bản web mới được deploy), có thể phải gỡ rồi cài lại PWA.
+- Nâng cấp server: `npm run db:migrate:remote` (migration `0005` **dựng lại bảng `files`**, nên sao lưu D1 trước) rồi `npm run deploy`.
 
 ### Thùng rác (Trash)
 
