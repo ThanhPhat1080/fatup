@@ -222,9 +222,9 @@ Tải bản cài trong mục [Releases](https://github.com/ThanhPhat1080/fatup/r
   ```
 
 - **Windows** (`.exe`): SmartScreen sẽ cảnh báo, chọn **More info → Run anyway**.
-- **Ubuntu**: dùng file `.deb` (`sudo apt install ./FatUp-*.deb`) hoặc `AppImage` (`chmod +x` rồi chạy).
+- **Ubuntu**: dùng file `AppImage` (`chmod +x` rồi chạy).
 
-**Cập nhật:** vào **⚙ Cài đặt → Kiểm tra cập nhật**. Windows và Linux AppImage tự tải và cài, macOS và `.deb` thì mở trang tải về. Chỉ thấy bản mới sau khi bản release được **Publish** (không phải draft).
+**Cập nhật:** vào **⚙ Cài đặt → Kiểm tra cập nhật**. Windows và Linux AppImage tự tải và cài, macOS thì mở trang tải về. Chỉ thấy bản mới sau khi bản release được **Publish** (không phải draft).
 
 Lần đầu mở app: dán **URL Worker** và **API token** → **Tiếp** → đặt **PIN 4 số**. Mỗi máy có PIN riêng. Quên PIN thì bấm "Quên PIN? Đặt lại" rồi nhập lại token.
 
@@ -284,7 +284,7 @@ cd android && ./gradlew testDebugUnitTest assembleDebug
 
 ## 5. Phát hành
 
-Push một tag, GitHub Actions sẽ build `.dmg` (Intel và Apple Silicon), `.exe`, `AppImage`, `.deb` và APK, rồi tạo **draft release**:
+Push một tag, GitHub Actions sẽ build `.dmg` (Apple Silicon), `.exe`, `AppImage` và APK, rồi tạo **draft release**:
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0

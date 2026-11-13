@@ -26,7 +26,7 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
 linux:
-  target: [AppImage, deb]
+  target: [AppImage]
   category: Utility
   # A folder of NxN.png files: a lone 1024px icon lands in hicolor/1024x1024, which Ubuntu's icon theme never looks at.
   icon: icons

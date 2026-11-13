@@ -287,7 +287,7 @@ Một khu vực để **cất file ra khỏi danh sách chính**, chỉ xem đư
 ### 9.7 Kiểm tra cập nhật
 
 - Cài đặt → **Kiểm tra cập nhật** hỏi GitHub Releases (`/releases/latest`, bỏ qua bản draft) và so `x.y.z` với phiên bản hiện tại.
-- Có bản mới → nút **Cập nhật**. **Windows (NSIS) và Linux AppImage** tự tải và cài bằng `electron-updater` (cần `latest*.yml` và `.blockmap` đính kèm trong release), hiện % tiến độ rồi tự khởi động lại. **macOS và `.deb`** chỉ mở trang release để tải tay: app chưa ký số nên macOS không cho thay app tại chỗ.
+- Có bản mới → nút **Cập nhật**. **Windows (NSIS) và Linux AppImage** tự tải và cài bằng `electron-updater` (cần `latest*.yml` và `.blockmap` đính kèm trong release), hiện % tiến độ rồi tự khởi động lại. **macOS** chỉ mở trang release để tải tay: app chưa ký số nên macOS không cho thay app tại chỗ.
 - Chỉ bản **publish** (không phải draft) mới được app nhìn thấy.
 
 ### 9.8 i18n
@@ -346,7 +346,7 @@ Hai màn hình nhập PIN vẽ hoàn toàn bằng **SVG + CSS** (không có file
 ### Build & phát hành
 
 - `.github/workflows/release.yml` chạy khi push tag `v*`:
-  - `desktop`: macOS (`.dmg`, x64 + arm64), Windows (`.exe` NSIS), Ubuntu (`AppImage` + `.deb`) bằng electron-builder, **không ký**. Đính kèm `latest*.yml` và `*.exe.blockmap` cho cập nhật tự động.
+  - `desktop`: macOS (`.dmg`, arm64), Windows (`.exe` NSIS), Ubuntu (`AppImage`) bằng electron-builder, **không ký**. Đính kèm `latest*.yml` và `*.exe.blockmap` cho cập nhật tự động.
   - `android`: `assembleRelease`, ký bằng keystore từ secrets (`ANDROID_KEYSTORE_*`); thiếu secret thì ký bằng key debug ngẫu nhiên (bản sau không cài đè được bản trước).
   - Tạo **draft release**; phải bấm Publish thì app mới thấy bản mới.
 - `.github/workflows/ci.yml` chạy khi push/PR: typecheck + test, build desktop, `assembleDebug` cho Android.

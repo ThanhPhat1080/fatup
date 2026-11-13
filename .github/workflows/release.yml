@@ -17,7 +17,7 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            args: --mac --arm64 --x64
+            args: --mac --arm64
           - os: windows-latest
             args: --win --x64
           - os: ubuntu-latest
@@ -47,7 +47,6 @@ jobs:
             desktop/release/*/*.dmg
             desktop/release/*/*.exe
             desktop/release/*/*.AppImage
-            desktop/release/*/*.deb
             desktop/release/*/latest*.yml
             desktop/release/*/*.exe.blockmap
           if-no-files-found: error
