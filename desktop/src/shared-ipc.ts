@@ -76,6 +76,8 @@ export type FatupApi = {
   updateFile(id: string, patch: { name?: string; tags?: TagColor[]; url?: string }): Promise<Result<Item>>;
   /** Bookmarks a link. Fails with 'bad_url' for an address that is not http(s). */
   addLink(url: string, title?: string, vault?: boolean): Promise<Result<Item>>;
+  /** Web only: a link that arrived through the Android share sheet while the app was locked. Returned once; `url` is empty when the share held no link. */
+  takePendingLink?(): Promise<{ url: string; title?: string } | null>;
   /** Has the server fetch a link's title and image (once, or again with `force`). */
   previewLink(id: string, force?: boolean): Promise<Result<Item>>;
   /** Opens an http(s) address in the system browser. */

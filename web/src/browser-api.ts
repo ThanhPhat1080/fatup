@@ -3,6 +3,7 @@ import type { AppState, FatupApi, Item, Prefs, Result, UnlockResult, UploadJob }
 import { ApiClient, ApiError, normalizeServerUrl } from '../../desktop/src/main/api';
 import { nextAttempt, open, seal, type Lockout, type Sealed } from './vault';
 import { WebUploadManager, deviceName } from './uploader';
+import { popSharedLink } from './share';
 
 const STORAGE_KEY = 'fatup.web.v1';
 const MAX_DOWNLOADED = 2000;
@@ -236,6 +237,8 @@ export function installBrowserApi(): void {
         itemCache.set(id, item);
         return { ...item, downloaded: false };
       }),
+
+    takePendingLink: async () => popSharedLink(),
 
     openExternal: async (url) => {
       if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener,noreferrer');

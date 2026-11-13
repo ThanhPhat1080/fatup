@@ -21,6 +21,7 @@ import { EditPopover, LinkEditPopover, TagFilter } from './Tags';
 import { useToast } from './Toast';
 import { UploadPanel } from './UploadPanel';
 
+let sharedLinkTaken = false; // a link shared into the PWA is handled once per page load, even if the lock screen comes and goes
 const POLL_MS = 60_000;
 const FOCUS_REFRESH_MIN_GAP_MS = 5_000;
 /** Previews are fetched when the app opens, newest links first, a couple at a time and not more than this many per session. */
@@ -483,12 +484,26 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     if (vaultActive) setVaultItems(put);
     else setItems(put);
     toast(t.linkAdded);
+    refresh();
     if (!added.previewed) {
       previewed.current.add(added.id);
       void previewNow(added.id);
     }
     return null;
   }
+
+  // A link shared from Android while the app was locked is saved as soon as the app is open.
+  useEffect(() => {
+    if (sharedLinkTaken || !window.fatup.takePendingLink) return;
+    sharedLinkTaken = true;
+    void window.fatup.takePendingLink().then(async (link) => {
+      if (!link) return;
+      if (!link.url) return toast(t.noLinkFound, true);
+      const code = await addLink(link.url, link.title ?? '');
+      if (code) toast(errorText(t, code), true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function copyLink(item: Item) {
     try {
