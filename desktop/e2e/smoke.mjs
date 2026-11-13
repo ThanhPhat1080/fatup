@@ -12,6 +12,7 @@ import { TOKEN, startMockServer } from './mock-server.mjs';
 const require = createRequire(import.meta.url);
 const { _electron: electron } = require('playwright-core');
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const WATCHDOG_MS = 60_000; // per step
 const shots = process.env.SCREENSHOT_DIR;
 if (shots) mkdirSync(shots, { recursive: true });
 
@@ -23,7 +24,10 @@ async function launch(lang = 'vi') {
   const app = await electron.launch({
     // FATUP_EXECUTABLE runs a packaged build (e.g. release/x/linux-unpacked/fatup) instead of out/.
     executablePath: process.env.FATUP_EXECUTABLE || require('electron'),
-    args: [...(process.env.FATUP_EXECUTABLE ? [] : [join(root, 'out/main/index.js')]), `--lang=${lang}`, '--no-sandbox'],
+    args: [...(process.env.FATUP_EXECUTABLE ? [] : [join(root, 'out/main/index.js')]), `--lang=${lang}`, '--no-sandbox',
+      // Under xvfb there is no window manager, so Chromium may treat the window as hidden/occluded and pause
+      // requestAnimationFrame, which Playwright's "stable" actionability check relies on.
+      '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows'],
     env: { ...process.env, FATUP_USER_DATA: userData, FATUP_DOWNLOAD_DIR: downloads },
   });
   const page = await app.firstWindow();
@@ -32,6 +36,7 @@ async function launch(lang = 'vi') {
   page.on('console', (m) => m.type() === 'error' && console.error('[renderer console]', m.text()));
   await page.setViewportSize({ width: 1180, height: 760 });
   current = app;
+  currentProc = app.process();
   return { app, page };
 }
 
@@ -45,7 +50,31 @@ async function typePin(page, pin) {
 
 let step = 'start';
 let current;
-const log = (s) => { step = s; if (process.env.E2E_VERBOSE) console.log('→', s); };
+let currentProc; // kept separately: app.process() throws once the app is closed
+let watchdog;
+const log = (s) => {
+  step = s;
+  if (process.env.E2E_VERBOSE) console.log('→', s);
+  // Watchdog: Playwright's waits all time out, but closing the app or the process itself can hang
+  // (seen on CI under xvfb). Fail loudly with the step name instead of stalling the runner.
+  clearTimeout(watchdog);
+  watchdog = setTimeout(() => {
+    console.error(`✘ smoke test hung for ${WATCHDOG_MS / 1000}s at step "${s}"`);
+    currentProc?.kill('SIGKILL');
+    process.exit(1);
+  }, WATCHDOG_MS);
+};
+
+// app.close() has no timeout of its own. If it does not return, say so and kill the process
+// so the next launch (and CI) can carry on.
+async function closeApp(app) {
+  const timedOut = Symbol();
+  const r = await Promise.race([app.close().catch(() => {}), new Promise((res) => setTimeout(res, 10_000, timedOut))]);
+  if (r === timedOut) {
+    console.error(`⚠ app.close() did not return within 10s at step "${step}"; killing the process`);
+    currentProc?.kill('SIGKILL');
+  }
+}
 try {
   // 1. First run: setup
   let { app, page } = await launch();
@@ -127,13 +156,15 @@ try {
 
   log('dark mode');
   await page.emulateMedia({ colorScheme: 'dark' });
+  log('dark mode: screens');
   await page.getByRole('tab', { name: 'Ảnh' }).click();
   await page.waitForTimeout(300);
   await shot(page, '07-images-grid-dark');
   await page.getByRole('tab', { name: 'Tất cả' }).click();
   await page.waitForTimeout(200);
   await shot(page, '08-all-list-dark');
-  await app.close();
+  log('close app (1st run)');
+  await closeApp(app);
 
   // 3. Restart: lock screen
   log('lock screen');
@@ -144,7 +175,8 @@ try {
   await shot(page, '09-lock-en');
   await typePin(page, '1234');
   await page.getByText('Today').first().waitFor();
-  await app.close();
+  log('close app (2nd run)');
+  await closeApp(app);
 
   console.log('✔ desktop smoke test passed');
 } catch (err) {
@@ -156,6 +188,11 @@ try {
   console.error(err);
   process.exitCode = 1;
 } finally {
-  await current?.close().catch(() => {});
+  clearTimeout(watchdog);
+  log('cleanup');
+  await Promise.race([current?.close().catch(() => {}), new Promise((r) => setTimeout(r, 10_000))]);
+  currentProc?.kill('SIGKILL');
   server.close();
 }
+// Exit explicitly so a lingering Electron child or socket can never keep the process alive.
+process.exit(process.exitCode ?? 0);
