@@ -7,6 +7,7 @@ Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy
 ## [Chưa phát hành]
 
 ### Sửa
+- **Ảnh xem trước của Instagram (và mọi trang có địa chỉ ảnh chứa `&`):** Worker lấy `og:image` thô từ HTML mà không giải mã `&amp;`, nên địa chỉ ảnh sai chữ ký và Instagram trả 403 "Bad URL hash". Đã giải mã thực thể HTML ở địa chỉ ảnh. Cần deploy Worker; link đã thử trước đó bị nhớ là thất bại 24 giờ, bấm **Tải lại xem trước** (menu `⋮`) để thử lại ngay.
 - **Icon PWA trên Android:** trước đây icon là hình vuông bo góc nằm trên nền tròn trắng (Android tự thêm vì icon chưa khai báo `maskable`). Giờ có thêm icon maskable phủ kín gradient, nên trên màn hình chính icon là hình tròn gradient với mũi tên ở giữa. `apple-touch-icon` cũng được vẽ phủ kín (iOS tự bo góc và tô đen phần trong suốt). Android cập nhật icon của PWA đã cài trong vòng vài ngày; muốn thấy ngay thì gỡ rồi cài lại.
 
 ## [0.3.1] — 2026-11-13
