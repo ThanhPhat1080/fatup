@@ -4,7 +4,7 @@ import type { FileItem, TagColor, UsageResponse } from '@fatup/shared';
 export type Lang = 'auto' | 'en' | 'vi';
 export type Theme = 'system' | 'light' | 'dark';
 export type ViewMode = 'grid' | 'list';
-export type Tab = 'all' | 'image' | 'file';
+export type Tab = 'all' | 'image' | 'file' | 'link';
 
 export type Prefs = {
   lang: Lang;
@@ -73,7 +73,13 @@ export type FatupApi = {
   listVault(): Promise<Result<Item[]>>;
   setVault(id: string, inVault: boolean): Promise<Result>;
   /** Changes a file's display name and/or colour tags. Fails with 'not_found' if it is gone or in the trash. */
-  updateFile(id: string, patch: { name?: string; tags?: TagColor[] }): Promise<Result<Item>>;
+  updateFile(id: string, patch: { name?: string; tags?: TagColor[]; url?: string }): Promise<Result<Item>>;
+  /** Bookmarks a link. Fails with 'bad_url' for an address that is not http(s). */
+  addLink(url: string, title?: string, vault?: boolean): Promise<Result<Item>>;
+  /** Has the server fetch a link's title and image (once, or again with `force`). */
+  previewLink(id: string, force?: boolean): Promise<Result<Item>>;
+  /** Opens an http(s) address in the system browser. */
+  openExternal(url: string): Promise<void>;
   previewUrl(id: string): Promise<Result<string>>;
   /** Saves a file to the downloads folder. `reveal` (default true) also shows it in the file manager; bulk downloads pass false for all but the last. */
   download(id: string, reveal?: boolean): Promise<Result<string>>;

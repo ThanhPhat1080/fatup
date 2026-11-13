@@ -1,4 +1,4 @@
-import type { TagColor, CreateUploadRequest, CreateUploadResponse, DownloadResponse, EmptyTrashResponse, UsageResponse, FileItem, ListFilesResponse } from '@fatup/shared';
+import type { TagColor, CreateLinkRequest, CreateUploadRequest, CreateUploadResponse, DownloadResponse, EmptyTrashResponse, UsageResponse, FileItem, ListFilesResponse } from '@fatup/shared';
 
 export class ApiError extends Error {
   constructor(
@@ -53,13 +53,14 @@ export class ApiClient {
   }
 
   /** Fetches every page; retention keeps the total small. */
-  async listAll(opts: { trash?: boolean; vault?: boolean } = {}, maxPages = 20): Promise<FileItem[]> {
+  async listAll(opts: { trash?: boolean; vault?: boolean; kind?: 'all' | 'link' } = {}, maxPages = 20): Promise<FileItem[]> {
     const items: FileItem[] = [];
     let cursor: string | null = null;
     for (let page = 0; page < maxPages; page++) {
       const qs = new URLSearchParams({ limit: '200' });
       if (opts.trash) qs.set('trash', '1');
       if (opts.vault) qs.set('vault', '1');
+      if (opts.kind && opts.kind !== 'all') qs.set('kind', opts.kind);
       if (cursor) qs.set('cursor', cursor);
       const res: ListFilesResponse = await this.request(`/files?${qs}`);
       items.push(...res.items);
@@ -67,6 +68,22 @@ export class ApiClient {
       if (!cursor) break;
     }
     return items;
+  }
+
+  /** Files and links together, newest first. The server keeps links out of the plain list, and the trash already holds every kind. */
+  async listEverything(opts: { trash?: boolean; vault?: boolean } = {}): Promise<FileItem[]> {
+    if (opts.trash) return this.listAll(opts);
+    const [files, links] = await Promise.all([this.listAll(opts), this.listAll({ ...opts, kind: 'link' })]);
+    return [...files, ...links].sort((a, b) => b.createdAt - a.createdAt || (a.id < b.id ? 1 : -1));
+  }
+
+  addLink(req: CreateLinkRequest): Promise<FileItem> {
+    return this.request('/links', { method: 'POST', body: JSON.stringify(req) });
+  }
+
+  /** Asks the server to fetch a link's title and image; `force` fetches again even if it already tried. */
+  previewLink(id: string, force = false): Promise<FileItem> {
+    return this.request(`/links/${encodeURIComponent(id)}/preview${force ? '?force=1' : ''}`, { method: 'POST' });
   }
 
   async downloadUrl(id: string): Promise<string> {
@@ -82,7 +99,7 @@ export class ApiClient {
     return this.request(`/uploads/${encodeURIComponent(id)}/complete`, { method: 'POST' });
   }
 
-  update(id: string, patch: { name?: string; tags?: TagColor[] }): Promise<FileItem> {
+  update(id: string, patch: { name?: string; tags?: TagColor[]; url?: string }): Promise<FileItem> {
     return this.request(`/files/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
 

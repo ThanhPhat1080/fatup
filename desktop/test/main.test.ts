@@ -66,7 +66,7 @@ describe('ConfigStore', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'fatup-')), 'config.json');
     const store = new ConfigStore(file, crypter);
     store.setConnection('https://x.workers.dev', 'secret-token');
-    store.setPrefs({ lang: 'vi', viewModes: { all: 'grid', image: 'grid', file: 'list' } });
+    store.setPrefs({ lang: 'vi', viewModes: { all: 'grid', image: 'grid', file: 'list', link: 'list' } });
     store.markDownloaded('A');
     store.markDownloaded('B');
     store.markDownloaded('A');
@@ -180,5 +180,45 @@ describe('isNewer', () => {
   it('accepts a v prefix and ignores pre-release suffixes', () => {
     expect(isNewer('v0.2.0', '0.1.0')).toBe(true);
     expect(isNewer('0.1.0', '0.0.0-dev')).toBe(true);
+  });
+});
+
+describe('ApiClient links', () => {
+  const make = (respond: (url: URL, init: RequestInit) => unknown) => {
+    const calls: string[] = [];
+    const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+      const u = new URL(url);
+      calls.push(`${init.method ?? 'GET'} ${u.pathname}${u.search}`);
+      return new Response(JSON.stringify(respond(u, init)), { status: 200 });
+    });
+    return { calls, client: new ApiClient('https://api.test', 'tok', fetchMock as unknown as typeof fetch) };
+  };
+
+  it('adds, previews and edits links', async () => {
+    const { calls, client } = make(() => ({ id: 'L' }));
+    await client.addLink({ url: 'https://a.com', title: 'A' });
+    await client.previewLink('L');
+    await client.previewLink('L', true);
+    await client.update('L', { url: 'https://b.com' });
+    expect(calls).toEqual(['POST /links', 'POST /links/L/preview', 'POST /links/L/preview?force=1', 'PATCH /files/L']);
+  });
+
+  it('merges files and links, newest first, with one extra request', async () => {
+    const { calls, client } = make((u) =>
+      u.searchParams.get('kind') === 'link'
+        ? { items: [{ id: 'L2', createdAt: 30 }, { id: 'L1', createdAt: 10 }], nextCursor: null }
+        : { items: [{ id: 'F1', createdAt: 20 }], nextCursor: null },
+    );
+    const items = await client.listEverything();
+    expect(items.map((i) => i.id)).toEqual(['L2', 'F1', 'L1']);
+    expect(calls).toHaveLength(2);
+    expect(calls.some((c) => c.includes('kind=link'))).toBe(true);
+  });
+
+  it('asks for the trash once, since it already holds every kind', async () => {
+    const { calls, client } = make(() => ({ items: [], nextCursor: null }));
+    await client.listEverything({ trash: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toContain('trash=1');
   });
 });

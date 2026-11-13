@@ -41,10 +41,12 @@ function makeThumbnail(path: string): Buffer | null {
   }
 }
 
+// Shown as "From" in the file list. FATUP_DEVICE_NAME overrides it (handy for demos); "Tracys-MacBook-Air.local" becomes "Tracys-MacBook-Air".
+const DEVICE_NAME = (process.env.FATUP_DEVICE_NAME || hostname().replace(/\.local$/i, '')).slice(0, 64) || null;
+
 const uploads = new UploadManager({
   client: () => client(),
-  // Shown as "From" in the file list. FATUP_DEVICE_NAME overrides it (handy for demos); "Tracys-MacBook-Air.local" becomes "Tracys-MacBook-Air".
-  device: (process.env.FATUP_DEVICE_NAME || hostname().replace(/\.local$/i, '')).slice(0, 64) || null,
+  device: DEVICE_NAME,
   thumbnail: makeThumbnail,
   onChange: (jobs) => mainWindow?.webContents.send('uploads', jobs),
 });
@@ -234,7 +236,7 @@ function registerIpc() {
   ipcMain.handle(
     'list',
     guarded(async (): Promise<Item[]> => {
-      const items = await client().listAll();
+      const items = await client().listEverything();
       itemCache.clear();
       for (const it of items) itemCache.set(it.id, it);
       const downloaded = new Set(config.snapshot.downloaded);
@@ -244,17 +246,40 @@ function registerIpc() {
 
   ipcMain.handle(
     'listTrash',
-    guarded(async (): Promise<Item[]> => (await client().listAll({ trash: true })).map((it) => ({ ...it, downloaded: false }))),
+    guarded(async (): Promise<Item[]> => (await client().listEverything({ trash: true })).map((it) => ({ ...it, downloaded: false }))),
   );
 
   ipcMain.handle(
     'updateFile',
-    guarded(async (id: string, patch: { name?: string; tags?: TagColor[] }): Promise<Item> => {
+    guarded(async (id: string, patch: { name?: string; tags?: TagColor[]; url?: string }): Promise<Item> => {
       const item = await client().update(id, patch);
       itemCache.set(id, item);
       return { ...item, downloaded: config.snapshot.downloaded.includes(id) };
     }),
   );
+
+  ipcMain.handle(
+    'addLink',
+    guarded(async (url: string, title: string | undefined, vault: boolean | undefined): Promise<Item> => {
+      let item = await client().addLink({ url, title, device: DEVICE_NAME ?? undefined });
+      if (vault) item = await client().setVault(item.id, true);
+      itemCache.set(item.id, item);
+      return { ...item, downloaded: false };
+    }),
+  );
+
+  ipcMain.handle(
+    'previewLink',
+    guarded(async (id: string, force?: boolean): Promise<Item> => {
+      const item = await client().previewLink(id, force === true);
+      itemCache.set(id, item);
+      return { ...item, downloaded: false };
+    }),
+  );
+
+  ipcMain.handle('openExternal', async (_e, url: string) => {
+    if (unlocked && /^https?:\/\//i.test(url)) await shell.openExternal(url);
+  });
 
   ipcMain.handle('vaultOpen', (_e, pin: string): UnlockResult => {
     if (!unlocked) return { ok: false, reason: 'wrong', attemptsLeft: 0 };
@@ -269,7 +294,7 @@ function registerIpc() {
     if (!unlocked) return { ok: false, error: 'locked' };
     if (!vaultOpen) return { ok: false, error: 'vault_locked' };
     try {
-      const items = await client().listAll({ vault: true });
+      const items = await client().listEverything({ vault: true });
       for (const it of items) itemCache.set(it.id, it);
       const downloaded = new Set(config.snapshot.downloaded);
       return { ok: true, value: items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) })) };
