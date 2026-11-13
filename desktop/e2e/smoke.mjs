@@ -24,7 +24,10 @@ async function launch(lang = 'vi') {
   const app = await electron.launch({
     // FATUP_EXECUTABLE runs a packaged build (e.g. release/x/linux-unpacked/fatup) instead of out/.
     executablePath: process.env.FATUP_EXECUTABLE || require('electron'),
-    args: [...(process.env.FATUP_EXECUTABLE ? [] : [join(root, 'out/main/index.js')]), `--lang=${lang}`, '--no-sandbox'],
+    args: [...(process.env.FATUP_EXECUTABLE ? [] : [join(root, 'out/main/index.js')]), `--lang=${lang}`, '--no-sandbox',
+      // Under xvfb there is no window manager, so Chromium may treat the window as hidden/occluded and pause
+      // requestAnimationFrame, which Playwright's "stable" actionability check relies on.
+      '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows'],
     env: { ...process.env, FATUP_USER_DATA: userData, FATUP_DOWNLOAD_DIR: downloads },
   });
   const page = await app.firstWindow();
