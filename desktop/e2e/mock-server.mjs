@@ -46,6 +46,12 @@ export function startMockServer() {
     kind: mime.startsWith('image/') ? 'image' : 'file',
     device: i % 3 === 2 ? 'Galaxy Tab S9' : 'Pixel 8',
     createdAt: Math.round(now - ago),
+    deletedAt: null,
+    inVault: false,
+    tags: [],
+    url: null,
+    site: null,
+    previewed: false,
     img: mime.startsWith('image/') ? imageIndex++ : -1,
   }));
 
@@ -68,6 +74,8 @@ export function startMockServer() {
     if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(401, { error: { code: 'unauthorized', message: 'bad token' } });
     if (url.pathname === '/me') return send(200, { ok: true });
     if (url.pathname === '/files' && req.method === 'GET') {
+      // Links are only returned when asked for; this mock holds none.
+      if (url.searchParams.get('kind') === 'link') return send(200, { items: [], nextCursor: null });
       return send(200, {
         items: files.map(({ img, ...f }) => ({ ...f, thumbUrl: img >= 0 ? `${base}/thumb/${img}.svg` : null })),
         nextCursor: null,
