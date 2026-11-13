@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems, splitExt, matchesTags, cowsay } from '../src/renderer/src/lib/format';
+import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems, splitExt, matchesTags, cowsay, linkHost, matchesLink, matchesSite, siteCounts, inTab } from '../src/renderer/src/lib/format';
 import { dictionaries, errorText, resolveLocale } from '../src/renderer/src/lib/i18n';
 
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime();
@@ -155,5 +155,49 @@ describe('cowsay', () => {
     expect(lines[1]).toBe('< Rỗng túi >');
     expect(lines[2]).toBe(' ----------');
     expect(lines[4]).toBe('         \\  (oo)\\_______');
+  });
+});
+
+describe('links', () => {
+  const link = (url: string, name = 'T') => ({ kind: 'link' as const, name, url });
+
+  it('shows the host without www', () => {
+    expect(linkHost('https://www.example.com/a?b=1')).toBe('example.com');
+    expect(linkHost('https://m.facebook.com/x')).toBe('m.facebook.com');
+    expect(linkHost('garbage')).toBe('garbage');
+  });
+
+  it('searches a link by title and by address, ignoring accents', () => {
+    expect(matchesLink(link('https://a.com/cong-thuc', 'Món ngon'), 'mon ngon')).toBe(true);
+    expect(matchesLink(link('https://a.com/cong-thuc', 'Món ngon'), 'cong-thuc')).toBe(true);
+    expect(matchesLink(link('https://a.com/x', 'Món ngon'), 'zzz')).toBe(false);
+    expect(matchesLink(link('https://a.com/x'), '')).toBe(true);
+  });
+
+  it('filters and counts by site category', () => {
+    const items = [link('https://youtu.be/a'), link('https://www.youtube.com/b'), link('https://shopee.vn/c'), link('https://example.com')];
+    expect(items.filter((i) => matchesSite(i, 'youtube'))).toHaveLength(2);
+    expect(items.filter((i) => matchesSite(i, 'all'))).toHaveLength(4);
+    expect(siteCounts(items)).toEqual({ all: 4, facebook: 0, youtube: 2, instagram: 0, threads: 0, shopee: 1, tiktok: 0, internet: 1 });
+  });
+
+  it('keeps links out of the other tabs and everything else out of the link tab', () => {
+    expect(inTab({ kind: 'link' }, 'all')).toBe(false);
+    expect(inTab({ kind: 'link' }, 'file')).toBe(false);
+    expect(inTab({ kind: 'link' }, 'link')).toBe(true);
+    expect(inTab({ kind: 'image' }, 'all')).toBe(true);
+    expect(inTab({ kind: 'image' }, 'image')).toBe(true);
+    expect(inTab({ kind: 'image' }, 'link')).toBe(false);
+    expect(inTab({ kind: 'file' }, 'image')).toBe(false);
+  });
+
+  it('translates the new strings in both languages', () => {
+    for (const lang of ['en', 'vi'] as const) {
+      const t = dictionaries[lang];
+      expect(Object.keys(t.siteNames).sort()).toEqual(['facebook', 'instagram', 'internet', 'shopee', 'threads', 'tiktok', 'youtube']);
+      expect(t.tabLinks).toBeTruthy();
+      expect(errorText(t, 'duplicate_url')).not.toBe(t.err_generic);
+      expect(errorText(t, 'bad_url')).not.toBe(t.err_generic);
+    }
   });
 });

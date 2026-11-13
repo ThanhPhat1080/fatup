@@ -1,3 +1,4 @@
+import { SITE_CATEGORIES, siteOf, type SiteCategory } from '@fatup/shared';
 import type { Dict, Locale } from './i18n';
 
 export type DateGroup<T> = { key: string; label: string; items: T[] };
@@ -98,6 +99,39 @@ export function normalizeForSearch(s: string): string {
 export function matchesQuery(name: string, query: string): boolean {
   const q = normalizeForSearch(query.trim());
   return q === '' || normalizeForSearch(name).includes(q);
+}
+
+/** The host of a link as shown under its title: "https://www.example.com/a" becomes "example.com". */
+export function linkHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
+/** Links are found by title or by address. */
+export function matchesLink(item: { name: string; url: string | null }, query: string): boolean {
+  return matchesQuery(item.name, query) || (item.url !== null && matchesQuery(item.url, query));
+}
+
+export type SiteFilter = SiteCategory | 'all';
+
+export function matchesSite(item: { url: string | null }, site: SiteFilter): boolean {
+  return site === 'all' || (item.url !== null && siteOf(item.url) === site);
+}
+
+export function siteCounts(items: { url: string | null }[]): Record<SiteFilter, number> {
+  const counts = { all: items.length, ...Object.fromEntries(SITE_CATEGORIES.map((s) => [s, 0])) } as Record<SiteFilter, number>;
+  for (const it of items) if (it.url !== null) counts[siteOf(it.url)]++;
+  return counts;
+}
+
+/** Links only appear in their own tab; All, Photos and Files stay about files. */
+export function inTab(item: { kind: string }, tab: 'all' | 'image' | 'file' | 'link'): boolean {
+  if (tab === 'link') return item.kind === 'link';
+  if (item.kind === 'link') return false;
+  return tab === 'all' || item.kind === tab;
 }
 
 export type FileVisual = 'image' | 'pdf' | 'doc' | 'sheet' | 'slide' | 'archive' | 'video' | 'audio' | 'text' | 'other';

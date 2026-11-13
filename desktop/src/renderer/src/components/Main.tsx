@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Download, LayoutGrid, List, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Trash2, Upload, UploadCloud, X } from 'lucide-react';
+import { ArrowLeft, Download, LayoutGrid, Link2, List, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Trash2, Upload, UploadCloud, X } from 'lucide-react';
 import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shared-ipc';
-import { DEFAULT_QUOTA_BYTES, type TagColor } from '@fatup/shared';
-import { DEFAULT_SORT, groupByDay, matchesQuery, matchesTags, singleGroup, sortItems, type SortKey, type SortState } from '../lib/format';
+import { DEFAULT_QUOTA_BYTES, SITE_CATEGORIES, type TagColor } from '@fatup/shared';
+import { DEFAULT_SORT, groupByDay, inTab, matchesLink, matchesQuery, matchesSite, matchesTags, singleGroup, siteCounts, sortItems, type SiteFilter, type SortKey, type SortState } from '../lib/format';
 import { errorText, useI18n } from '../lib/i18n';
+import { AddLinkDialog } from './AddLinkDialog';
 import { ConfirmDialog } from './Dialog';
 import { EmptyState, FileGrid, FileList } from './Files';
 import { Lightbox } from './Lightbox';
@@ -15,12 +16,16 @@ import { TrashIcon } from './TrashIcon';
 import { InfoPopover } from './InfoPopover';
 import { VaultGate } from './VaultGate';
 import { StorageMeter } from './StorageMeter';
-import { EditPopover, TagFilter } from './Tags';
+import { SiteBadge } from './SiteBadge';
+import { EditPopover, LinkEditPopover, TagFilter } from './Tags';
 import { useToast } from './Toast';
 import { UploadPanel } from './UploadPanel';
 
 const POLL_MS = 60_000;
 const FOCUS_REFRESH_MIN_GAP_MS = 5_000;
+/** Previews are fetched when the app opens, newest links first, a couple at a time and not more than this many per session. */
+const PREVIEW_BUDGET = 20;
+const PREVIEW_PARALLEL = 2;
 
 export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (p: Partial<Prefs>) => void; onLocked: () => void }) {
   const { t, locale } = useI18n();
@@ -33,6 +38,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [editing, setEditing] = useState<{ id: string; anchor: DOMRect } | null>(null);
   const [tagFilter, setTagFilter] = useState<TagColor[]>([]);
+  const [siteFilter, setSiteFilter] = useState<SiteFilter>('all');
+  const [addingLink, setAddingLink] = useState(false);
   const [lightboxId, setLightboxId] = useState<string | null>(null);
   const [trashItems, setTrashItems] = useState<Item[] | null>(null);
   const [inTrash, setInTrash] = useState(false);
@@ -125,10 +132,19 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     [inTrash, inVault, trashItems, vaultItems, items],
   );
   const loaded = inTrash ? trashItems !== null : inVault ? vaultItems !== null : items !== null;
+  const linkTab = tab === 'link' && !inTrash;
   const visible = useMemo(
-    () => source.filter((it) => (inTrash || tab === 'all' || it.kind === tab) && matchesQuery(it.name, query) && matchesTags(it.tags, tagFilter)),
-    [source, inTrash, tab, query, tagFilter],
+    () =>
+      source.filter(
+        (it) =>
+          (inTrash || inTab(it, tab)) &&
+          (it.kind === 'link' ? matchesLink(it, query) : matchesQuery(it.name, query)) &&
+          matchesTags(it.tags, tagFilter) &&
+          (!linkTab || matchesSite(it, siteFilter)),
+      ),
+    [source, inTrash, tab, query, tagFilter, linkTab, siteFilter],
   );
+  const counts = useMemo(() => siteCounts(source.filter((it) => it.kind === 'link')), [source]);
   const sorted = useMemo(() => sortItems(visible, sort), [visible, sort]);
   // Day headings only make sense when ordered by upload time.
   const groups = useMemo(
@@ -190,6 +206,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     if (inVault) leaveVault();
     setInTrash(false);
     setTab('all');
+    setSiteFilter('all');
     setQuery('');
     setSettingsOpen(false);
     setLightboxId(null);
@@ -399,6 +416,89 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     refresh();
   }
 
+  /** Swaps in the server's copy of an item (after a preview or an edit) wherever it is listed. */
+  const applyItem = useCallback((next: Item) => {
+    const swap = (list: Item[] | null) => list?.map((it) => (it.id === next.id ? { ...next, downloaded: it.downloaded } : it)) ?? null;
+    setItems(swap);
+    setVaultItems(swap);
+  }, []);
+
+  // Previews: fetched by the server the first time a link is seen here, not when it is saved.
+  const previewed = useRef(new Set<string>());
+  const previewBudget = useRef(PREVIEW_BUDGET);
+  const previewing = useRef(false);
+  const previewNow = useCallback(
+    async (id: string, force = false) => {
+      const res = await window.fatup.previewLink(id, force);
+      if (res.ok) applyItem(res.value);
+      else if (res.error === 'locked') onLocked();
+      return res;
+    },
+    [applyItem, onLocked],
+  );
+  useEffect(() => {
+    if (items === null || previewing.current) return;
+    const queue = [...items, ...(vaultActive ? (vaultItems ?? []) : [])]
+      .filter((it) => it.kind === 'link' && !it.previewed && !previewed.current.has(it.id))
+      .slice(0, previewBudget.current);
+    if (queue.length === 0) return;
+    for (const it of queue) previewed.current.add(it.id);
+    previewBudget.current -= queue.length;
+    previewing.current = true;
+    let next = 0;
+    const worker = async () => {
+      while (next < queue.length) await previewNow(queue[next++].id);
+    };
+    void Promise.all(Array.from({ length: PREVIEW_PARALLEL }, worker)).finally(() => {
+      previewing.current = false;
+    });
+  }, [items, vaultItems, vaultActive, previewNow]);
+
+  /** Saves a link's title and/or address. Resolves to an error code (so the popover can say why), or null when stored. */
+  async function saveLink(item: Item, patch: { name?: string; url?: string }): Promise<string | null> {
+    const res = await window.fatup.updateFile(item.id, patch);
+    if (!res.ok) {
+      if (res.error === 'locked') onLocked();
+      return res.error;
+    }
+    applyItem(res.value);
+    if (patch.url) {
+      previewed.current.add(item.id);
+      void previewNow(item.id);
+    }
+    return null;
+  }
+
+  async function addLink(url: string, title: string): Promise<string | null> {
+    const res = await window.fatup.addLink(url, title || undefined, vaultActive);
+    if (!res.ok) {
+      if (res.error === 'locked') onLocked();
+      return res.error;
+    }
+    setAddingLink(false);
+    setTab('link');
+    setSiteFilter('all');
+    const added = res.value;
+    const put = (list: Item[] | null) => (list ? [added, ...list.filter((it) => it.id !== added.id)] : list);
+    if (vaultActive) setVaultItems(put);
+    else setItems(put);
+    toast(t.linkAdded);
+    if (!added.previewed) {
+      previewed.current.add(added.id);
+      void previewNow(added.id);
+    }
+    return null;
+  }
+
+  async function copyLink(item: Item) {
+    try {
+      await navigator.clipboard.writeText(item.url ?? '');
+      toast(t.linkCopied);
+    } catch {
+      toast(t.err_generic, true);
+    }
+  }
+
   const closeEditor = useCallback(() => setEditing(null), []);
   const editItem = editing ? [...(items ?? []), ...(vaultItems ?? [])].find((it) => it.id === editing.id) ?? null : null;
   const openEditor = (item: Item, anchor: DOMRect) => setEditing((cur) => (cur?.id === item.id ? null : { id: item.id, anchor }));
@@ -429,7 +529,12 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   }, [lightboxId, settingsOpen, menu, confirm, picked, inTrash, inVault, vaultUnlocked, selectAll, clearSelection]);
 
   // Trashed files can't be opened; restore them first.
-  const open = (item: Item) => (inTrash ? undefined : item.kind === 'image' ? setLightboxId(item.id) : download(item));
+  const open = (item: Item) => {
+    if (inTrash) return;
+    if (item.kind === 'link') void window.fatup.openExternal(item.url ?? '');
+    else if (item.kind === 'image') setLightboxId(item.id);
+    else void download(item);
+  };
   const openMenu = (item: Item, x: number, y: number) => setMenu({ item, x, y });
 
   // "← Vault", the same header the Trash has.
@@ -446,6 +551,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     { id: 'all', label: t.tabAll },
     { id: 'image', label: t.tabImages },
     { id: 'file', label: t.tabFiles },
+    { id: 'link', label: t.tabLinks },
   ];
 
   return (
@@ -472,6 +578,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               <span className="upload-btn__label">{t.upload}</span>
             </button>
           )}
+          <button className="icon-btn" onClick={() => setAddingLink(true)} title={t.addLink} aria-label={t.addLink}>
+            <Link2 size={22} />
+          </button>
           <button key={shiver} className={`icon-btn${inVault ? ' is-active' : ''}${shiver > 0 ? ' vault-btn--shiver' : ''}`} onClick={toggleVault} title={inVault ? t.closeVault : t.vault} aria-label={inVault ? t.closeVault : t.vault} aria-pressed={inVault}>
             <VaultIcon size={26} />
           </button>
@@ -515,9 +624,11 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
                 <button className="btn btn--text" onClick={() => void (vaultActive ? removeFromVault(picked) : moveToVault(picked))}>
                   <VaultIcon size={18} /> {vaultActive ? t.removeFromVault : t.moveToVault}
                 </button>
-                <button className="btn btn--outlined" onClick={() => void downloadMany(picked)}>
-                  <Download size={18} /> {t.downloadAll}
-                </button>
+                {picked.some((it) => it.kind !== 'link') && (
+                  <button className="btn btn--outlined" onClick={() => void downloadMany(picked.filter((it) => it.kind !== 'link'))}>
+                    <Download size={18} /> {t.downloadAll}
+                  </button>
+                )}
                 <button className="btn btn--text btn--danger-text" onClick={() => void moveToTrash(picked)}>
                   <Trash2 size={18} /> {t.moveToTrash}
                 </button>
@@ -570,6 +681,24 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           </div>
         )}
 
+        {linkTab && picked.length === 0 && (
+          <nav className="site-chips" aria-label={t.tabLinks}>
+            {(['all', ...SITE_CATEGORIES] as SiteFilter[]).map((site) => (
+              <button
+                key={site}
+                className={`chip chip--site ${siteFilter === site ? 'chip--on' : ''}`}
+                aria-pressed={siteFilter === site}
+                title={site === 'all' ? t.allSites : t.filterBySite(t.siteNames[site])}
+                onClick={() => setSiteFilter(site)}
+              >
+                {site !== 'all' && <SiteBadge site={site} size={16} />}
+                {site === 'all' ? t.allSites : t.siteNames[site]}
+                <span className="chip__count">{counts[site]}</span>
+              </button>
+            ))}
+          </nav>
+        )}
+
         {error && (
           <div className="banner" role="alert">
             {error}
@@ -583,7 +712,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           {!loaded ? (
             <div className="skeleton" aria-busy />
           ) : visible.length === 0 ? (
-            <EmptyState searching={(query !== '' || tagFilter.length > 0) && source.length > 0} trash={inTrash} vault={vaultActive} />
+            <EmptyState searching={(query !== '' || tagFilter.length > 0 || (linkTab && siteFilter !== 'all')) && source.length > 0} trash={inTrash} vault={vaultActive} links={linkTab} />
           ) : view === 'grid' ? (
             <FileGrid groups={groups} selected={selected} onToggle={toggle} onOpen={open} onMenu={openMenu} onEdit={inTrash ? undefined : openEditor} />
           ) : (
@@ -616,6 +745,12 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           onDelete={(it) => void moveToTrash([it])}
           onVault={(it) => void (vaultActive ? removeFromVault([it]) : moveToVault([it]))}
           inVault={vaultActive}
+          link={{
+            onOpen: open,
+            onCopy: (it) => void copyLink(it),
+            onEdit: (it, x, y) => openEditor(it, new DOMRect(x, y, 0, 0)),
+            onReload: (it) => void previewNow(it.id, true),
+          }}
           trash={inTrash ? { onRestore: (it) => void restoreMany([it]), onForever: (it) => setConfirm({ kind: 'forever', items: [it] }) } : undefined}
         />
       )}
@@ -673,7 +808,18 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           <p>{t.dropToUpload}</p>
         </div>
       )}
-      {editing && editItem && (
+      {editing && editItem && editItem.kind === 'link' && (
+        <LinkEditPopover
+          key={editItem.id}
+          item={editItem}
+          anchor={editing.anchor}
+          onClose={closeEditor}
+          onSave={(patch) => saveLink(editItem, patch)}
+          onError={(code) => toast(errorText(t, code), true)}
+          onTags={(tags) => void updateFile(editItem, { tags })}
+        />
+      )}
+      {editing && editItem && editItem.kind !== 'link' && (
         <EditPopover
           key={editItem.id}
           item={editItem}
@@ -683,6 +829,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           onTags={(tags) => void updateFile(editItem, { tags })}
         />
       )}
+      {addingLink && <AddLinkDialog onClose={() => setAddingLink(false)} onAdd={addLink} />}
       {toastNode}
     </div>
   );
