@@ -1,4 +1,4 @@
-import type { TagColor, CreateLinkRequest, CreateUploadRequest, CreateUploadResponse, DownloadResponse, EmptyTrashResponse, UsageResponse, FileItem, ListFilesResponse } from '@fatup/shared';
+import type { TagColor, PreviewResponse, CreateLinkRequest, CreateUploadRequest, CreateUploadResponse, DownloadResponse, EmptyTrashResponse, UsageResponse, FileItem, ListFilesResponse } from '@fatup/shared';
 
 export class ApiError extends Error {
   constructor(
@@ -81,9 +81,9 @@ export class ApiClient {
     return this.request('/links', { method: 'POST', body: JSON.stringify(req) });
   }
 
-  /** Asks the server to fetch a link's title and image; `force` fetches again even if it already tried. */
-  previewLink(id: string, force = false): Promise<FileItem> {
-    return this.request(`/links/${encodeURIComponent(id)}/preview${force ? '?force=1' : ''}`, { method: 'POST' });
+  /** Asks the server to read a link's page: its title is filled in, and the address of its picture comes back (the picture itself is the client's to fetch and keep). */
+  previewLink(id: string): Promise<PreviewResponse> {
+    return this.request(`/links/${encodeURIComponent(id)}/preview`, { method: 'POST' });
   }
 
   async downloadUrl(id: string): Promise<string> {

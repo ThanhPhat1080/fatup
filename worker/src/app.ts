@@ -250,23 +250,19 @@ export function createApp(options: AppOptions = {}) {
     return c.json(await toItem(row, c.get('presigner')), 201);
   });
 
-  // Fetches a link's title and image the first time it is asked for (when the app opens), or again with ?force=1.
+  // Reads the page for its title and the address of its picture. It does not fetch or store the picture and it does not remember
+  // having tried: each client keeps its own copy of the picture and asks again only when it has none.
   app.post('/links/:id/preview', async (c) => {
     const id = c.req.param('id');
     const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND kind = 'link' AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
     if (!row || !row.url) return fail(c, 404, 'not_found', 'Link not found');
     const presigner = c.get('presigner');
-    if (row.previewed_at !== null && c.req.query('force') !== '1') return c.json(await toItem(row, presigner));
 
     const found = await fetchPreview(row.url, options.fetch);
     const next: Row = { ...row, previewed_at: Date.now() };
     if (found.title && !row.title_set) next.name = found.title;
-    if (found.image) {
-      await c.env.BUCKET.put(thumbKey(id), found.image.bytes, { httpMetadata: { contentType: 'image/jpeg' } });
-      next.has_thumb = 1;
-    }
-    await c.env.DB.prepare('UPDATE files SET name = ?, has_thumb = ?, previewed_at = ? WHERE id = ?').bind(next.name, next.has_thumb, next.previewed_at, id).run();
-    return c.json(await toItem(next, presigner));
+    await c.env.DB.prepare('UPDATE files SET name = ?, previewed_at = ? WHERE id = ?').bind(next.name, next.previewed_at, id).run();
+    return c.json({ ...(await toItem(next, presigner)), previewImage: found.imageUrl });
   });
 
   app.get('/files', async (c) => {

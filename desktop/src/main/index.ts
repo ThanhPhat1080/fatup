@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, safeStorage, shell } from 'electron';
 import { hostname } from 'node:os';
 import { createWriteStream, existsSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,10 +13,14 @@ import { ApiClient, ApiError, normalizeServerUrl } from './api';
 import { ConfigStore } from './config';
 import { uniqueFileName } from './filename';
 import { checkPin, hashPin, isValidPin } from './pin';
+import { PreviewCache, fetchPicture } from '../preview-cache';
+import { FilePreviewStore, PREVIEW_SCHEME } from './previews';
 import { UploadManager } from './uploader';
 import { fetchLatestRelease, isNewer, type ReleaseInfo } from './updater';
 
 if (process.env.FATUP_USER_DATA) app.setPath('userData', process.env.FATUP_USER_DATA);
+// Cached link pictures are loaded by the renderer as fatup-preview://p/<id>; the scheme has to be declared before the app is ready.
+protocol.registerSchemesAsPrivileged([{ scheme: PREVIEW_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 let config: ConfigStore;
 let unlocked = false;
@@ -25,6 +29,9 @@ let vaultOpen = false;
 let mainWindow: BrowserWindow | null = null;
 const itemCache = new Map<string, FileItem>();
 let pendingRelease: ReleaseInfo | null = null;
+let previewFiles: FilePreviewStore;
+/** Link pictures kept on this device (the server only names their address). */
+let previews: PreviewCache;
 
 const THUMB_EDGE = 400;
 /** 400px JPEG preview, same as the Android app. Returns null for formats Electron can't decode. */
@@ -210,12 +217,13 @@ function registerIpc() {
     itemCache.clear();
   });
 
-  ipcMain.handle('reset', () => {
+  ipcMain.handle('reset', async () => {
     vaultOpen = false;
     uploads.cancelAll();
     config.reset();
     unlocked = false;
     itemCache.clear();
+    await previews.clear(); // pictures of the old account's links must not outlive the connection
   });
 
   ipcMain.handle('changePin', (_e, oldPin: string, newPin: string): UnlockResult => {
@@ -240,13 +248,13 @@ function registerIpc() {
       itemCache.clear();
       for (const it of items) itemCache.set(it.id, it);
       const downloaded = new Set(config.snapshot.downloaded);
-      return items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) }));
+      return previews.decorate(items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) })));
     }),
   );
 
   ipcMain.handle(
     'listTrash',
-    guarded(async (): Promise<Item[]> => (await client().listEverything({ trash: true })).map((it) => ({ ...it, downloaded: false }))),
+    guarded(async (): Promise<Item[]> => previews.decorate((await client().listEverything({ trash: true })).map((it) => ({ ...it, downloaded: false })))),
   );
 
   ipcMain.handle(
@@ -254,7 +262,8 @@ function registerIpc() {
     guarded(async (id: string, patch: { name?: string; tags?: TagColor[]; url?: string }): Promise<Item> => {
       const item = await client().update(id, patch);
       itemCache.set(id, item);
-      return { ...item, downloaded: config.snapshot.downloaded.includes(id) };
+      if (patch.url) await previews.forget([id]); // the old picture belongs to the old address
+      return (await previews.decorate([{ ...item, downloaded: config.snapshot.downloaded.includes(id) }]))[0];
     }),
   );
 
@@ -264,16 +273,17 @@ function registerIpc() {
       let item = await client().addLink({ url, title, device: DEVICE_NAME ?? undefined });
       if (vault) item = await client().setVault(item.id, true);
       itemCache.set(item.id, item);
-      return { ...item, downloaded: false };
+      return (await previews.decorate([{ ...item, downloaded: false }]))[0];
     }),
   );
 
   ipcMain.handle(
     'previewLink',
     guarded(async (id: string, force?: boolean): Promise<Item> => {
-      const item = await client().previewLink(id, force === true);
+      const res = await client().previewLink(id);
+      const { previewImage: _address, ...item } = res;
       itemCache.set(id, item);
-      return { ...item, downloaded: false };
+      return previews.learn(res, force === true);
     }),
   );
 
@@ -297,7 +307,7 @@ function registerIpc() {
       const items = await client().listEverything({ vault: true });
       for (const it of items) itemCache.set(it.id, it);
       const downloaded = new Set(config.snapshot.downloaded);
-      return { ok: true, value: items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) })) };
+      return { ok: true, value: await previews.decorate(items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) }))) };
     } catch (err) {
       return fail(err);
     }
@@ -308,6 +318,7 @@ function registerIpc() {
     if (!inVault && !vaultOpen) return { ok: false, error: 'vault_locked' };
     try {
       await client().setVault(id, inVault);
+      if (inVault) await previews.forget([id]); // the Vault leaves no pictures on the device
       return { ok: true, value: undefined };
     } catch (err) {
       return fail(err);
@@ -379,12 +390,20 @@ function registerIpc() {
 
   ipcMain.handle(
     'removeForever',
-    guarded(async (id: string) => client().removeForever(id)),
+    guarded(async (id: string) => {
+      await client().removeForever(id);
+      await previews.forget([id]);
+    }),
   );
 
   ipcMain.handle(
     'emptyTrash',
-    guarded(async () => client().emptyTrash()),
+    guarded(async () => {
+      const inTrash = await client().listEverything({ trash: true }).catch(() => []);
+      const count = await client().emptyTrash();
+      await previews.forget(inTrash.filter((it) => it.kind === 'link').map((it) => it.id));
+      return count;
+    }),
   );
 
   ipcMain.handle('pairingQr', async (_e, pin: string) => {
@@ -436,6 +455,15 @@ function createWindow() {
 
 app.whenReady().then(() => {
   config = new ConfigStore(join(app.getPath('userData'), 'config.json'), safeStorage);
+  previewFiles = new FilePreviewStore(join(app.getPath('userData'), 'previews'));
+  // The end-to-end test serves its pictures from localhost, which is otherwise refused.
+  const allowed = process.env.FATUP_E2E_LOCAL_PREVIEWS === '1' ? (u: string) => u.startsWith('http://127.0.0.1:') : undefined;
+  previews = new PreviewCache(previewFiles, { fetchPicture: (url) => fetchPicture(url, undefined, allowed) });
+  protocol.handle(PREVIEW_SCHEME, async (req) => {
+    const got = await previewFiles.read(new URL(req.url).pathname.slice(1));
+    if (!got) return new Response('not found', { status: 404 });
+    return new Response(new Uint8Array(got.bytes), { headers: { 'content-type': got.type, 'cache-control': 'max-age=31536000, immutable' } });
+  });
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null);
   nativeTheme.themeSource = config.snapshot.prefs.theme ?? 'system';
   registerIpc();

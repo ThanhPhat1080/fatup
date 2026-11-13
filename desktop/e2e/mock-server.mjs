@@ -80,6 +80,9 @@ export function startMockServer() {
     previewed: true,
   }));
 
+  // A valid 1x1 PNG, served as the preview picture of every link except the last (Shopee), which has none.
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+
   const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     const send = (status, body, type = 'application/json') => {
@@ -90,6 +93,10 @@ export function startMockServer() {
 
     let m;
     if ((m = /^\/thumb\/(\d+)\.svg$/.exec(url.pathname))) return send(200, svg(Number(m[1])), 'image/svg+xml');
+    if (/^\/pic\/\w+\.png$/.test(url.pathname)) {
+      res.writeHead(200, { 'Content-Type': 'image/png' });
+      return res.end(png);
+    }
     if ((m = /^\/raw\/(\w+)$/.exec(url.pathname))) {
       const f = files.find((x) => x.id === m[1]);
       if (!f) return send(404, 'gone', 'text/plain');
@@ -105,6 +112,11 @@ export function startMockServer() {
         items: files.map(({ img, ...f }) => ({ ...f, thumbUrl: img >= 0 ? `${base}/thumb/${img}.svg` : null })),
         nextCursor: null,
       });
+    }
+    if ((m = /^\/links\/(\w+)\/preview$/.exec(url.pathname)) && req.method === 'POST') {
+      const link = links.find((x) => x.id === m[1]);
+      if (!link) return send(404, { error: { code: 'not_found', message: 'nope' } });
+      return send(200, { ...link, thumbUrl: null, previewed: true, previewImage: link.site === 'shopee' ? null : `${base}/pic/${link.id}.png` });
     }
     if ((m = /^\/files\/(\w+)\/download$/.exec(url.pathname))) return send(200, { url: `${base}/raw/${m[1]}` });
     if ((m = /^\/files\/(\w+)$/.exec(url.pathname)) && req.method === 'DELETE') {

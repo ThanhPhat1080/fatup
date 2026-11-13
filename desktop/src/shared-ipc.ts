@@ -78,7 +78,7 @@ export type FatupApi = {
   addLink(url: string, title?: string, vault?: boolean): Promise<Result<Item>>;
   /** Web only: a link that arrived through the Android share sheet while the app was locked. Returned once; `url` is empty when the share held no link. */
   takePendingLink?(): Promise<{ url: string; title?: string } | null>;
-  /** Has the server fetch a link's title and image (once, or again with `force`). */
+  /** Has the server read a link's page for its title, and keeps the link's picture on this device (fetched when there is none, or again with `force`). Returns the link ready to show. */
   previewLink(id: string, force?: boolean): Promise<Result<Item>>;
   /** Opens an http(s) address in the system browser. */
   openExternal(url: string): Promise<void>;
