@@ -443,7 +443,7 @@ Android share target, app desktop (xem, tải lên, tải về, tìm kiếm, s�
 Mục tiêu: bản web đủ dùng để **thay thế việc cài app** trên Android, máy tính hoặc iOS, với giao diện giống hệt app desktop.
 
 - **Đã làm:** upload từ web ([10.1](#101-upload-từ-web)), giao diện điện thoại ([10.2](#102-giao-diện-điện-thoại)), CORS cho R2 (`npm run r2:cors`), **liên kết/bookmark** (share từ Android và PWA, nút Thêm liên kết, [mục 4.1](#41-liên-kết-bookmark), [9.2c](#92c-liên-kết)).
-- **Chưa làm:** nhận **file** khi Chia sẻ vào PWA (Web Share Target mới nhận link), nút "Cài FatUp" và hướng dẫn cài iOS, icon maskable, màn hình offline.
+- **Chưa làm:** nhận **file** khi Chia sẻ vào PWA (Web Share Target mới nhận link), nút "Cài FatUp" và hướng dẫn cài iOS, màn hình offline. Icon PWA có cả bản `any` (hình vuông bo góc, nền trong) và bản `maskable` (gradient phủ kín, mũi tên trong vùng an toàn 80%) để Android cắt tròn mà không thấy nền trắng; vẽ lại bằng `node web/scripts/pwa-icons.mjs`.
 - **Cần kiểm tra trên thiết bị thật:** cảm ứng (giữ lâu, chụm, vuốt) và upload qua mạng di động. Phần này mới được thử bằng giả lập.
 
 ### Hướng mở rộng khác

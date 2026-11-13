@@ -4,6 +4,11 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [Chưa phát hành]
+
+### Sửa
+- **Icon PWA trên Android:** trước đây icon là hình vuông bo góc nằm trên nền tròn trắng (Android tự thêm vì icon chưa khai báo `maskable`). Giờ có thêm icon maskable phủ kín gradient, nên trên màn hình chính icon là hình tròn gradient với mũi tên ở giữa. `apple-touch-icon` cũng được vẽ phủ kín (iOS tự bo góc và tô đen phần trong suốt). Android cập nhật icon của PWA đã cài trong vòng vài ngày; muốn thấy ngay thì gỡ rồi cài lại.
+
 ## [0.3.1] — 2026-11-13
 
 ### Thêm
