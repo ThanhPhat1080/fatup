@@ -4,11 +4,14 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
-## [Chưa phát hành]
+## [0.2.1] — 2026-11-13
 
 ### Thêm
 
 - **Liên kết X:** link từ `x.com`, `twitter.com` và link rút gọn `t.co` được nhận là loại **X** (chip lọc và huy hiệu riêng). Link X đã lưu trước đây (đang ở Internet) tự chuyển sang loại mới, không cần migrate vì loại được tính khi đọc. Xem trước của X thường trống (trang đòi đăng nhập hoặc render bằng JavaScript) nên sẽ hiện con bò.
+
+### Nâng cấp
+Không có migration. Trong `worker/` chỉ cần `npm run deploy` (cần vì code dùng chung `shared` đổi). Cập nhật app desktop (hoặc tải lại bản web) để thấy chip và huy hiệu X; Android không phân loại link nên không đổi; link X đã lưu tự chuyển loại.
 
 ## [0.2.0] — 2026-11-13
 
