@@ -102,7 +102,7 @@ ALTER TABLE files ADD COLUMN tags TEXT NOT NULL DEFAULT '';          -- tên mà
 
 -- 0005_links.sql: dựng lại bảng (SQLite không sửa được CHECK) để kind nhận thêm 'link', cộng 3 cột:
 --   url TEXT                       -- địa chỉ đã chuẩn hóa của link, NULL với file
---   previewed_at INTEGER           -- lần thử tải xem trước (kể cả thất bại), NULL = chưa thử
+--   previewed_at INTEGER           -- lần cuối server đọc trang để xem trước (kể cả thất bại), NULL = chưa; client không dựa vào cột này
 --   title_set INTEGER NOT NULL DEFAULT 0  -- 1 = tiêu đề do người dùng/share sheet đặt, xem trước không được ghi đè
 ```
 
@@ -153,12 +153,12 @@ Phân trang dùng cursor `<sortValue>_<id>`, với `sortValue` là `created_at` 
 
 ### 4.1 Liên kết (bookmark)
 
-Một link là một row `files` với `kind = 'link'`, `mime = 'text/uri-list'`, `size = 0` (không tính vào dung lượng), `status = 'ready'`, `name` là tiêu đề, `url` là địa chỉ. Không có object `files/<id>` trên R2; ảnh xem trước (nếu có) lưu ở `thumbs/<id>.jpg`. `FileItem` có thêm `url`, `site` (`facebook | youtube | instagram | threads | shopee | tiktok | internet`, tính từ `url` bằng `siteOf` ở `shared/`) và `previewed`.
+Một link là một row `files` với `kind = 'link'`, `mime = 'text/uri-list'`, `size = 0` (không tính vào dung lượng), `status = 'ready'`, `name` là tiêu đề, `url` là địa chỉ. Không có object `files/<id>` trên R2. Ảnh xem trước **không còn được lưu trên server** (từ bản này): mỗi thiết bị tự tải và giữ ảnh ([9.2c](#92c-liên-kết)); link cũ vẫn dùng `thumbs/<id>.jpg` đã có trên R2 (`thumbUrl`). `FileItem` có thêm `url`, `site` (`facebook | youtube | instagram | threads | shopee | tiktok | internet`, tính từ `url` bằng `siteOf` ở `shared/`) và `previewed`.
 
 | Method | Path | Mô tả |
 |---|---|---|
 | `POST` | `/links` | Body `{ url, title?, device? }`. Chỉ nhận `http`/`https`, tối đa 2048 ký tự; chuẩn hóa URL (bỏ fragment, hạ chữ thường tên miền). URL đã có link **không ở thùng rác** thì trả bản cũ (200), không tạo bản sao. Có `title` thì `title_set = 1`, không thì tên = tên miền. 201 khi tạo mới. Lỗi: `400 bad_url`. |
-| `POST` | `/links/:id/preview` | Worker tải trang đích (timeout 4 giây, tối đa 3 lần redirect, đọc ≤ 512 KB HTML, ảnh ≤ 1,5 MB và phải là `image/*`, từ chối localhost/IP nội bộ) rồi cập nhật tên (chỉ khi `title_set = 0`) và ảnh. YouTube và TikTok dùng oEmbed. Không bao giờ lỗi vì trang đích: luôn đặt `previewed_at`. Chỉ tải một lần; `?force=1` để tải lại. |
+| `POST` | `/links/:id/preview` | Worker đọc trang đích (timeout 6 giây, tối đa 3 lần redirect, đọc ≤ 512 KB HTML, từ chối localhost/IP nội bộ) rồi cập nhật tên (chỉ khi `title_set = 0`) và trả `PreviewResponse` = link + `previewImage` (địa chỉ tuyệt đối, công khai của `og:image`/thumbnail oEmbed, hoặc `null`). **Không tải và không lưu ảnh, không ghi R2.** YouTube và TikTok dùng oEmbed. Không bao giờ lỗi vì trang đích. Gọi lần nào cũng đọc lại trang (client quyết định khi nào cần); vẫn đặt `previewed_at`. `?force=1` không còn tác dụng. |
 | `PATCH` | `/files/:id` | Với link nhận thêm `url`: đổi URL thì xóa xem trước (`previewed_at = NULL`, xóa `thumbs/<id>.jpg`), tên quay về tên miền mới nếu `title_set = 0`. Đổi `name` đặt `title_set = 1`. URL trùng link khác: `409 duplicate_url`. Gửi `url` cho file thường: `400`. |
 
 - `GET /files?kind=all` **không trả link** (để bản app cũ không thấy chúng); lấy link bằng `kind=link` (kết hợp được với `vault=1`). Thùng rác trả mọi loại.
@@ -285,10 +285,12 @@ Một khu vực để **cất file ra khỏi danh sách chính**, chỉ xem đư
 
 - **Tab Liên kết** cạnh Tất cả/Ảnh/File. Tất cả/Ảnh/File chỉ gồm file. Tab Liên kết có chế độ xem riêng (mặc định danh sách) và hàng lọc nền tảng: nút **Tất cả**, icon **Internet**, **YouTube**, **X**, **Threads** (luôn hiện), một đường kẻ dọc, rồi nút **chia sẻ** (icon Share2, to hơn hộp thẻ màu); bấm nút thì các nền tảng còn lại (Facebook, Instagram, Shopee, TikTok) nhảy ra bên phải, bấm lần nữa thì nhảy vào. Chỉ có icon, không chữ; tên và số lượng hiện khi rê chuột. Bấm lại nền tảng đang chọn thì bỏ lọc; đóng hộp không bỏ lọc (nút hiện logo nền tảng đang chọn). Kết hợp được với lọc màu và ô tìm kiếm (theo tiêu đề và URL). Icon là logo thật (Simple Icons, CC0; logo là nhãn hiệu của chủ sở hữu), chép thành đường vẽ SVG trong `siteLogos.ts`; Internet là quả địa cầu. Logo màu đen dùng màu chữ để vẫn thấy ở chế độ tối.
 - Mỗi link ở **dạng lưới**: logo nền tảng trước tiêu đề, ảnh xem trước, chấm màu; **không có ảnh thì hiện con bò cowsay SVG nhỏ** (`CowThumb`), con bò chỉ có ở dạng lưới. Ở **dạng danh sách**: cột **Nguồn** (logo, ngay sau checkbox, bấm tiêu đề cột để sắp xếp theo tên nền tảng A→Z, cùng nền tảng thì theo tên), tiêu đề, thời gian, chấm màu; không có con bò và không in tên miền sau tiêu đề (rê chuột vào tiêu đề để xem URL).
+- **Nút copy trên từng link:** biểu tượng sao chép cạnh bút chì, bấm một cái là chép URL và báo "Đã sao chép link". Dạng danh sách: luôn hiện. Dạng lưới: hiện khi rê chuột hoặc focus, nổi đè lên đuôi tên (không chiếm chỗ của tên); màn hình cảm ứng thì luôn hiện. Không có trong thùng rác.
 - **Bấm vào link** mở URL ở tab mới (desktop: trình duyệt mặc định, chỉ `http`/`https`). Menu `⋮`/chuột phải: Mở liên kết, Sao chép link, **Sửa liên kết**, Tải lại xem trước, Chuyển vào Két sắt, Chuyển vào thùng rác. "Tải tất cả" bỏ qua link.
 - **Sửa liên kết:** bút chì mở popover có ô **Tiêu đề**, ô **Liên kết (URL)** và chấm màu. `Enter` lưu (URL sai hoặc trùng thì ô đỏ và hiện lý do, popover vẫn mở); bấm ra ngoài lưu phần hợp lệ; `Esc` bỏ.
 - **Nút Thêm liên kết** (sợi xích, cạnh Tải lên): hộp thoại URL + tiêu đề tùy chọn; tự điền link nếu clipboard có link; dán cả đoạn text cũng được (tách link đầu tiên). Đang mở Két sắt thì link vào thẳng két.
-- **Xem trước tải khi mở app:** sau khi danh sách tải xong, các link chưa xem trước được gọi `POST /links/:id/preview` mới nhất trước, **2 link cùng lúc, tối đa 20 link mỗi lần mở app**; link vừa thêm được tải ngay. Facebook, Instagram, Threads, X, Shopee thường không cho đọc nên có thể không có ảnh (hiện con bò).
+- **Xem trước tải khi mở app:** sau khi danh sách tải xong, các link **chưa có ảnh trên thiết bị này** (và không thất bại trong 24 giờ qua) được gọi `POST /links/:id/preview` mới nhất trước, **2 link cùng lúc, tối đa 20 link mỗi lần mở app**; link vừa thêm được tải ngay. Cờ `previewed` mà app thấy do client tính (có ảnh hoặc vừa thất bại), không phải giá trị của server.
+- **Ảnh xem trước giữ trên thiết bị (`desktop/src/preview-cache.ts`):** server chỉ trả địa chỉ ảnh (thường hết hạn sau vài ngày), nên app tải ảnh một lần rồi giữ bản sao theo id link. Chỉ nhận ảnh JPEG/PNG/WebP/GIF/AVIF ≤ 2 MB từ địa chỉ công khai (kiểm tra cả sau redirect; không nhận SVG). **Desktop:** file trong `userData/previews/`, hiện qua giao thức `fatup-preview://p/<id>` (main process tải, không bị CORS). **PWA:** Cache Storage `fatup-previews-v1`, hiện qua object URL; nếu trang khác không cho đọc ảnh (thiếu CORS) thì trong phiên đó hiện thẳng địa chỉ gốc và không lưu. Tối đa 300 ảnh / 50 MB, xóa cái cũ nhất. Thất bại (chặn, không có ảnh) được nhớ 24 giờ. Ảnh bị xóa khi link bị xóa vĩnh viễn, đổi URL, chuyển vào Két sắt, hoặc ngắt kết nối. **Link trong Két sắt không bao giờ được lưu ảnh** (chỉ hiện từ địa chỉ gốc trong phiên). Máy khác hoặc máy xóa dữ liệu sẽ tự tải lại. Facebook, Instagram, Threads, X, Shopee thường không cho đọc nên có thể không có ảnh (hiện con bò).
 
 ### 9.3 Trình xem ảnh (Lightbox)
 

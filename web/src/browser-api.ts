@@ -4,6 +4,8 @@ import { ApiClient, ApiError, normalizeServerUrl } from '../../desktop/src/main/
 import { nextAttempt, open, seal, type Lockout, type Sealed } from './vault';
 import { WebUploadManager, deviceName } from './uploader';
 import { popSharedLink } from './share';
+import { PreviewCache, fetchPicture } from '../../desktop/src/preview-cache';
+import { CacheStoragePreviewStore } from './preview-store';
 
 const STORAGE_KEY = 'fatup.web.v1';
 const MAX_DOWNLOADED = 2000;
@@ -58,6 +60,9 @@ export function installBrowserApi(): void {
   let vaultIsOpen = false;
   let pendingToken: { serverUrl: string; token: string } | null = null; // between "connect" and "set PIN"
   const itemCache = new Map<string, FileItem>();
+  // Link pictures are kept in this browser (the server only names their address). Browsers often cannot read a picture from another
+  // site (no CORS), so then it is shown from its own address for the session instead.
+  const previews = new PreviewCache(new CacheStoragePreviewStore(), { fetchPicture: (url) => fetchPicture(url), hotlink: true });
   // Browser files have no path, so the shared "paths" are opaque handles into this table.
   const handles = new Map<string, File>();
   let nextHandle = 1;
@@ -187,6 +192,7 @@ export function installBrowserApi(): void {
       vaultIsOpen = false;
       itemCache.clear();
       save();
+      await previews.clear().catch(() => undefined); // pictures of the old account's links must not outlive the connection
     },
 
     changePin: async (oldPin, newPin) => {
@@ -211,16 +217,17 @@ export function installBrowserApi(): void {
         itemCache.clear();
         for (const it of items) itemCache.set(it.id, it);
         const downloaded = new Set(data.downloaded);
-        return items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) }));
+        return previews.decorate(items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) })));
       }),
 
-    listTrash: () => guarded(async (): Promise<Item[]> => (await client().listEverything({ trash: true })).map((it) => ({ ...it, downloaded: false }))),
+    listTrash: () => guarded(async (): Promise<Item[]> => previews.decorate((await client().listEverything({ trash: true })).map((it) => ({ ...it, downloaded: false })))),
 
     updateFile: (id, patch) =>
       guarded(async (): Promise<Item> => {
         const item = await client().update(id, patch);
         itemCache.set(id, item);
-        return { ...item, downloaded: data.downloaded.includes(id) };
+        if (patch.url) await previews.forget([id]); // the old picture belongs to the old address
+        return (await previews.decorate([{ ...item, downloaded: data.downloaded.includes(id) }]))[0];
       }),
 
     addLink: (url, title, vault) =>
@@ -228,14 +235,15 @@ export function installBrowserApi(): void {
         let item = await client().addLink({ url, title, device: deviceName() });
         if (vault) item = await client().setVault(item.id, true);
         itemCache.set(item.id, item);
-        return { ...item, downloaded: false };
+        return (await previews.decorate([{ ...item, downloaded: false }]))[0];
       }),
 
     previewLink: (id, force) =>
       guarded(async (): Promise<Item> => {
-        const item = await client().previewLink(id, force === true);
+        const res = await client().previewLink(id);
+        const { previewImage: _address, ...item } = res;
         itemCache.set(id, item);
-        return { ...item, downloaded: false };
+        return previews.learn(res, force === true);
       }),
 
     takePendingLink: async () => popSharedLink(),
@@ -260,7 +268,7 @@ export function installBrowserApi(): void {
         const items = await client().listEverything({ vault: true });
         for (const it of items) itemCache.set(it.id, it);
         const downloaded = new Set(data.downloaded);
-        return { ok: true, value: items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) })) };
+        return { ok: true, value: await previews.decorate(items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) }))) };
       } catch (err) {
         return fail(err);
       }
@@ -270,6 +278,7 @@ export function installBrowserApi(): void {
       if (!inVault && !vaultIsOpen) return { ok: false, error: 'vault_locked' };
       try {
         await client().setVault(id, inVault);
+        if (inVault) await previews.forget([id]); // the Vault leaves no pictures on the device
         return { ok: true, value: undefined };
       } catch (err) {
         return fail(err);
@@ -283,9 +292,19 @@ export function installBrowserApi(): void {
         await client().restore(id);
       }),
 
-    removeForever: (id) => guarded(() => client().removeForever(id)),
+    removeForever: (id) =>
+      guarded(async () => {
+        await client().removeForever(id);
+        await previews.forget([id]);
+      }),
 
-    emptyTrash: () => guarded(() => client().emptyTrash()),
+    emptyTrash: () =>
+      guarded(async () => {
+        const inTrash = await client().listEverything({ trash: true }).catch(() => []);
+        const count = await client().emptyTrash();
+        await previews.forget(inTrash.filter((it) => it.kind === 'link').map((it) => it.id));
+        return count;
+      }),
 
     previewUrl: (id) => guarded(() => client().downloadUrl(id)),
 

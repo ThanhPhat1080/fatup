@@ -713,7 +713,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           ) : visible.length === 0 ? (
             <EmptyState searching={(query !== '' || tagFilter.length > 0 || (linkTab && siteFilter !== 'all')) && source.length > 0} trash={inTrash} vault={vaultActive} links={linkTab} />
           ) : view === 'grid' ? (
-            <FileGrid groups={groups} selected={selected} onToggle={toggle} onOpen={open} onMenu={openMenu} onEdit={inTrash ? undefined : openEditor} />
+            <FileGrid groups={groups} selected={selected} onToggle={toggle} onOpen={open} onMenu={openMenu} onEdit={inTrash ? undefined : openEditor} onCopyLink={inTrash ? undefined : (it) => void copyLink(it)} />
           ) : (
             <FileList
               groups={groups}
@@ -722,6 +722,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               onOpen={open}
               onMenu={openMenu}
               onEdit={inTrash ? undefined : openEditor}
+              onCopyLink={inTrash ? undefined : (it) => void copyLink(it)}
               sort={sort}
               onSort={changeSort}
               allSelected={allSelected}

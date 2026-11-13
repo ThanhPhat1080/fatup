@@ -1,36 +1,14 @@
-import { siteOf } from '@fatup/shared';
+import { isPublicUrl, siteOf } from '@fatup/shared';
 
-export type Preview = { title: string | null; image: { bytes: ArrayBuffer; type: string } | null };
+export { isPublicUrl };
 
-const EMPTY: Preview = { title: null, image: null };
+/** A link's title and the address of its picture. The picture itself is never fetched here; see PreviewResponse. */
+export type Preview = { title: string | null; imageUrl: string | null };
+
+const EMPTY: Preview = { title: null, imageUrl: null };
 const MAX_REDIRECTS = 3;
 const MAX_HTML_BYTES = 512 * 1024;
-export const MAX_IMAGE_BYTES = 1_500_000;
 const UA = 'Mozilla/5.0 (compatible; FatUp-LinkPreview/1.0)';
-
-/** Only public http(s) hosts: no localhost, private ranges, link-local addresses or IPv6 literals. */
-export function isPublicUrl(raw: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    return false;
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
-  const host = url.hostname.toLowerCase();
-  if (host.startsWith('[')) return false;
-  if (host === 'localhost' || /\.(localhost|local|internal|lan|home|corp)$/.test(host)) return false;
-  const ip = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
-  if (ip) {
-    const [a, b] = [Number(ip[1]), Number(ip[2])];
-    if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
-    if (a === 169 && b === 254) return false;
-    if (a === 172 && b >= 16 && b <= 31) return false;
-    if (a === 192 && b === 168) return false;
-    if (a === 100 && b >= 64 && b <= 127) return false;
-  }
-  return true;
-}
 
 /** GET with manual redirects so every hop is checked against isPublicUrl. Null when refused, failed or too many hops. */
 async function get(url: string, fetchImpl: typeof fetch, signal: AbortSignal, accept: string): Promise<Response | null> {
@@ -115,22 +93,6 @@ export function parseHtml(html: string): { title: string | null; image: string |
   };
 }
 
-async function fetchImage(url: string, fetchImpl: typeof fetch, signal: AbortSignal): Promise<Preview['image']> {
-  const res = await get(url, fetchImpl, signal, 'image/*');
-  if (!res) return null;
-  const type = (res.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
-  if (!type.startsWith('image/')) {
-    await res.body?.cancel().catch(() => undefined);
-    return null;
-  }
-  if (Number(res.headers.get('content-length') ?? 0) > MAX_IMAGE_BYTES) {
-    await res.body?.cancel().catch(() => undefined);
-    return null;
-  }
-  const bytes = await readLimited(res, MAX_IMAGE_BYTES, true);
-  return bytes && bytes.length > 0 ? { bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, type } : null;
-}
-
 /** YouTube and TikTok publish an oEmbed endpoint that returns a title and thumbnail without a login. */
 async function oembed(url: string, fetchImpl: typeof fetch, signal: AbortSignal): Promise<{ title: string | null; image: string | null } | null> {
   const site = siteOf(url);
@@ -144,11 +106,12 @@ async function oembed(url: string, fetchImpl: typeof fetch, signal: AbortSignal)
   return { title: typeof data.title === 'string' ? clean(data.title) : null, image: typeof data.thumbnail_url === 'string' ? data.thumbnail_url : null };
 }
 
-/** Best-effort title and image for a link. Never throws: a page that is slow, blocked or odd simply yields nothing. */
-export async function fetchPreview(url: string, fetchImpl: typeof fetch = (i, init) => fetch(i, init), timeoutMs = 4000): Promise<Preview> {
+/** Best-effort title and picture address for a link. Never throws: a page that is slow, blocked or odd simply yields nothing. */
+export async function fetchPreview(url: string, fetchImpl: typeof fetch = (i, init) => fetch(i, init), timeoutMs = 6000): Promise<Preview> {
   if (!isPublicUrl(url)) return EMPTY;
   const signal = AbortSignal.timeout(timeoutMs);
   try {
+    let base = url;
     let found = await oembed(url, fetchImpl, signal).catch(() => null);
     if (!found) {
       const res = await get(url, fetchImpl, signal, 'text/html,application/xhtml+xml');
@@ -157,19 +120,23 @@ export async function fetchPreview(url: string, fetchImpl: typeof fetch = (i, in
         await res?.body?.cancel().catch(() => undefined);
         return EMPTY;
       }
+      base = res.url || url;
       const bytes = await readLimited(res, MAX_HTML_BYTES, false);
       found = parseHtml(new TextDecoder().decode(bytes ?? new Uint8Array()));
-      if (found.image) {
-        try {
-          found.image = new URL(found.image, res.url || url).href;
-        } catch {
-          found.image = null;
-        }
-      }
     }
-    const image = found.image ? await fetchImage(found.image, fetchImpl, signal).catch(() => null) : null;
-    return { title: found.title, image };
+    return { title: found.title, imageUrl: absolutePublic(found.image, base) };
   } catch {
     return EMPTY;
+  }
+}
+
+/** Resolves a picture address against its page; null unless it ends up a public http(s) address. */
+function absolutePublic(image: string | null, base: string): string | null {
+  if (!image) return null;
+  try {
+    const href = new URL(image, base).href;
+    return isPublicUrl(href) ? href : null;
+  } catch {
+    return null;
   }
 }

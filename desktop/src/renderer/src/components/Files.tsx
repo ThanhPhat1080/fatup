@@ -1,5 +1,5 @@
 import { useRef, useState, type MouseEvent, type PointerEvent } from 'react';
-import { ArrowDown, ArrowUp, MoreVertical, Pencil, SearchX } from 'lucide-react';
+import { ArrowDown, ArrowUp, Copy, MoreVertical, Pencil, SearchX } from 'lucide-react';
 import type { Item } from '../../../shared-ipc';
 import { cowsay, formatSize, formatTime, type DateGroup, type SortKey, type SortState } from '../lib/format';
 import { useI18n } from '../lib/i18n';
@@ -15,6 +15,8 @@ type ViewProps = {
   onMenu: (item: Item, x: number, y: number) => void;
   /** Opens the rename / tag popover below `anchor`; the pencil is hidden when this is not given (e.g. in the trash). */
   onEdit?: (item: Item, anchor: DOMRect) => void;
+  /** Copies a link's address; the copy button on link items is hidden when this is not given (e.g. in the trash). */
+  onCopyLink?: (item: Item) => void;
 };
 
 function Check({ item, selected, onToggle }: { item: Item; selected: boolean; onToggle: ViewProps['onToggle'] }) {
@@ -121,6 +123,26 @@ function RenameButton({ onClick, link }: { onClick: (anchor: DOMRect) => void; l
   );
 }
 
+/** Copies a link's address with one click, right where the link is shown. */
+function CopyLinkButton({ item, onCopy }: { item: Item; onCopy?: ViewProps['onCopyLink'] }) {
+  const { t } = useI18n();
+  if (item.kind !== 'link' || !onCopy) return null;
+  return (
+    <button
+      className="icon-btn icon-btn--sm copy-btn"
+      aria-label={t.copyLink}
+      title={t.copyLink}
+      onClick={(e) => {
+        e.stopPropagation();
+        onCopy(item);
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <Copy size={15} />
+    </button>
+  );
+}
+
 /** Up to three colour dots shown beside a file name. */
 export function TagDots({ tags }: { tags: Item['tags'] }) {
   const { t } = useI18n();
@@ -169,10 +191,10 @@ function KindIcon({ item, size }: { item: Item; size: number }) {
   return <FileIcon name={item.name} mime={item.mime} size={size} />;
 }
 
-type ItemProps = Pick<ViewProps, 'selected' | 'onToggle' | 'onOpen' | 'onMenu' | 'onEdit'> & { item: Item };
+type ItemProps = Pick<ViewProps, 'selected' | 'onToggle' | 'onOpen' | 'onMenu' | 'onEdit' | 'onCopyLink'> & { item: Item };
 type RowProps = ItemProps & { siteColumn: boolean };
 
-function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit }: ItemProps) {
+function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink }: ItemProps) {
   const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
   return (
     <div
@@ -191,7 +213,12 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit }: ItemProps) {
           {item.name}
         </span>
         <TagDots tags={item.tags} />
-        {onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
+        {(onEdit || (item.kind === 'link' && onCopyLink)) && (
+          <span className="tile__actions">
+            {onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
+            <CopyLinkButton item={item} onCopy={onCopyLink} />
+          </span>
+        )}
         <MoreButton item={item} onMenu={onMenu} />
       </div>
       <div className="tile__thumb">
@@ -201,7 +228,7 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit }: ItemProps) {
   );
 }
 
-function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, siteColumn }: RowProps) {
+function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, siteColumn }: RowProps) {
   const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
   return (
     <div className={`list__row${selected.has(item.id) ? ' list__row--selected' : ''}`} role="row" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen(item)} {...press}>
@@ -220,6 +247,7 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, siteColumn }: R
         </span>
         <TagDots tags={item.tags} />
         {onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
+        <CopyLinkButton item={item} onCopy={onCopyLink} />
       </span>
       <span role="cell" className="muted col-from ellipsis">
         {item.device ?? '—'}
@@ -237,7 +265,7 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, siteColumn }: R
   );
 }
 
-export function FileGrid({ groups, selected, onToggle, onOpen, onMenu, onEdit }: ViewProps) {
+export function FileGrid({ groups, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink }: ViewProps) {
   return (
     <>
       {groups.map((g) => (
@@ -245,7 +273,7 @@ export function FileGrid({ groups, selected, onToggle, onOpen, onMenu, onEdit }:
           {g.label && <h3 className="group__label">{g.label}</h3>}
           <div className={`grid${selected.size > 0 ? ' grid--selecting' : ''}`}>
             {g.items.map((item) => (
-              <Tile key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} />
+              <Tile key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} onCopyLink={onCopyLink} />
             ))}
           </div>
         </section>
@@ -278,7 +306,7 @@ function SortHead({ id, label, sort, onSort, className }: { id: SortKey; label: 
   );
 }
 
-export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, sort, onSort, allSelected, someSelected, onToggleAll, timeLabel, siteColumn = false }: ListProps) {
+export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, sort, onSort, allSelected, someSelected, onToggleAll, timeLabel, siteColumn = false }: ListProps) {
   const { t } = useI18n();
   return (
     <div className={`list${siteColumn ? ' list--site' : ''}`} role="table">
@@ -308,7 +336,7 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, s
         <section key={g.key} role="rowgroup">
           {g.label && <h3 className="group__label group__label--list">{g.label}</h3>}
           {g.items.map((item) => (
-            <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} siteColumn={siteColumn} />
+            <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} onCopyLink={onCopyLink} siteColumn={siteColumn} />
           ))}
         </section>
       ))}

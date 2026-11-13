@@ -28,7 +28,7 @@ async function launch(lang = 'vi') {
       // Under xvfb there is no window manager, so Chromium may treat the window as hidden/occluded and pause
       // requestAnimationFrame, which Playwright's "stable" actionability check relies on.
       '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows'],
-    env: { ...process.env, FATUP_USER_DATA: userData, FATUP_DOWNLOAD_DIR: downloads },
+    env: { ...process.env, FATUP_USER_DATA: userData, FATUP_DOWNLOAD_DIR: downloads, FATUP_E2E_LOCAL_PREVIEWS: '1' },
   });
   const page = await app.firstWindow();
   page.setDefaultTimeout(10_000);
@@ -164,8 +164,21 @@ try {
   await shot(page, '04b-links-list');
   await page.getByRole('button', { name: 'Nguồn', exact: true }).click(); // second click reverses: YouTube first, then TikTok...
   await page.waitForFunction(() => document.querySelector('.list__row:not(.list__row--head) .ellipsis')?.textContent === 'Cách nấu phở ngon');
+  // Each link has a copy button right on its row.
+  await linkRows.filter({ hasText: 'Thread về AI' }).getByRole('button', { name: 'Sao chép link' }).click();
+  await page.getByText('Đã sao chép link').waitFor();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), 'https://x.com/someone/status/1');
   await page.getByRole('button', { name: 'Dạng lưới', exact: true }).click();
-  await page.locator('.tile .cow-thumb').first().waitFor(); // the cow stays in the grid
+  // Link pictures are fetched by the app, kept on disk and shown through fatup-preview://; the link without one gets the cow.
+  await page.waitForFunction(() => document.querySelectorAll('.tile img[src^="fatup-preview://"]').length === 5);
+  assert.equal(await page.locator('.tile .cow-thumb').count(), 1, 'the cow stays in the grid, for the link that has no picture');
+  assert.equal(readdirSync(join(userData, 'previews')).filter((f) => f.endsWith('.png')).length, 5, 'the pictures are kept on disk');
+  await page.locator('.tile', { hasText: 'Video Tik' }).hover();
+  await page.locator('.tile', { hasText: 'Video Tik' }).getByRole('button', { name: 'Sao chép link' }).waitFor({ state: 'visible', timeout: 3000 }); // on the grid it appears on hover
+  const nameWidth = await page.locator('.tile', { hasText: 'Video Tik' }).locator('.tile__name').evaluate((el) => el.getBoundingClientRect().width);
+  assert.ok(nameWidth > 60, `the buttons float over the name instead of squeezing it (name is ${nameWidth}px wide)`);
+  await shot(page, '04d-links-grid-hover');
+  assert.ok(await page.locator('.tile img[src^="fatup-preview://"]').first().evaluate((img) => img.complete && img.naturalWidth > 0), 'the cached picture loads');
   await shot(page, '04c-links-grid');
   await page.getByRole('button', { name: 'Dạng danh sách', exact: true }).click();
   await page.getByRole('tab', { name: 'Tất cả' }).click();

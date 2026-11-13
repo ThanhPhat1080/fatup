@@ -36,6 +36,30 @@ const SITE_DOMAINS: Record<Exclude<SiteCategory, 'internet'>, string[]> = {
   tiktok: ['tiktok.com'],
 };
 
+/** Only public http(s) hosts: no localhost, private ranges, link-local addresses or IPv6 literals. Guards every address a server or client fetches on a page's say-so. */
+export function isPublicUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  const host = url.hostname.toLowerCase();
+  if (host.startsWith('[')) return false;
+  if (host === 'localhost' || /\.(localhost|local|internal|lan|home|corp)$/.test(host)) return false;
+  const ip = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(host);
+  if (ip) {
+    const [a, b] = [Number(ip[1]), Number(ip[2])];
+    if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false;
+  }
+  return true;
+}
+
 /** Trims and validates a user-supplied link: http(s) only, no fragment, lowercase host, at most MAX_URL_LENGTH characters. */
 export function normalizeUrl(raw: string): string | null {
   let url: URL;
@@ -97,6 +121,12 @@ export type FileItem = {
   site: SiteCategory | null;
   /** True once a preview (title and image) has been attempted for a link. */
   previewed: boolean;
+};
+
+/** What `POST /links/:id/preview` returns: the link (its title now filled in) plus the address of its picture. The server never stores or fetches the picture; each client does, and keeps its own copy. */
+export type PreviewResponse = FileItem & {
+  /** Absolute public http(s) address of the page's og:image (or oEmbed thumbnail), or null when there is none. Such addresses often expire within days. */
+  previewImage: string | null;
 };
 
 export type CreateLinkRequest = {

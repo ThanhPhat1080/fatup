@@ -198,9 +198,8 @@ describe('ApiClient links', () => {
     const { calls, client } = make(() => ({ id: 'L' }));
     await client.addLink({ url: 'https://a.com', title: 'A' });
     await client.previewLink('L');
-    await client.previewLink('L', true);
     await client.update('L', { url: 'https://b.com' });
-    expect(calls).toEqual(['POST /links', 'POST /links/L/preview', 'POST /links/L/preview?force=1', 'PATCH /files/L']);
+    expect(calls).toEqual(['POST /links', 'POST /links/L/preview', 'PATCH /files/L']);
   });
 
   it('merges files and links, newest first, with one extra request', async () => {

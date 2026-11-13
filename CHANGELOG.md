@@ -4,6 +4,24 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [0.3.1] — 2026-11-13
+
+### Thêm
+- **Nút copy trên từng link** (biểu tượng sao chép cạnh bút chì): bấm là chép URL, báo "Đã sao chép link". Ở dạng danh sách luôn hiện; ở dạng lưới hiện khi rê chuột, nổi đè lên đuôi tên nên tên không bị cắt ngắn đi.
+
+### Đổi
+
+**Ảnh xem trước của link giờ do từng thiết bị giữ, server không lưu nữa**
+- Worker chỉ đọc trang để lấy tiêu đề và **địa chỉ ảnh** (`previewImage`), không tải ảnh, không ghi R2. Nhờ vậy hết lỗi timeout khi trang nặng, và không còn ảnh nằm trên R2 cho link mới.
+- App tải ảnh **một lần** rồi giữ bản sao trên máy: file trong thư mục dữ liệu của app (desktop), hoặc Cache Storage của trình duyệt (PWA). Địa chỉ ảnh của Instagram/Facebook hết hạn sau vài ngày nhưng bản đã lưu thì không.
+- Chỉ nhận ảnh JPEG/PNG/WebP/GIF/AVIF ≤ 2 MB từ địa chỉ công khai. Giữ tối đa 300 ảnh / 50 MB. Trang chặn hoặc không có ảnh thì được nhớ 24 giờ, không bị hỏi lại mỗi lần mở app.
+- **Link trong Két sắt không được lưu ảnh** trên máy. Ảnh cũng bị xóa khi xóa vĩnh viễn link, đổi URL, chuyển vào Két sắt hoặc ngắt kết nối.
+- PWA: nếu trang khác không cho đọc ảnh (thiếu CORS) thì trong phiên đó hiện thẳng từ địa chỉ gốc, không lưu.
+- Link cũ vẫn dùng ảnh đã có trên R2. `POST /links/:id/preview` giờ đọc lại trang mỗi lần được gọi (`?force=1` không còn tác dụng).
+
+### Nâng cấp
+Không có migration. Deploy Worker (`npm run deploy` trong `worker/`) **cùng lúc** với cập nhật app: app cũ vẫn chạy với Worker mới nhưng sẽ không thấy ảnh của link mới, vì nó chờ `thumbUrl` còn Worker giờ chỉ trả `previewImage`. Link đã có ảnh trên R2 vẫn dùng ảnh đó; link chưa có ảnh được thử lại khi mở app.
+
 ## [0.3.0] — 2026-11-13
 
 ### Đổi
