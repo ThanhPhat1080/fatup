@@ -20,7 +20,7 @@ export type TagColor = (typeof TAG_COLORS)[number];
 export const MAX_TAGS = 3;
 
 /** Where a link points, judged by its domain. `internet` is everything else. */
-export const SITE_CATEGORIES = ['facebook', 'youtube', 'instagram', 'threads', 'shopee', 'tiktok', 'internet'] as const;
+export const SITE_CATEGORIES = ['facebook', 'youtube', 'instagram', 'threads', 'x', 'shopee', 'tiktok', 'internet'] as const;
 export type SiteCategory = (typeof SITE_CATEGORIES)[number];
 
 export const MAX_URL_LENGTH = 2048;
@@ -31,6 +31,7 @@ const SITE_DOMAINS: Record<Exclude<SiteCategory, 'internet'>, string[]> = {
   youtube: ['youtube.com', 'youtu.be'],
   instagram: ['instagram.com'],
   threads: ['threads.net', 'threads.com'],
+  x: ['x.com', 'twitter.com', 't.co'],
   shopee: ['shopee.vn', 'shopee.com', 'shp.ee'],
   tiktok: ['tiktok.com'],
 };

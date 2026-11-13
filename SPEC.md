@@ -283,12 +283,12 @@ Một khu vực để **cất file ra khỏi danh sách chính**, chỉ xem đư
 
 ### 9.2c Liên kết
 
-- **Tab Liên kết** cạnh Tất cả/Ảnh/File. Tất cả/Ảnh/File chỉ gồm file. Tab Liên kết có chế độ xem riêng (mặc định danh sách) và hàng chip lọc loại: **Tất cả · Facebook · YouTube · Instagram · Threads · Shopee · TikTok · Internet**, kèm số lượng. Kết hợp được với lọc màu và ô tìm kiếm (theo tiêu đề và URL). Chip loại dùng huy hiệu SVG tự vẽ (không dùng logo thật).
+- **Tab Liên kết** cạnh Tất cả/Ảnh/File. Tất cả/Ảnh/File chỉ gồm file. Tab Liên kết có chế độ xem riêng (mặc định danh sách) và hàng chip lọc loại: **Tất cả · Facebook · YouTube · Instagram · Threads · X · Shopee · TikTok · Internet**, kèm số lượng. Kết hợp được với lọc màu và ô tìm kiếm (theo tiêu đề và URL). Chip loại dùng huy hiệu SVG tự vẽ (không dùng logo thật).
 - Mỗi link: ảnh xem trước, tiêu đề, huy hiệu và tên miền, thời gian, chấm màu. **Không có ảnh thì hiện con bò cowsay SVG nhỏ** (`CowThumb`).
 - **Bấm vào link** mở URL ở tab mới (desktop: trình duyệt mặc định, chỉ `http`/`https`). Menu `⋮`/chuột phải: Mở liên kết, Sao chép link, **Sửa liên kết**, Tải lại xem trước, Chuyển vào Két sắt, Chuyển vào thùng rác. "Tải tất cả" bỏ qua link.
 - **Sửa liên kết:** bút chì mở popover có ô **Tiêu đề**, ô **Liên kết (URL)** và chấm màu. `Enter` lưu (URL sai hoặc trùng thì ô đỏ và hiện lý do, popover vẫn mở); bấm ra ngoài lưu phần hợp lệ; `Esc` bỏ.
 - **Nút Thêm liên kết** (sợi xích, cạnh Tải lên): hộp thoại URL + tiêu đề tùy chọn; tự điền link nếu clipboard có link; dán cả đoạn text cũng được (tách link đầu tiên). Đang mở Két sắt thì link vào thẳng két.
-- **Xem trước tải khi mở app:** sau khi danh sách tải xong, các link chưa xem trước được gọi `POST /links/:id/preview` mới nhất trước, **2 link cùng lúc, tối đa 20 link mỗi lần mở app**; link vừa thêm được tải ngay. Facebook, Instagram, Threads, Shopee thường không cho đọc nên có thể không có ảnh (hiện con bò).
+- **Xem trước tải khi mở app:** sau khi danh sách tải xong, các link chưa xem trước được gọi `POST /links/:id/preview` mới nhất trước, **2 link cùng lúc, tối đa 20 link mỗi lần mở app**; link vừa thêm được tải ngay. Facebook, Instagram, Threads, X, Shopee thường không cho đọc nên có thể không có ảnh (hiện con bò).
 
 ### 9.3 Trình xem ảnh (Lightbox)
 

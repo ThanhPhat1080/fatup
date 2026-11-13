@@ -8,6 +8,7 @@ const LOOK: Record<Exclude<SiteCategory, 'internet'>, { bg: string; glyph: strin
   youtube: { bg: '#e00000', glyph: '▶' },
   instagram: { bg: 'linear-gradient(135deg,#feda75,#d62976 55%,#4f5bd5)', glyph: 'ig' },
   threads: { bg: '#101010', glyph: '@' },
+  x: { bg: '#000000', glyph: 'X' },
   shopee: { bg: '#ee4d2d', glyph: 'S' },
   tiktok: { bg: '#161823', glyph: '♪' },
 };
