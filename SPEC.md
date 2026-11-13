@@ -1,10 +1,12 @@
-# FatUp — Spec v2
+# FatUp — Spec v3
 
 Chuyển ảnh và file giữa **điện thoại Android** và **máy tính** (macOS / Ubuntu / Windows) qua một server cá nhân trên Cloudflare. Dùng cá nhân, một người dùng.
 
 > Tài liệu này ghi lại các quyết định đã chốt. Thay đổi quyết định thì sửa file này trước, code sau.
 >
-> **v2** cập nhật spec v1 theo những gì đã được làm thêm trong quá trình phát triển: upload từ máy tính, bản web (PWA), chọn nhiều file, sắp xếp, **thùng rác**, **két sắt (Secret Vault)**, thanh dung lượng, dark mode, kiểm tra cập nhật. Mục [12](#12-khác-với-v1) liệt kê các điểm khác v1.
+> **v2** cập nhật spec v1 theo những gì đã được làm thêm trong quá trình phát triển: upload từ máy tính, bản web (PWA), chọn nhiều file, sắp xếp, **thùng rác**, **két sắt (Secret Vault)**, thanh dung lượng, dark mode, kiểm tra cập nhật.
+>
+> **v3** đánh dấu **Phase 1 hoàn thành** (bản `v0.1.6`): thêm **đổi tên file**, **thẻ màu (tag)** và bộ lọc theo màu, nút **Tải tất cả**, và hai màn hình khóa có hoạt họa (cổng Moria, két sắt). Mục [12](#12-khác-với-v1) liệt kê các điểm khác v1, mục [13](#13-lộ-trình) là lộ trình, trong đó **Phase 2** là bản web PWA đầy đủ.
 
 ---
 
@@ -53,13 +55,14 @@ npm workspaces cho `shared`, `worker`, `desktop`, `web`. `android/` là project 
 | Có | Không (để sau) |
 |---|---|
 | Android → cloud → desktop/web, mọi loại file, ≤ 100 MB/file | Android xem/tải lại file đã gửi |
-| Desktop tải file lên từ máy (chọn file, kéo-thả) | Upload từ bản web, upload cả thư mục |
+| Desktop và **bản web** tải file lên (chọn file, kéo-thả, chụp ảnh trên điện thoại) | Upload cả thư mục |
 | Share nhiều file một lúc (Android) | Share text/link (schema có sẵn `kind = 'text'`) |
 | Thumbnail ảnh (Android và desktop tạo) | Video thumbnail |
 | Tự xóa sau 30 ngày | Lưu trữ vĩnh viễn |
 | **Thùng rác** 30 ngày, khôi phục, xóa vĩnh viễn | Chia sẻ link công khai |
 | **Két sắt**: che file sau PIN nhập lại mỗi lần mở | Mã hóa nội dung file (xem [mục 7](#7-bảo-mật)) |
-| Chọn nhiều file, sắp xếp, xóa hàng loạt | Thư mục, nhãn, album |
+| Chọn nhiều file, sắp xếp, xóa hàng loạt, **Tải tất cả** | Thư mục, album |
+| **Đổi tên** file (giữ phần mở rộng), **thẻ màu** tối đa 3 màu/file, lọc theo màu | Thẻ tự đặt tên, thư mục |
 | PIN 4 số khóa app; UI En/Vi; sáng/tối (theo OS hoặc tự chọn) | Nhiều người dùng |
 | Bản web cài được như app (PWA) | Offline đầy đủ, đồng bộ nền |
 | Thanh dung lượng R2, kiểm tra cập nhật app | Tray, notification desktop |
@@ -90,6 +93,9 @@ ALTER TABLE files ADD COLUMN retain_from INTEGER;   -- đặt khi khôi phục: 
 
 -- 0003_vault.sql
 ALTER TABLE files ADD COLUMN in_vault INTEGER NOT NULL DEFAULT 0;   -- 1 = đang ở két sắt
+
+-- 0004_tags.sql
+ALTER TABLE files ADD COLUMN tags TEXT NOT NULL DEFAULT '';          -- tên màu cách nhau bằng dấu phẩy, tối đa 3, theo thứ tự thêm
 ```
 
 - `kind = 'image'` khi `mime` bắt đầu bằng `image/`, còn lại là `'file'`.
@@ -117,6 +123,7 @@ Tất cả trả JSON, lỗi có dạng `{ "error": { "code": string, "message":
 | `POST` | `/files/:id/restore` | Khôi phục khỏi thùng rác: `deleted_at = NULL`, `retain_from = now`. Idempotent. Trả `FileItem` |
 | `DELETE` | `/files/:id/permanent` | Xóa vĩnh viễn (R2 + D1). Chỉ cho file đang ở thùng rác, không thì `409 not_in_trash` |
 | `DELETE` | `/trash` | Dọn sạch thùng rác. Trả `{ deleted }` |
+| `PATCH` | `/files/:id` | Body `{ name?, tags? }`, phải có ít nhất một. `name` là tên hiển thị mới (đã gồm phần mở rộng); `tags` là mảng tối đa 3 màu khác nhau trong `TAG_COLORS`. Chỉ sửa D1: object R2 đặt theo `id` nên đổi tên không động tới R2. Trả `FileItem` |
 | `PUT` | `/files/:id/vault` | Body `{ inVault: boolean }`. Chuyển vào/ra két sắt. 404 nếu file không tồn tại hoặc đang ở thùng rác |
 
 ```ts
@@ -128,7 +135,10 @@ type FileItem = {
   createdAt: number;         // epoch ms
   deletedAt: number | null;  // có giá trị khi ở thùng rác
   inVault: boolean;
+  tags: TagColor[];          // tối đa MAX_TAGS (3), theo thứ tự thêm
 };
+
+// shared: TAG_COLORS = red | orange | yellow | green | blue | purple | gray
 ```
 
 Phân trang dùng cursor `<sortValue>_<id>`, với `sortValue` là `created_at` (danh sách thường, két sắt) hoặc `deleted_at` (thùng rác).
@@ -188,7 +198,7 @@ Một khu vực để **cất file ra khỏi danh sách chính**, chỉ xem đư
 - **Token trên Android** lưu ở `SharedPreferences` private, loại khỏi backup.
 - **Token trên web (PWA)**: không có keychain, nên token được mã hóa **AES-GCM** bằng khóa dẫn xuất từ PIN (PBKDF2-SHA256, 310.000 vòng) rồi lưu `localStorage`. Mở khóa = giải mã thành công. PIN 4 số chỉ có 10.000 tổ hợp nên chỉ chống người qua đường, **không chống người đọc được dữ liệu trình duyệt**. Không dùng web trên máy dùng chung. Bộ đếm sai PIN của web nằm ở client nên chỉ mang tính nhắc nhở.
 - Presigned URL hết hạn sau 15 phút (upload) hoặc 1 giờ (thumbnail/download).
-- Bản web được phục vụ cùng origin với API nên **không cần CORS**.
+- Bản web được phục vụ cùng origin với API nên API **không cần CORS**. Riêng R2 thì cần: trình duyệt PUT/GET thẳng tới presigned URL (origin khác), xem [mục 10](#10-bản-web-pwa).
 
 ---
 
@@ -212,7 +222,7 @@ Một khu vực để **cất file ra khỏi danh sách chính**, chỉ xem đư
 ### 9.1 Màn hình
 
 1. **Setup** (lần đầu): URL Worker + token → "Kiểm tra kết nối" → đặt PIN (nhập 2 lần).
-2. **Khóa**: 4 ô PIN, tự submit khi đủ 4 số; "Quên PIN? Đặt lại".
+2. **Khóa**: 4 ô PIN, tự submit khi đủ 4 số; "Quên PIN? Đặt lại". Có cảnh hoạt họa, xem [9.10](#910-màn-hình-khóa-có-hoạt-họa).
 3. **Chính**: danh sách file (xem dưới).
 4. **Thùng rác** và **Két sắt** (cổng PIN, rồi danh sách): xem [mục 5](#5-hai-tính-năng-riêng-tư-thùng-rác-và-két-sắt).
 5. **Cài đặt**: ngôn ngữ, **giao diện sáng/tối** (công tắc mặt trời/mặt trăng), server, QR kết nối Android (nhập lại PIN), đổi PIN, khóa ngay, đăng xuất, **phiên bản + kiểm tra cập nhật**.
@@ -240,6 +250,13 @@ Một khu vực để **cất file ra khỏi danh sách chính**, chỉ xem đư
 - **Phím tắt:** `Ctrl/⌘+R` làm mới, `Ctrl/⌘+F` tìm, `Ctrl/⌘+U` tải lên, `Delete` chuyển file đang chọn vào thùng rác (trong thùng rác: xóa vĩnh viễn, có xác nhận).
 - **Tải về**: main process tải vào `~/Downloads`, trùng tên thì thêm hậu tố (1), (2)…, xong `shell.showItemInFolder`.
 - **Làm mới:** polling 60s, tự làm mới khi cửa sổ focus (cách nhau ≥ 5s) và sau mỗi thao tác.
+
+### 9.2b Đổi tên, thẻ màu và Tải tất cả
+
+- **Đổi tên:** biểu tượng bút chì ở cả chế độ lưới và danh sách mở một popover kiểu Finder: ô tên ở trên (**phần mở rộng cố định**, chỉ sửa phần tên), hàng chấm màu ở dưới. `Enter` hoặc bấm ra ngoài thì lưu tên đã đổi; `Esc` bỏ thay đổi. Gọi `PATCH /files/:id`.
+- **Thẻ màu:** 7 màu (đỏ, cam, vàng, xanh lá, xanh dương, tím, xám), **tối đa 3 màu mỗi file**. Bấm chấm màu để gắn/bỏ ngay (không cần lưu); đủ 3 màu thì các chấm còn lại mờ đi và dòng chú thích báo đã đủ. Chấm màu hiện cạnh tên file ở lưới và danh sách.
+- **Lọc theo màu:** nút hình **chiếc hộp** cạnh nút làm mới. Mở hộp thì các chấm màu nhảy ra bên trái từng chấm một; chấm đang chọn **phình to và nhích cao hơn**. Chọn nhiều màu = file có **bất kỳ** màu nào trong số đó. Đóng hộp thì bộ lọc được xóa.
+- **Tải tất cả:** khi chọn nhiều file, thanh chọn có thêm nút **Tải tất cả** (viền outline, không có trong thùng rác), tải lần lượt mọi file đang chọn.
 
 ### 9.3 Trình xem ảnh (Lightbox)
 
@@ -283,16 +300,44 @@ Dictionary `en` / `vi` tự viết (không thư viện), mặc định theo `app
 - `preload/`: `contextBridge` expose `window.fatup.*` (một interface `FatupApi` trong `shared-ipc.ts`).
 - `renderer/`: React, không có quyền Node (`contextIsolation`, `sandbox`). Thumbnail và ảnh viewer tải thẳng từ presigned URL bằng `<img>`.
 
+### 9.10 Màn hình khóa có hoạt họa
+
+Hai màn hình nhập PIN vẽ hoàn toàn bằng **SVG + CSS** (không có file ảnh), nằm ở `desktop/src/renderer/src/components/`.
+
+- **Màn hình khóa app** (`Lock.tsx` + `LockMoria.tsx`): cảnh **cổng Moria (Doors of Durin)**. Cổng ở giữa, hai cây phát sáng hai bên, tường núi, bậc thềm và hồ nước. Đoàn người (`Fellowship.tsx`, 9 nhân vật tự vẽ) đi bên trái, Gollum ẩn giữa đá rêu bên phải, vòi bạch tuộc khổng lồ ở đáy màn hình. Ánh sáng quét từ chân trái qua vòm cổng sang chân phải, rồi hoa văn trên cánh cổng sáng dần từ ngưỡng cửa lên; các ký tự rune nhấp nháy theo sóng như đèn sân khấu. 4 ô PIN nằm trên cánh cổng, nút "Quên PIN? Đặt lại" ở dưới.
+  - **PIN đúng:** cổng mở ra kèm chớp sáng, khoảng 1,7 giây sau vào app.
+  - **PIN sai:** ánh sáng chập chờn, Gollum rụt xuống, các ô PIN rung.
+  - **Bấm vào Gollum:** nó nhảy lên. **Bấm vào vòi bạch tuộc:** vòi duỗi thẳng và cả đoàn nhảy lên.
+- **Cổng két sắt** (`VaultGate.tsx` + `LockWizard.tsx`, toàn màn hình): ông phù thủy đứng trên cây cầu đá, gậy giơ lên nhún nhảy, râu bay, tro, tia lửa và sao băng rơi, lửa bập bùng từ đáy màn hình. Có nút **← Quay lại**: ông hạ gậy và nói "GO BACK TO THE SHADOW!" nhẹ nhàng, giữ màn hình đủ lâu để đọc rồi mới thoát. **PIN đúng:** "Fire in the hole!", quả bom, vụ nổ, ông bay đi (`Boom.tsx` dùng chung).
+- `prefers-reduced-motion`: tắt hoạt họa, mở khóa ngay, vòi bạch tuộc chỉ vẽ một lần.
+- Các cảnh là tác phẩm tự vẽ theo phong cách riêng, không sao chép hình ảnh nào; chữ rune chỉ là nét trang trí.
+
 ---
 
 ## 10. Bản web (PWA)
 
-- Dùng **lại toàn bộ UI của desktop**; chỉ thay lớp `window.fatup` (`web/src/browser-api.ts`) bằng `fetch` + `localStorage`. `ApiClient` dùng chung với desktop.
+- Dùng **lại toàn bộ UI của desktop**; chỉ thay lớp `window.fatup` (`web/src/browser-api.ts`) bằng `fetch` + `localStorage`. `ApiClient` dùng chung với desktop. Giao diện trên điện thoại giống hệt desktop, chỉ xếp lại bố cục.
 - Build ra `worker/public/`, được Worker phục vụ qua `[assets]`. `npm run deploy` (trong `worker/`) build web trước rồi mới deploy. Ô URL điền sẵn bằng origin hiện tại; người dùng chỉ dán token và đặt PIN.
 - Cài được như app: manifest + service worker (chỉ cache app shell và asset; **không cache API, không cache presigned URL**).
-- Có: xem, tải về, xóa, thùng rác, két sắt, chọn nhiều, sắp xếp, dung lượng, dark mode. **Không có:** upload, kiểm tra cập nhật, QR ghép Android.
-- Tải về bằng thẻ `<a download>` (presigned URL đã có `Content-Disposition: attachment`). "Copy ảnh" cần bucket bật CORS; thiếu thì copy ảnh xem trước.
+- Có: xem, **upload**, tải về, đổi tên, thẻ màu, xóa, thùng rác, két sắt, chọn nhiều, sắp xếp, dung lượng, dark mode. **Không có:** kiểm tra cập nhật (web tự cập nhật qua service worker), QR ghép Android.
+- Tải về bằng thẻ `<a download>` (presigned URL đã có `Content-Disposition: attachment`).
+- **CORS của R2 là bắt buộc để upload** (`npm run r2:cors` áp dụng `worker/r2-cors.json`: `GET`, `HEAD`, `PUT`, header `content-type`). Thiếu thì upload báo lỗi mạng. "Copy ảnh" cũng cần CORS; thiếu thì copy ảnh xem trước.
 - Lưu ý bảo mật của token trên web: xem [mục 7](#7-bảo-mật).
+
+### 10.1 Upload từ web
+
+- `WebUploadManager` (`web/src/uploader.ts`) cùng giao diện hàng đợi với `UploadManager` của desktop nên **bảng tiến trình dùng chung**: 2 file cùng lúc, tiến độ, hủy từng file, tick khi xong. Luồng `POST /uploads` → PUT file → PUT thumbnail → `complete` (→ `PUT /files/:id/vault` nếu đang mở két).
+- File lấy từ `<input type="file" multiple>` (nút Tải lên, trên Android có cả chụp ảnh) hoặc kéo-thả. Vì File của trình duyệt không có đường dẫn, "paths" của bridge là **handle** `web:N` trỏ vào một bảng File trong bộ nhớ.
+- PUT bằng `XMLHttpRequest` (fetch không báo tiến độ upload). Thumbnail 400px JPEG q80 vẽ bằng canvas (`createImageBitmap`, theo EXIF); định dạng trình duyệt không giải mã được (HEIC...) vẫn upload, chỉ thiếu thumbnail.
+- `device` là `Trình duyệt · Hệ điều hành` từ User-Agent. File > 100 MB bị từ chối ngay. Khóa app hoặc đăng xuất hủy các upload đang chạy.
+- **Giới hạn:** upload chạy trong trang, nên đóng tab hoặc để trình duyệt ngủ thì dừng; không tiếp tục được upload dở.
+
+### 10.2 Giao diện điện thoại
+
+- Thanh trên: hàng 1 là logo, thanh Store và các nút (Tải lên, két sắt, thùng rác, cài đặt), hàng 2 là ô tìm kiếm. Lưới 2 cột, nút bấm tối thiểu 40–44px, tôn trọng safe-area của tai thỏ, chiều cao theo `dvh`.
+- Không có hover nên: bút chì ở lưới luôn hiện; **giữ lâu 450ms** một file để chọn (rung nhẹ), đã có file được chọn thì **chạm** để chọn/bỏ chọn. Chuột và bút cảm ứng giữ hành vi cũ.
+- Trình xem ảnh: ẩn nút zoom và mũi tên; **chụm hai ngón** để zoom, **vuốt ngang** chuyển ảnh, **vuốt xuống** đóng; bảng Chi tiết trượt từ đáy.
+- Màn hình khóa dọc: cảnh 16:9 được cắt vào giữa cổng (rộng 140% chiều cao màn hình) để ô PIN đủ lớn; Gollum nằm ngoài khung hình trên điện thoại.
 
 ---
 
@@ -319,9 +364,9 @@ Dictionary `en` / `vi` tự viết (không thư viện), mặc định theo `app
 
 ### Kiểm thử
 
-- **Worker** (vitest + Workers pool, D1/R2 giả lập, 26 test): auth, upload/complete, phân trang; thùng rác (xóa mềm, liệt kê, khôi phục, xóa vĩnh viễn, dọn sạch); két sắt (chuyển vào/ra, validate, xóa từ két); `/usage`; cron (hạn 30 ngày, hạn thùng rác, `retain_from`).
-- **Desktop** (vitest, 38 test): nhóm theo ngày, sắp xếp, ngưỡng và định dạng dung lượng, đặt tên tránh trùng, PIN lockout, i18n, `ApiClient`, so sánh version cập nhật, hàng đợi upload (server HTTP giả: stream, tiến độ, lỗi, hủy, upload vào két).
-- **Web** (2 test): mã hóa token bằng PIN và quy tắc khóa sau 5 lần sai.
+- **Worker** (vitest + Workers pool, D1/R2 giả lập, 33 test): auth, upload/complete, phân trang; đổi tên và thẻ màu (`PATCH`); thùng rác (xóa mềm, liệt kê, khôi phục, xóa vĩnh viễn, dọn sạch); két sắt (chuyển vào/ra, validate, xóa từ két); `/usage`; cron (hạn 30 ngày, hạn thùng rác, `retain_from`).
+- **Desktop** (vitest, 43 test): nhóm theo ngày, sắp xếp, ngưỡng và định dạng dung lượng, đặt tên tránh trùng, PIN lockout, i18n, `ApiClient`, so sánh version cập nhật, hàng đợi upload (server HTTP giả: stream, tiến độ, lỗi, hủy, upload vào két).
+- **Web** (10 test): mã hóa token bằng PIN, quy tắc khóa sau 5 lần sai, và hàng đợi upload web (thứ tự file/thumbnail/complete, 2 file cùng lúc, giới hạn 100 MB, lỗi, hủy, vào két, đặt tên thiết bị).
 - **Chưa có:** test tự động cho UI (chọn nhiều file, thùng rác, két sắt, dark mode, viewer) và cho luồng nhập PIN két sắt. Script `desktop/e2e/smoke.mjs` (Playwright) viết từ v1 và **chưa được cập nhật** theo giao diện mới. Android chỉ có unit test cho logic thuần.
 
 ---
@@ -333,20 +378,39 @@ Dictionary `en` / `vi` tự viết (không thư viện), mặc định theo `app
 | Xóa file | Xóa ngay, có confirm | Vào thùng rác 30 ngày, khôi phục được, không confirm (có Hoàn tác) |
 | Riêng tư | PIN khóa app | Thêm **Két sắt** nhập lại PIN mỗi lần mở |
 | Hướng truyền | Chỉ Android → máy tính | Desktop cũng tải file lên |
-| Nền tảng | Android, Electron | Thêm **bản web PWA** |
+| Nền tảng | Android, Electron | Thêm **bản web PWA** (có upload, giao diện điện thoại) |
 | Danh sách | Lọc theo tab, nhóm theo ngày | Thêm chọn nhiều file, xóa hàng loạt, sắp xếp |
 | Viewer ảnh | ← → / Esc | Thêm zoom 10–800%, kéo, chi tiết ảnh, tải trước ảnh kề |
 | Dung lượng | Không có | Thanh Store (xanh/cam/đỏ), `GET /usage` |
 | Giao diện | Dark/light theo OS | Thêm công tắc sáng/tối ở Cài đặt |
 | Cập nhật app | "Để sau" | Có kiểm tra cập nhật; tự cài trên Windows/AppImage |
-| Dữ liệu D1 | 1 bảng, 9 cột | +3 cột qua migration `0002`, `0003` |
-| API | 7 route | +7 route (xem [mục 4](#4-api-worker)) |
+| Dữ liệu D1 | 1 bảng, 9 cột | +4 cột qua migration `0002`, `0003`, `0004` |
+| API | 7 route | +8 route (xem [mục 4](#4-api-worker)) |
+| Đổi tên / thẻ màu | Không có | Bút chì + popover, 7 màu, tối đa 3/file, lọc theo màu |
+| Chọn nhiều file | Xóa | Thêm **Tải tất cả** |
+| Màn hình khóa | Ô nhập PIN tĩnh | Cổng Moria hoạt họa; cổng két sắt với ông phù thủy |
 | Ghi chú tải về | Item đã tải hiện ✓ | Đã bỏ dấu ✓ (vẫn lưu danh sách id đã tải trong config) |
 
-## 13. Hướng mở rộng
+## 13. Lộ trình
+
+### Phase 1: hoàn thành (`v0.1.6`)
+
+Android share target, app desktop (xem, tải lên, tải về, tìm kiếm, sắp xếp, chọn nhiều file), thùng rác, két sắt, thanh dung lượng, dark mode, kiểm tra cập nhật, **đổi tên, thẻ màu, Tải tất cả**, màn hình khóa có hoạt họa, và bản web PWA ở mức xem/quản lý (mục [10](#10-bản-web-pwa)).
+
+**Phần server cần chạy khi nâng cấp lên bản có thẻ màu:** `npm run db:migrate:remote` (áp dụng `0004`) rồi `npm run deploy`, theo thứ tự đó.
+
+### Phase 2: bản web PWA đầy đủ, cài lên Android và các thiết bị khác
+
+Mục tiêu: bản web đủ dùng để **thay thế việc cài app** trên Android, máy tính hoặc iOS, với giao diện giống hệt app desktop.
+
+- **Đã làm:** upload từ web ([10.1](#101-upload-từ-web)), giao diện điện thoại ([10.2](#102-giao-diện-điện-thoại)), CORS cho R2 (`npm run r2:cors`).
+- **Chưa làm:** nhận file khi Chia sẻ từ app khác (Web Share Target), nút "Cài FatUp" và hướng dẫn cài iOS, icon maskable, màn hình offline.
+- **Cần kiểm tra trên thiết bị thật:** cảm ứng (giữ lâu, chụm, vuốt) và upload qua mạng di động. Phần này mới được thử bằng giả lập.
+
+### Hướng mở rộng khác
 
 - Mã hóa phía client cho Két sắt (khóa dẫn xuất từ PIN/passphrase mạnh hơn), để file trong két không đọc được dù lộ token.
-- Upload từ bản web; thả thư mục; tiếp tục upload bị gián đoạn.
+- Thả thư mục; tiếp tục upload bị gián đoạn.
 - Android xem lại file đã gửi, có thùng rác/két sắt.
 - Ký số macOS/Windows để cập nhật tự động trên mọi nền tảng.
 - Test E2E cho giao diện mới; cập nhật lại ảnh chụp màn hình trong README.

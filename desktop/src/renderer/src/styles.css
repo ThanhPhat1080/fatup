@@ -2652,3 +2652,161 @@ h2 {
   opacity: 0;
   transition: opacity 0.4s ease-out;
 }
+
+/* ---------- Phones (the web app / PWA) ----------
+   Same look as the desktop app; only the layout is rearranged so nothing runs off the screen. */
+html,
+body {
+  overscroll-behavior: none;
+}
+.app {
+  min-width: 0;
+  /* Mobile browsers' toolbars make 100% taller than what is visible; dvh follows the real viewport. */
+  height: 100dvh;
+}
+.panel {
+  min-width: 0;
+}
+@media (max-width: 720px) {
+  .topbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: 'brand meter actions' 'search search search';
+    height: auto;
+    row-gap: 8px;
+    column-gap: 8px;
+    padding: calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
+  }
+  .brand {
+    grid-area: brand;
+    min-width: 0;
+  }
+  .topbar > .storage {
+    grid-area: meter;
+    justify-self: start;
+    min-width: 0;
+  }
+  .topbar__actions {
+    grid-area: actions;
+    margin-left: 0;
+  }
+  .search {
+    grid-area: search;
+    max-width: none;
+    height: 44px;
+  }
+  .panel {
+    margin: 0 8px calc(8px + env(safe-area-inset-bottom));
+  }
+  .panel__scroll {
+    padding: 0 12px 24px;
+  }
+  .selbar {
+    margin: 8px 8px 0;
+    flex-wrap: wrap;
+    border-radius: 20px;
+    row-gap: 0;
+  }
+  .selbar .btn {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .chips-row {
+    gap: 8px;
+  }
+  /* Bigger touch targets. */
+  .icon-btn {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .chip {
+    min-height: 40px;
+  }
+}
+
+/* Touch screens have no hover: keep the pencil visible and make press-and-hold the "select" gesture (see usePress in Files.tsx). */
+@media (hover: none) {
+  .tile .rename-btn {
+    opacity: 1;
+  }
+  .tile,
+  .list__row {
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+@media (max-width: 720px) {
+  .chips {
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+  .chip {
+    padding: 0 12px;
+  }
+  .chips-row__tools .icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  /* The thumbnail already says what the file is, so give the name the room the small type icon used. */
+  .tile__head {
+    gap: 4px;
+    padding-left: 10px;
+  }
+  .tile__head > .file-icon {
+    display: none;
+  }
+  /* List rows: the time stays, the pencil is tighter. */
+  .list__row {
+    gap: 8px;
+  }
+}
+
+/* Lightbox on a phone: pinch and swipe replace the zoom buttons and the side arrows. */
+.lightbox__stage {
+  touch-action: none;
+}
+@media (max-width: 720px) {
+  .lightbox__bar {
+    gap: 2px;
+    padding: calc(6px + env(safe-area-inset-top)) 6px 6px;
+  }
+  .lightbox__zoomctl,
+  .lightbox__nav {
+    display: none;
+  }
+  .lightbox__stage img {
+    left: 8px;
+    right: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    width: calc(100% - 16px);
+    height: calc(100% - 16px - env(safe-area-inset-bottom));
+  }
+  .lightbox__info {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 55%;
+    overflow-y: auto;
+    border-radius: 16px 16px 0 0;
+  }
+}
+
+/* Lock screen in portrait: the 16:9 scene would shrink to a sliver, so crop to the door and keep the PIN cells finger-sized. */
+@media (max-aspect-ratio: 1/1) {
+  .moria__stage {
+    width: 140dvh;
+  }
+  .moria__pin .pin__cells {
+    gap: 0.9cqw;
+  }
+  .moria__pin .pin__cell {
+    width: 3.4cqw;
+    height: 4.4cqw;
+  }
+}

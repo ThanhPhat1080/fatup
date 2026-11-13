@@ -19,13 +19,16 @@ export function Setup({ needsConnection, defaultUrl, onDone }: { needsConnection
 
   const canSubmit = url.trim() !== '' && token.trim() !== '' && !busy;
 
+  // A network failure carries the browser's own reason (blocked, bad certificate, bad header...), which is the only clue to the cause.
+  const describe = (res: { error: string; detail?: string }) => errorText(t, res.error) + (res.error === 'network' && res.detail ? ` (${res.detail})` : '');
+
   async function test() {
     setBusy(true);
     setError(null);
     const res = await window.fatup.testConnection(url, token);
     setBusy(false);
     setTested(res.ok);
-    if (!res.ok) setError(errorText(t, res.error));
+    if (!res.ok) setError(describe(res));
   }
 
   async function saveConnection() {
@@ -34,7 +37,7 @@ export function Setup({ needsConnection, defaultUrl, onDone }: { needsConnection
     const res = await window.fatup.saveConnection(url, token);
     setBusy(false);
     if (res.ok) setStep('pin');
-    else setError(errorText(t, res.error));
+    else setError(describe(res));
   }
 
   async function confirmPin(pin: string) {

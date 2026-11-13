@@ -50,7 +50,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [uploadJobs, setUploadJobs] = useState<UploadJob[]>([]);
   const [dragging, setDragging] = useState(false);
-  const canUpload = state.platform === 'desktop';
+  const canUpload = true; // desktop streams from disk, the web build uploads File objects; both satisfy the same bridge
   const [sort, setSort] = useState<SortState>(DEFAULT_SORT);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   // Prefer the server's figure; if it isn't available (e.g. an older server), add up the files we already have.

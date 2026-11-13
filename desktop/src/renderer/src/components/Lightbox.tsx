@@ -26,6 +26,8 @@ export function Lightbox({ items, currentId, onChange, onClose, onDownload, onCo
   const [showInfo, setShowInfo] = useState(false);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const pinch = useRef<{ d: number; zoom: number } | null>(null);
+  const swipe = useRef<{ x: number; y: number } | null>(null);
   const index = items.findIndex((it) => it.id === currentId);
   const item = items[index];
   const [fullUrl, setFullUrl] = useState<string | null>(null);
@@ -92,6 +94,33 @@ export function Lightbox({ items, currentId, onChange, onClose, onDownload, onCo
   const onPointerUp = () => {
     drag.current = null;
   };
+  // Touch: pinch to zoom, swipe sideways for the next/previous photo, swipe down to close.
+  const onTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      swipe.current = null;
+      pinch.current = { d: Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY), zoom };
+    } else if (e.touches.length === 1 && zoom <= 1) {
+      swipe.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    }
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    const p = pinch.current;
+    if (p && e.touches.length === 2) {
+      applyZoom(p.zoom * (Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY) / p.d));
+    }
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (e.touches.length < 2) pinch.current = null;
+    const start = swipe.current;
+    if (!start || e.touches.length > 0 || e.changedTouches.length === 0) return;
+    swipe.current = null;
+    const dx = e.changedTouches[0].clientX - start.x;
+    const dy = e.changedTouches[0].clientY - start.y;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      if (dx < 0 && index < items.length - 1) onChange(items[index + 1].id);
+      else if (dx > 0 && index > 0) onChange(items[index - 1].id);
+    } else if (dy > 110 && dy > Math.abs(dx) * 1.5) onClose();
+  };
   const when = new Date(item.createdAt).toLocaleString(locale === 'vi' ? 'vi-VN' : 'en-US');
   const imgStyle = { transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, cursor: zoom > 1 ? 'grab' : 'default' };
   const imgHandlers = { onDoubleClick: () => applyZoom(zoom > 1 ? 1 : 2.5), onPointerDown, onPointerMove, onPointerUp };
@@ -109,16 +138,16 @@ export function Lightbox({ items, currentId, onChange, onClose, onDownload, onCo
             {item.device ? ` · ${item.device}` : ''}
           </span>
         </div>
-        <button className="icon-btn icon-btn--dark" onClick={() => applyZoom(zoom / STEP)} disabled={zoom <= MIN_ZOOM} aria-label={t.zoomOut} title={t.zoomOut}>
+        <button className="icon-btn icon-btn--dark lightbox__zoomctl" onClick={() => applyZoom(zoom / STEP)} disabled={zoom <= MIN_ZOOM} aria-label={t.zoomOut} title={t.zoomOut}>
           <ZoomOut size={20} />
         </button>
-        <button className="lightbox__zoom" onClick={() => applyZoom(1)} aria-label={t.zoomFit} title={t.zoomFit}>
+        <button className="lightbox__zoom lightbox__zoomctl" onClick={() => applyZoom(1)} aria-label={t.zoomFit} title={t.zoomFit}>
           {Math.round(zoom * 100)}%
         </button>
-        <button className="icon-btn icon-btn--dark" onClick={() => applyZoom(zoom * STEP)} disabled={zoom >= MAX_ZOOM} aria-label={t.zoomIn} title={t.zoomIn}>
+        <button className="icon-btn icon-btn--dark lightbox__zoomctl" onClick={() => applyZoom(zoom * STEP)} disabled={zoom >= MAX_ZOOM} aria-label={t.zoomIn} title={t.zoomIn}>
           <ZoomIn size={20} />
         </button>
-        <button className="icon-btn icon-btn--dark" onClick={() => applyZoom(1)} aria-label={t.zoomFit} title={t.zoomFit}>
+        <button className="icon-btn icon-btn--dark lightbox__zoomctl" onClick={() => applyZoom(1)} aria-label={t.zoomFit} title={t.zoomFit}>
           <Maximize size={20} />
         </button>
         <button className={`icon-btn icon-btn--dark${showInfo ? ' is-active' : ''}`} onClick={() => setShowInfo((v) => !v)} aria-label={t.details} title={t.details} aria-pressed={showInfo}>
@@ -135,7 +164,7 @@ export function Lightbox({ items, currentId, onChange, onClose, onDownload, onCo
         </button>
       </header>
       <div className="lightbox__body">
-      <div className="lightbox__stage" onWheel={onWheel} onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="lightbox__stage" onWheel={onWheel} onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd} onClick={(e) => e.target === e.currentTarget && onClose()}>
         {index > 0 && (
           <button className="lightbox__nav lightbox__nav--prev" onClick={() => onChange(items[index - 1].id)} aria-label={t.previous}>
             <ChevronLeft size={28} />

@@ -21,7 +21,8 @@ export class ApiClient {
   constructor(
     private readonly baseUrl: string,
     private readonly token: string,
-    private readonly fetchImpl: typeof fetch = fetch,
+    // Wrapped, not `= fetch`: browsers throw "Illegal invocation" when fetch is called as a method of another object.
+    private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init),
   ) {}
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {

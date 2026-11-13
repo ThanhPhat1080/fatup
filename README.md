@@ -15,12 +15,13 @@ Gửi ảnh và file giữa **điện thoại Android** và **máy tính** (macO
 - **Android → máy tính:** chọn ảnh/file → **Chia sẻ → FatUp**. Mất mạng thì app xếp hàng rồi tự gửi lại.
 - **Máy tính → cloud:** nút **Tải lên**, `Ctrl/⌘+U` hoặc kéo-thả file vào cửa sổ. Có bảng tiến trình kiểu Google Drive, hủy được từng file.
 - **Danh sách:** mới nhất lên đầu, nhóm theo ngày, tab **Tất cả / Ảnh / File**, tìm kiếm không phân biệt dấu, chế độ lưới hoặc danh sách. Bấm tiêu đề cột để **sắp xếp** theo Tên / Tải lên / Dung lượng.
-- **Chọn nhiều file:** mỗi file có checkbox. `Shift`+bấm chọn một dãy, `Ctrl/⌘+A` chọn tất cả. Chuyển vào thùng rác hoặc két sắt hàng loạt.
+- **Chọn nhiều file:** mỗi file có checkbox. `Shift`+bấm chọn một dãy, `Ctrl/⌘+A` chọn tất cả. Chuyển vào thùng rác hoặc két sắt hàng loạt, hoặc **Tải tất cả**.
+- **Đổi tên và thẻ màu:** bút chì cạnh mỗi file mở popover để đổi tên (giữ nguyên phần mở rộng) và gắn tối đa **3 chấm màu**. Nút hình hộp cạnh nút làm mới để **lọc theo màu**.
 - **Xem ảnh:** vừa khung, zoom 10–800% (nút, lăn chuột, `+`/`-`, phím **↓ phóng to / ↑ thu nhỏ**), kéo để di chuyển, `←`/`→` chuyển ảnh, bảng **Chi tiết** (tên, loại, dung lượng, kích thước, thời gian, thiết bị).
 - **Thùng rác:** xóa file là chuyển vào thùng rác, khôi phục được trong 30 ngày. Xem [bên dưới](#thùng-rác-trash).
 - **Két sắt (Secret Vault):** cất file ra khỏi danh sách chính, mỗi lần mở phải nhập lại PIN. Xem [bên dưới](#két-sắt-secret-vault).
 - **Thanh dung lượng (Store):** cạnh ô tìm kiếm, cho biết đã dùng bao nhiêu GB trên R2: xanh, **cam từ 70%**, **đỏ từ 90%**.
-- **Giao diện:** En/Vi, **sáng/tối** (công tắc mặt trời/mặt trăng trong Cài đặt, mặc định theo hệ điều hành). Bấm logo FatUp để về trang chủ.
+- **Giao diện:** En/Vi, **sáng/tối** (công tắc mặt trời/mặt trăng trong Cài đặt, mặc định theo hệ điều hành). Bấm logo FatUp để về trang chủ. Màn hình khóa là cảnh hoạt họa cổng Moria; cổng két sắt có ông phù thủy trên cầu đá.
 - **Kiểm tra cập nhật** trong Cài đặt (app máy tính). File tự xóa sau **30 ngày**, giới hạn **100 MB/file**.
 
 ### Thùng rác (Trash)
@@ -178,11 +179,19 @@ Kết quả đúng là `{"ok":true}`. Cron dọn dẹp chạy lúc 03:00 UTC m�
 1. Ô URL đã điền sẵn, bạn chỉ cần dán token (chuỗi tạo ở bước 7) rồi đặt PIN 4 số.
 2. Cài như một app: Chrome/Edge chọn **Install app**, Safari (iPhone) chọn **Share → Add to Home Screen**.
 
-Bản web xem, tải về, xóa (thùng rác), két sắt, chọn nhiều file và sắp xếp giống app máy tính, nhưng **chưa có tải file lên**, kiểm tra cập nhật và ghép QR cho Android.
+Bản web có giao diện và tính năng giống app máy tính: xem, **tải file lên** (nút Tải lên, kéo-thả, hoặc chụp/chọn ảnh từ điện thoại), tải về, đổi tên, thẻ màu, thùng rác, két sắt, chọn nhiều file, sắp xếp. Chỉ thiếu **kiểm tra cập nhật** (web tự cập nhật) và **ghép QR cho Android**.
+
+Trên điện thoại, giao diện tự gọn lại cho màn hình nhỏ: **giữ lâu** một file để chọn nhiều file, trong trình xem ảnh thì **chụm hai ngón** để zoom, **vuốt ngang** đổi ảnh, **vuốt xuống** để đóng.
 
 **Lưu ý bảo mật:** token được mã hóa bằng PIN rồi lưu trong trình duyệt. PIN 4 số chỉ là khóa che màn hình, không chống được người có quyền truy cập vào dữ liệu trình duyệt của bạn. Đừng dùng bản web trên máy dùng chung.
 
-**Nút "Copy ảnh"** trên web cần bucket R2 cho phép CORS. Nếu không cấu hình, nút này sẽ dùng ảnh xem trước thay cho ảnh gốc. Việc này không bắt buộc.
+**Cấu hình CORS cho bucket R2 (làm một lần, cần để tải file lên từ web):** trình duyệt gửi file thẳng lên R2 bằng presigned URL nên bucket phải cho phép. Trong `worker/`:
+
+```bash
+npm run r2:cors
+```
+
+Lệnh này áp dụng `worker/r2-cors.json` (cho phép `GET`, `HEAD`, `PUT` từ mọi origin; request vẫn phải có chữ ký presigned nên không ai khác ghi được vào bucket). Muốn chặt hơn, đổi `"*"` thành địa chỉ Worker của bạn. Chưa cấu hình thì tải lên từ web báo lỗi mạng. Nút **Copy ảnh** cũng dùng CORS này; không có thì nó copy ảnh xem trước thay cho ảnh gốc.
 
 ### Nâng cấp server từ bản cũ
 

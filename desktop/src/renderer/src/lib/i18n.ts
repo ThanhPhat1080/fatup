@@ -157,6 +157,7 @@ const en = {
   err_too_large: 'Files are limited to 100 MB.',
   err_not_a_file: 'Folders can’t be uploaded.',
   err_upload_failed: 'Upload failed.',
+  err_upload_blocked: 'Upload blocked. The R2 bucket needs a CORS rule: run "npm run r2:cors" in worker/.',
   err_generic: 'Something went wrong.',
 };
 
@@ -313,6 +314,7 @@ const vi: Dict = {
   err_too_large: 'File tối đa 100 MB.',
   err_not_a_file: 'Không tải thư mục lên được.',
   err_upload_failed: 'Tải lên thất bại.',
+  err_upload_blocked: 'Tải lên bị chặn. Bucket R2 cần bật CORS: chạy "npm run r2:cors" trong worker/.',
   err_generic: 'Có lỗi xảy ra.',
 };
 

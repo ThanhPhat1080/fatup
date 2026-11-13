@@ -1,4 +1,4 @@
-import { useState, type MouseEvent } from 'react';
+import { useRef, useState, type MouseEvent, type PointerEvent } from 'react';
 import { ArrowDown, ArrowUp, CloudUpload, MoreVertical, Pencil, SearchX, Trash2 } from 'lucide-react';
 import type { Item } from '../../../shared-ipc';
 import { formatSize, formatTime, type DateGroup, type SortKey, type SortState } from '../lib/format';
@@ -34,11 +34,51 @@ function Check({ item, selected, onToggle }: { item: Item; selected: boolean; on
   );
 }
 
-function menuHandlers(item: Item, onMenu: ViewProps['onMenu']) {
+const LONG_PRESS_MS = 450;
+
+/**
+ * Touch gestures for a file: press and hold toggles its selection (the phone version of the hover checkbox), and once something
+ * is selected a plain tap toggles too. Mouse and pen are untouched. The context menu that long-press would raise is suppressed
+ * for touch, since the gesture already means "select".
+ */
+function usePress(item: Item, selecting: boolean, { onToggle, onOpen, onMenu }: Pick<ViewProps, 'onToggle' | 'onOpen' | 'onMenu'>) {
+  const timer = useRef<number | undefined>(undefined);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  const fired = useRef(false);
+  const touched = useRef(false);
+  const clear = () => {
+    window.clearTimeout(timer.current);
+    start.current = null;
+  };
   return {
+    onPointerDown: (e: PointerEvent) => {
+      touched.current = e.pointerType === 'touch';
+      if (!touched.current) return;
+      fired.current = false;
+      start.current = { x: e.clientX, y: e.clientY };
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => {
+        fired.current = true;
+        navigator.vibrate?.(15);
+        onToggle(item, false);
+      }, LONG_PRESS_MS);
+    },
+    onPointerMove: (e: PointerEvent) => {
+      if (start.current && Math.hypot(e.clientX - start.current.x, e.clientY - start.current.y) > 10) clear(); // a scroll, not a press
+    },
+    onPointerUp: clear,
+    onPointerCancel: clear,
+    onClick: () => {
+      if (fired.current) {
+        fired.current = false; // the press already selected it; swallow the click that follows
+        return;
+      }
+      if (selecting) onToggle(item, false);
+      else onOpen(item);
+    },
     onContextMenu: (e: MouseEvent) => {
       e.preventDefault();
-      onMenu(item, e.clientX, e.clientY);
+      if (!touched.current) onMenu(item, e.clientX, e.clientY);
     },
   };
 }
@@ -104,6 +144,68 @@ function Thumb({ item }: { item: Item }) {
   );
 }
 
+type ItemProps = Pick<ViewProps, 'selected' | 'onToggle' | 'onOpen' | 'onMenu' | 'onEdit'> & { item: Item };
+
+function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit }: ItemProps) {
+  const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
+  return (
+    <div
+      className={`tile${selected.has(item.id) ? ' tile--selected' : ''}`}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => e.key === 'Enter' && onOpen(item)}
+      {...press}
+    >
+      <div className="tile__head">
+        <span className="tile__check">
+          <Check item={item} selected={selected.has(item.id)} onToggle={onToggle} />
+        </span>
+        <FileIcon name={item.name} mime={item.mime} size={18} />
+        <span className="tile__name" title={item.name}>
+          {item.name}
+        </span>
+        <TagDots tags={item.tags} />
+        {onEdit && <RenameButton onClick={(r) => onEdit(item, r)} />}
+        <MoreButton item={item} onMenu={onMenu} />
+      </div>
+      <div className="tile__thumb">
+        <Thumb item={item} />
+      </div>
+    </div>
+  );
+}
+
+function Row({ item, selected, onToggle, onOpen, onMenu, onEdit }: ItemProps) {
+  const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
+  return (
+    <div className={`list__row${selected.has(item.id) ? ' list__row--selected' : ''}`} role="row" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen(item)} {...press}>
+      <span role="cell">
+        <Check item={item} selected={selected.has(item.id)} onToggle={onToggle} />
+      </span>
+      <span className="list__name" role="cell">
+        {item.thumbUrl ? <img className="list__mini" src={item.thumbUrl} alt="" loading="lazy" draggable={false} /> : <FileIcon name={item.name} mime={item.mime} />}
+        <span className="ellipsis" title={item.name}>
+          {item.name}
+        </span>
+        <TagDots tags={item.tags} />
+        {onEdit && <RenameButton onClick={(r) => onEdit(item, r)} />}
+      </span>
+      <span role="cell" className="muted col-from ellipsis">
+        {item.device ?? '—'}
+      </span>
+      <span role="cell" className="muted col-time">
+        {formatTime(item.createdAt)}
+      </span>
+      <span role="cell" className="muted col-size">
+        {formatSize(item.size)}
+      </span>
+      <span role="cell">
+        <MoreButton item={item} onMenu={onMenu} />
+      </span>
+    </div>
+  );
+}
+
 export function FileGrid({ groups, selected, onToggle, onOpen, onMenu, onEdit }: ViewProps) {
   return (
     <>
@@ -112,31 +214,7 @@ export function FileGrid({ groups, selected, onToggle, onOpen, onMenu, onEdit }:
           {g.label && <h3 className="group__label">{g.label}</h3>}
           <div className={`grid${selected.size > 0 ? ' grid--selecting' : ''}`}>
             {g.items.map((item) => (
-              <div
-                key={item.id}
-                className={`tile${selected.has(item.id) ? ' tile--selected' : ''}`}
-                role="button"
-                tabIndex={0}
-                onClick={() => onOpen(item)}
-                onKeyDown={(e) => e.key === 'Enter' && onOpen(item)}
-                {...menuHandlers(item, onMenu)}
-              >
-                <div className="tile__head">
-                  <span className="tile__check">
-                    <Check item={item} selected={selected.has(item.id)} onToggle={onToggle} />
-                  </span>
-                  <FileIcon name={item.name} mime={item.mime} size={18} />
-                  <span className="tile__name" title={item.name}>
-                    {item.name}
-                  </span>
-                  <TagDots tags={item.tags} />
-                  {onEdit && <RenameButton onClick={(r) => onEdit(item, r)} />}
-                  <MoreButton item={item} onMenu={onMenu} />
-                </div>
-                <div className="tile__thumb">
-                  <Thumb item={item} />
-                </div>
-              </div>
+              <Tile key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} />
             ))}
           </div>
         </section>
@@ -196,43 +274,7 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, s
         <section key={g.key} role="rowgroup">
           {g.label && <h3 className="group__label group__label--list">{g.label}</h3>}
           {g.items.map((item) => (
-            <div
-              key={item.id}
-              className={`list__row${selected.has(item.id) ? ' list__row--selected' : ''}`}
-              role="row"
-              tabIndex={0}
-              onClick={() => onOpen(item)}
-              onKeyDown={(e) => e.key === 'Enter' && onOpen(item)}
-              {...menuHandlers(item, onMenu)}
-            >
-              <span role="cell">
-                <Check item={item} selected={selected.has(item.id)} onToggle={onToggle} />
-              </span>
-              <span className="list__name" role="cell">
-                {item.thumbUrl ? (
-                  <img className="list__mini" src={item.thumbUrl} alt="" loading="lazy" draggable={false} />
-                ) : (
-                  <FileIcon name={item.name} mime={item.mime} />
-                )}
-                <span className="ellipsis" title={item.name}>
-                  {item.name}
-                </span>
-                <TagDots tags={item.tags} />
-                {onEdit && <RenameButton onClick={(r) => onEdit(item, r)} />}
-              </span>
-              <span role="cell" className="muted col-from ellipsis">
-                {item.device ?? '—'}
-              </span>
-              <span role="cell" className="muted col-time">
-                {formatTime(item.createdAt)}
-              </span>
-              <span role="cell" className="muted col-size">
-                {formatSize(item.size)}
-              </span>
-              <span role="cell">
-                <MoreButton item={item} onMenu={onMenu} />
-              </span>
-            </div>
+            <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} />
           ))}
         </section>
       ))}
