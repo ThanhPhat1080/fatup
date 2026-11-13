@@ -46,6 +46,15 @@ describe('POST /links/:id/preview', () => {
     expect(await env.BUCKET.get(thumbKey(link.id))).toBeNull();
   });
 
+  it('decodes HTML entities in the picture address (Instagram signs its URLs, so a stray "&amp;" gets a 403 "Bad URL hash")', async () => {
+    const t = setup({
+      'https://site.test/a': () => html(`<meta property="og:image" content="https://cdn.test/p.jpg?stp=c259&amp;_nc_cat=111&#38;ccb=7-5&#x26;oh=00_AfA">`),
+    });
+    const link = await t.add('https://site.test/a');
+    const item = (await (await t.preview(link.id)).json()) as PreviewResponse;
+    expect(item.previewImage).toBe('https://cdn.test/p.jpg?stp=c259&_nc_cat=111&ccb=7-5&oh=00_AfA');
+  });
+
   it('falls back to <title> and twitter tags', async () => {
     const t = setup({ 'https://site.test/a': () => html('<title> Plain\n title </title>') });
     const item = (await (await t.preview((await t.add('https://site.test/a')).id)).json()) as FileItem;

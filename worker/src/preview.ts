@@ -89,7 +89,8 @@ export function parseHtml(html: string): { title: string | null; image: string |
   const titleTag = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1];
   return {
     title: clean(meta.get('og:title') ?? meta.get('twitter:title') ?? titleTag),
-    image: meta.get('og:image') ?? meta.get('og:image:url') ?? meta.get('twitter:image') ?? meta.get('twitter:image:src') ?? null,
+    // Attribute values are HTML, so "&amp;" stands for "&": an address with its entities left in (as Instagram's signed ones have) is refused by the CDN.
+    image: decodeEntities(meta.get('og:image') ?? meta.get('og:image:url') ?? meta.get('twitter:image') ?? meta.get('twitter:image:src') ?? '').trim() || null,
   };
 }
 
