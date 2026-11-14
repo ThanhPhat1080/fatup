@@ -21,9 +21,12 @@ function svg(i) {
 <path d="M0 600 L${220 + i * 20} 300 L420 470 L560 360 L800 600Z" fill="#000" opacity=".25"/></svg>`;
 }
 
-export function startMockServer() {
-  const now = Date.now();
+export function startMockServer(realNow = Date.now()) {
   const hour = 3_600_000;
+  // The seed dates are "a few hours ago" and "yesterday evening", which only land in the right calendar days when it is already
+  // morning. Before 08:00 local time, pretend it is 08:00 so the file list always has a Today and a Yesterday group.
+  const startOfToday = new Date(realNow).setHours(0, 0, 0, 0);
+  const now = Math.max(realNow, startOfToday + 8 * hour);
   const day = 24 * hour;
   const seed = [
     ['IMG_20261112_0832.jpg', 'image/jpeg', 2_480_000, 0.3 * hour],
