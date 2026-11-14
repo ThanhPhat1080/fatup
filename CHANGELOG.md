@@ -4,11 +4,14 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
-## [Chưa phát hành]
+## [0.3.2] — 2026-11-14
 
 ### Sửa
 - **Ảnh xem trước của Instagram (và mọi trang có địa chỉ ảnh chứa `&`):** Worker lấy `og:image` thô từ HTML mà không giải mã `&amp;`, nên địa chỉ ảnh sai chữ ký và Instagram trả 403 "Bad URL hash". Đã giải mã thực thể HTML ở địa chỉ ảnh. Cần deploy Worker; link đã thử trước đó bị nhớ là thất bại 24 giờ, bấm **Tải lại xem trước** (menu `⋮`) để thử lại ngay.
 - **Icon PWA trên Android:** trước đây icon là hình vuông bo góc nằm trên nền tròn trắng (Android tự thêm vì icon chưa khai báo `maskable`). Giờ có thêm icon maskable phủ kín gradient, nên trên màn hình chính icon là hình tròn gradient với mũi tên ở giữa. `apple-touch-icon` cũng được vẽ phủ kín (iOS tự bo góc và tô đen phần trong suốt). Android cập nhật icon của PWA đã cài trong vòng vài ngày; muốn thấy ngay thì gỡ rồi cài lại.
+
+### Nâng cấp
+Không có migration. Chỉ Worker (`npm run deploy` trong `worker/`) mới có tác dụng với cả hai bản sửa: ảnh Instagram cần Worker mới, icon cần PWA mới (lệnh deploy build lại PWA). App desktop và Android không đổi so với 0.3.1, bản này chỉ ghi nhận lại cho khớp phiên bản. Ảnh xem trước của các link Instagram đã thất bại được nhớ 24 giờ trên mỗi thiết bị; bấm **Tải lại xem trước** (menu `⋮`) để thử lại ngay.
 
 ## [0.3.1] — 2026-11-13
 
