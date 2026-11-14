@@ -21,6 +21,29 @@ function svg(i) {
 <path d="M0 600 L${220 + i * 20} 300 L420 470 L560 360 L800 600Z" fill="#000" opacity=".25"/></svg>`;
 }
 
+/** A one-page PDF with the file's name written on it. */
+function tinyPdf(title) {
+  const text = title.replace(/[()\\]/g, '').replace(/[^\x20-\x7e]/g, '?');
+  const stream = `BT /F1 24 Tf 72 720 Td (${text}) Tj ET`;
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let out = '%PDF-1.4\n';
+  const offsets = [];
+  objs.forEach((o, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${offsets.map((n) => `${String(n).padStart(10, '0')} 00000 n \n`).join('')}`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return out;
+}
+
 export function startMockServer(realNow = Date.now()) {
   const hour = 3_600_000;
   // The seed dates are "a few hours ago" and "yesterday evening", which only land in the right calendar days when it is already
@@ -65,7 +88,7 @@ export function startMockServer(realNow = Date.now()) {
     ['Thread về AI', 'https://x.com/someone/status/1', 'x'],
     ['Blog của Kent', 'https://example.com/post', 'internet'],
     ['Video TikTok vui', 'https://www.tiktok.com/@a/video/1', 'tiktok'],
-    ['Tổng hợp deal Shopee', 'https://shopee.vn/a-i.1.2', 'shopee'],
+    ['Tổng hợp deal Shopee', 'https://shopee.vn/a-i.1.2', 'internet'],
   ];
   const links = linkSeed.map(([name, url, site], i) => ({
     id: `l${i}`.padStart(26, '0'),
@@ -103,7 +126,10 @@ export function startMockServer(realNow = Date.now()) {
     if ((m = /^\/raw\/(\w+)$/.exec(url.pathname))) {
       const f = files.find((x) => x.id === m[1]);
       if (!f) return send(404, 'gone', 'text/plain');
-      return f.img >= 0 ? send(200, svg(f.img), 'image/svg+xml') : send(200, `fake contents of ${f.name}`, 'text/plain');
+      if (f.img >= 0) return send(200, svg(f.img), 'image/svg+xml');
+      // Served as a download, like R2's presigned URLs; the app reads PDFs itself to show them.
+      if (f.mime === 'application/pdf') return send(200, tinyPdf(f.name), 'application/pdf');
+      return send(200, `fake contents of ${f.name}`, 'text/plain');
     }
 
     if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(401, { error: { code: 'unauthorized', message: 'bad token' } });
@@ -119,9 +145,24 @@ export function startMockServer(realNow = Date.now()) {
     if ((m = /^\/links\/(\w+)\/preview$/.exec(url.pathname)) && req.method === 'POST') {
       const link = links.find((x) => x.id === m[1]);
       if (!link) return send(404, { error: { code: 'not_found', message: 'nope' } });
-      return send(200, { ...link, thumbUrl: null, previewed: true, previewImage: link.site === 'shopee' ? null : `${base}/pic/${link.id}.png` });
+      return send(200, { ...link, thumbUrl: null, previewed: true, previewImage: link.url.includes('shopee') ? null : `${base}/pic/${link.id}.png` });
     }
     if ((m = /^\/files\/(\w+)\/download$/.exec(url.pathname))) return send(200, { url: `${base}/raw/${m[1]}` });
+    if ((m = /^\/files\/(\w+)$/.exec(url.pathname)) && req.method === 'PATCH') {
+      // Only what the app's tests change: the important marker.
+      const id = m[1];
+      let raw = '';
+      req.on('data', (c) => (raw += c));
+      req.on('end', () => {
+        const patch = JSON.parse(raw || '{}');
+        const f = files.find((x) => x.id === id) ?? links.find((x) => x.id === id);
+        if (!f) return send(404, { error: { code: 'not_found', message: 'nope' } });
+        if (typeof patch.important === 'boolean') f.important = patch.important;
+        const { img, ...item } = f;
+        send(200, { ...item, thumbUrl: img >= 0 ? `${base}/thumb/${img}.svg` : null });
+      });
+      return;
+    }
     if ((m = /^\/files\/(\w+)$/.exec(url.pathname)) && req.method === 'DELETE') {
       const i = files.findIndex((x) => x.id === m[1]);
       if (i < 0) return send(404, { error: { code: 'not_found', message: 'nope' } });

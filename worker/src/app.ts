@@ -23,7 +23,7 @@ import {
   type ListFilesResponse,
 } from '@fatup/shared';
 import { purge } from './cleanup';
-import { fetchPreview } from './preview';
+import { checkFrame, fetchPreview } from './preview';
 import type { Env } from './env';
 import { createPresigner, fileKey, thumbKey, type Presigner } from './presign';
 import { isUlid, ulid } from './ulid';
@@ -45,6 +45,10 @@ type Row = {
   url: string | null;
   previewed_at: number | null;
   title_set: number;
+  /** Absolute address of the link's site icon, or null. */
+  icon_url: string | null;
+  /** 1 when marked important. */
+  important: number;
 };
 
 type AppEnv = { Bindings: Env; Variables: { presigner: Presigner } };
@@ -117,6 +121,8 @@ async function toItem(row: Row, presigner: Presigner): Promise<FileItem> {
     url: row.kind === 'link' ? row.url : null,
     site: row.kind === 'link' && row.url ? siteOf(row.url) : null,
     previewed: row.previewed_at !== null,
+    iconUrl: row.kind === 'link' ? (row.icon_url ?? null) : null,
+    important: row.important === 1,
   };
 }
 
@@ -240,6 +246,8 @@ export function createApp(options: AppOptions = {}) {
       url,
       previewed_at: null,
       title_set: title ? 1 : 0,
+      icon_url: null,
+      important: 0,
     };
     await c.env.DB.prepare(
       `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, device, created_at, url, title_set)
@@ -259,10 +267,19 @@ export function createApp(options: AppOptions = {}) {
     const presigner = c.get('presigner');
 
     const found = await fetchPreview(row.url, options.fetch);
-    const next: Row = { ...row, previewed_at: Date.now() };
+    const next: Row = { ...row, previewed_at: Date.now(), icon_url: found.iconUrl ?? row.icon_url ?? null };
     if (found.title && !row.title_set) next.name = found.title;
-    await c.env.DB.prepare('UPDATE files SET name = ?, previewed_at = ? WHERE id = ?').bind(next.name, next.previewed_at, id).run();
+    await c.env.DB.prepare('UPDATE files SET name = ?, previewed_at = ?, icon_url = ? WHERE id = ?').bind(next.name, next.previewed_at, next.icon_url, id).run();
     return c.json({ ...(await toItem(next, presigner)), previewImage: found.imageUrl });
+  });
+
+  // Tells the web app whether a link's page can be shown inside it (the desktop app has a real browser view and never asks).
+  app.get('/links/:id/frame', async (c) => {
+    const row = await c.env.DB.prepare(`SELECT url FROM files WHERE id = ? AND kind = 'link' AND status = 'ready' AND deleted_at IS NULL`)
+      .bind(c.req.param('id'))
+      .first<Pick<Row, 'url'>>();
+    if (!row?.url) return fail(c, 404, 'not_found', 'Link not found');
+    return c.json(await checkFrame(row.url, options.fetch));
   });
 
   app.get('/files', async (c) => {
@@ -329,16 +346,19 @@ export function createApp(options: AppOptions = {}) {
     return c.body(null, 204);
   });
 
-  // Updates a file's display name and/or colour tags, and for links also the address. The R2 objects are keyed by id, so a rename never touches them.
+  // Updates a file's display name, colour tags and/or important marker, and for links also the address. The R2 objects are keyed by id, so a rename never touches them.
   app.patch('/files/:id', async (c) => {
     const id = c.req.param('id');
-    let body: { name?: unknown; tags?: unknown; url?: unknown };
+    let body: { name?: unknown; tags?: unknown; url?: unknown; important?: unknown };
     try {
       body = await c.req.json();
     } catch {
       return fail(c, 400, 'bad_request', 'Body must be JSON');
     }
-    if (body.name === undefined && body.tags === undefined && body.url === undefined) return fail(c, 400, 'bad_request', 'Provide name, tags and/or url');
+    if (body.name === undefined && body.tags === undefined && body.url === undefined && body.important === undefined) {
+      return fail(c, 400, 'bad_request', 'Provide name, tags, url and/or important');
+    }
+    if (body.important !== undefined && typeof body.important !== 'boolean') return fail(c, 400, 'bad_request', 'important must be true or false');
     if (body.name !== undefined) {
       if (typeof body.name !== 'string' || body.name.trim() === '') return fail(c, 400, 'bad_request', 'name must be a non-empty string');
       if (body.name.length > 255) return fail(c, 400, 'bad_request', 'name must be at most 255 characters');
@@ -353,6 +373,7 @@ export function createApp(options: AppOptions = {}) {
       if (row.kind === 'link') next.title_set = 1;
     }
     if (isTagList(body.tags)) next.tags = body.tags.join(',');
+    if (typeof body.important === 'boolean') next.important = body.important ? 1 : 0;
 
     if (body.url !== undefined) {
       if (row.kind !== 'link') return fail(c, 400, 'bad_request', 'Only links have a url');
@@ -363,12 +384,12 @@ export function createApp(options: AppOptions = {}) {
         if (clash) return fail(c, 409, 'duplicate_url', 'This link is already saved');
         // The old preview describes another page: drop it so it is fetched again for the new address.
         await c.env.BUCKET.delete(thumbKey(id));
-        next = { ...next, url, has_thumb: 0, previewed_at: null };
+        next = { ...next, url, has_thumb: 0, previewed_at: null, icon_url: null };
         if (!next.title_set) next.name = hostOf(url);
       }
     }
-    await c.env.DB.prepare('UPDATE files SET name = ?, tags = ?, url = ?, has_thumb = ?, previewed_at = ?, title_set = ? WHERE id = ?')
-      .bind(next.name, next.tags, next.url, next.has_thumb, next.previewed_at, next.title_set, id)
+    await c.env.DB.prepare('UPDATE files SET name = ?, tags = ?, url = ?, has_thumb = ?, previewed_at = ?, title_set = ?, icon_url = ?, important = ? WHERE id = ?')
+      .bind(next.name, next.tags, next.url, next.has_thumb, next.previewed_at, next.title_set, next.icon_url, next.important, id)
       .run();
     return c.json(await toItem(next, c.get('presigner')));
   });

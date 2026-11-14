@@ -1,7 +1,13 @@
 import { SITE_CATEGORIES, siteOf, type SiteCategory } from '@fatup/shared';
 import type { Dict, Locale } from './i18n';
 
-export type DateGroup<T> = { key: string; label: string; items: T[] };
+export type DateGroup<T> = {
+  key: string;
+  label: string;
+  items: T[];
+  /** Set on a group of links from one site: its heading shows the site's icon and can be folded. */
+  domain?: { host: string; site: SiteCategory; url: string; iconUrl?: string | null };
+};
 
 function dayStart(ms: number): number {
   const d = new Date(ms);
@@ -112,8 +118,9 @@ export function matchesLink(item: { name: string; url: string | null }, query: s
 export type SiteFilter = SiteCategory | 'all';
 
 /** Filter icons shown next to "All"; every other platform hides in the box. Together they cover all of SITE_CATEGORIES. */
-export const PINNED_SITES: SiteCategory[] = ['internet', 'youtube', 'x', 'threads'];
-export const BOXED_SITES: SiteCategory[] = ['facebook', 'instagram', 'shopee', 'tiktok'];
+export const PINNED_SITES: SiteCategory[] = ['internet', 'youtube'];
+/** The social networks, together in one box. */
+export const BOXED_SITES: SiteCategory[] = ['facebook', 'instagram', 'threads', 'x', 'tiktok'];
 
 export function matchesSite(item: { url: string | null }, site: SiteFilter): boolean {
   return site === 'all' || (item.url !== null && siteOf(item.url) === site);
@@ -173,4 +180,44 @@ export function cowsay(text: string): string {
     '                ||----w |',
     '                ||     ||',
   ].join('\n');
+}
+
+/** "www.example.com" and "m.example.com" are the same site as "example.com". */
+export function domainOf(url: string | null): string {
+  try {
+    return new URL(url ?? '').hostname.toLowerCase().replace(/^(www|m)\./, '');
+  } catch {
+    return '';
+  }
+}
+
+/** Stable: the items `isTop` picks come first (by default the important ones), the rest keep their order. */
+export function importantFirst<T extends { important?: boolean }>(items: T[], isTop: (it: T) => boolean = (it) => !!it.important): T[] {
+  return [...items.filter(isTop), ...items.filter((it) => !isTop(it))];
+}
+
+/**
+ * Links grouped by where they point: one group per platform (all of YouTube together, youtu.be included, titled "YouTube"), and
+ * for any other website one group per domain, titled with the domain. Groups appear in the order their first link has in `items`
+ * (already sorted). Inside a group the links `isTop` picks come first; the caller passes the ones that were important when the list
+ * was loaded, so marking a link doesn't make it jump.
+ */
+export function groupByDomain<T extends { url: string | null; important?: boolean; iconUrl?: string | null }>(
+  items: T[],
+  siteName: (site: SiteCategory) => string,
+  isTop?: (it: T) => boolean,
+): DateGroup<T>[] {
+  const byKey = new Map<string, { label: string; site: SiteCategory; host: string; items: T[] }>();
+  for (const it of items) {
+    const site = siteOf(it.url ?? '');
+    const host = domainOf(it.url);
+    const key = site === 'internet' ? `domain:${host || '?'}` : `site:${site}`;
+    const group = byKey.get(key);
+    if (group) group.items.push(it);
+    else byKey.set(key, { label: site === 'internet' ? host || siteName('internet') : siteName(site), site, host, items: [it] });
+  }
+  return Array.from(byKey, ([key, g]) => {
+    const sample = g.items.find((it) => it.iconUrl) ?? g.items[0];
+    return { key, label: g.label, items: importantFirst(g.items, isTop), domain: { host: g.host, site: g.site, url: sample.url ?? '', iconUrl: sample.iconUrl } };
+  });
 }

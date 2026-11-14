@@ -18,3 +18,7 @@ android/.idea/
 worker/public/*
 !worker/public/.gitkeep
 .superpowers/
+
+# Local dev settings (e.g. web/.env.local with FATUP_SERVER) and the throwaway desktop profile
+*.local
+.dev-userdata/

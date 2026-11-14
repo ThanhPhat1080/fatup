@@ -548,9 +548,9 @@ h2 {
 .tile--selected .tile__check {
   display: inline-flex;
 }
-.tile:hover .tile__check + .file-icon,
-.grid--selecting .tile__check + .file-icon,
-.tile--selected .tile__check + .file-icon {
+.tile:hover .tile__check ~ .file-icon,
+.grid--selecting .tile__check ~ .file-icon,
+.tile--selected .tile__check ~ .file-icon {
   display: none;
 }
 .tile--selected,
@@ -907,7 +907,7 @@ h2 {
 /* ---------- List ---------- */
 .list__row {
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 140px 90px 90px 40px;
+  grid-template-columns: 24px 32px minmax(0, 1fr) 90px 90px 40px;
   align-items: center;
   gap: 12px;
   height: 48px;
@@ -948,9 +948,8 @@ h2 {
 }
 @media (max-width: 720px) {
   .list__row {
-    grid-template-columns: 24px minmax(0, 1fr) 60px 40px;
+    grid-template-columns: 24px 32px minmax(0, 1fr) 60px 40px;
   }
-  .col-from,
   .col-size {
     display: none;
   }
@@ -3117,9 +3116,16 @@ body {
 }
 .chip--icon {
   width: 40px;
-  height: 36px;
+  height: 40px;
   padding: 0;
   justify-content: center;
+}
+/* The platform filter: round icon buttons, and "All" as a pill. */
+.site-chips .chip {
+  border-radius: 999px;
+}
+.site-chips .chip--icon {
+  border-radius: 50%;
 }
 .site-box {
   flex: none;
@@ -3182,7 +3188,22 @@ body {
   flex: none;
 }
 .list--site .list__row {
-  grid-template-columns: 24px 64px minmax(0, 1fr) 140px 90px 90px 40px;
+  grid-template-columns: 24px 32px 56px minmax(0, 1fr) 112px 90px 40px;
+}
+/* Open-outside, edit, copy: pinned to the right edge of every link row so they line up. */
+.col-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 2px;
+}
+.open-out-btn {
+  color: var(--text-2);
+  visibility: hidden;
+}
+.list__row:hover .open-out-btn,
+.list__row:focus-within .open-out-btn {
+  visibility: visible;
 }
 .col-site {
   display: flex;
@@ -3211,9 +3232,480 @@ body {
 }
 @media (max-width: 720px) {
   .list--site .list__row {
-    grid-template-columns: 24px 48px minmax(0, 1fr) 60px 40px;
+    grid-template-columns: 24px 32px 36px minmax(0, 1fr) auto 56px 40px;
+  }
+  .open-out-btn {
+    display: none;
   }
   .site-chips {
     padding: 18px 12px 8px;
   }
+}
+
+/* ---------- Link preview (built on the lightbox) ---------- */
+.linkprev {
+  background: #131314;
+}
+.linkprev .lightbox__bar {
+  background: #1e1f20;
+  border-bottom: 1px solid #333537;
+}
+.linkprev .icon-btn--dark.is-active {
+  background: rgba(255, 255, 255, 0.2);
+  color: #e3e3e3;
+}
+.linkprev .btn--filled {
+  background: #a8c7fa;
+  color: #062e6f;
+}
+.btn--outline-dark {
+  border: 1px solid #8e918f;
+  color: #a8c7fa;
+}
+.btn--outline-dark:hover {
+  background: rgba(168, 199, 250, 0.08);
+}
+.linkprev__open {
+  flex: none;
+  color: #e3e3e3;
+  margin-right: 4px;
+}
+.linkprev .site-badge {
+  flex: none;
+}
+.linkprev .site-badge {
+  --text: #e3e3e3;
+}
+.linkprev__stage {
+  padding: 16px 80px 48px;
+}
+.linkprev__frame {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  max-width: 100%;
+  max-height: 100%;
+}
+.linkprev__frame iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+/* 16:9, as wide as fits. */
+.linkprev__frame--video {
+  width: min(100%, calc((100vh - 160px) * 16 / 9), 1280px);
+  aspect-ratio: 16 / 9;
+}
+/* 9:16, as tall as fits. */
+.linkprev__frame--vertical {
+  height: 100%;
+  aspect-ratio: 9 / 16;
+}
+/* Posts are narrow cards that scroll inside their own frame. */
+.linkprev__frame--post {
+  width: min(100%, 550px);
+  height: 100%;
+  background: #fff;
+}
+.linkprev__spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin: -18px 0 0 -18px;
+  color: #aaa;
+}
+.linkprev__card {
+  width: min(100%, 520px);
+  max-height: 100%;
+  overflow-y: auto;
+  border-radius: 20px;
+  background: #1e1f20;
+  border: 1px solid #333537;
+  display: flex;
+  flex-direction: column;
+}
+.linkprev__pic {
+  height: 240px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: #282a2c;
+  color: #c4c7c5;
+  --cow-fill: #282a2c;
+}
+/* Not the lightbox's photo: undo its absolutely placed stage image, and fill the picture box without growing it. */
+.linkprev__pic:has(img) {
+  display: block;
+  overflow: hidden;
+}
+.lightbox__stage .linkprev__pic img {
+  display: block;
+  position: static;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 0;
+}
+.linkprev__cardbody {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.linkprev__cardbody h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.linkprev__cardbody p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #c4c7c5;
+}
+.linkprev__cardactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.linkprev__direct {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: #c4c7c5;
+  cursor: pointer;
+}
+.linkprev__direct input {
+  width: 18px;
+  height: 18px;
+  accent-color: #a8c7fa;
+}
+.linkprev__keys {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 6px 14px;
+  border-radius: 16px;
+  background: rgba(40, 42, 44, 0.92);
+  font-size: 12px;
+  color: #c4c7c5;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.linkprev__footer {
+  display: none;
+}
+/* Phones: a sheet from the bottom, the main action as a big button under the content. */
+@media (max-width: 720px) {
+  .linkprev {
+    top: 40px;
+    border-radius: 20px 20px 0 0;
+    background: #1e1f20;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.4);
+  }
+  .linkprev__open,
+  .linkprev__infobtn,
+  .linkprev__info,
+  .linkprev__keys,
+  .linkprev .lightbox__nav {
+    display: none;
+  }
+  .linkprev__stage {
+    padding: 4px 12px 0;
+  }
+  .linkprev__frame--video {
+    width: 100%;
+  }
+  .linkprev__frame--vertical,
+  .linkprev__frame--post {
+    width: 100%;
+    height: 100%;
+    aspect-ratio: auto;
+  }
+  .linkprev__footer {
+    display: flex;
+    padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+  }
+  .linkprev__footer .btn {
+    flex: 1;
+    justify-content: center;
+    height: 48px;
+    border-radius: 24px;
+  }
+}
+
+/* ---------- Web page inside the preview ---------- */
+.webpage {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #1e1f20;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+.webpage__bar {
+  flex: none;
+  height: 44px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-bottom: 1px solid #333537;
+}
+.webpage__address {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  margin-left: 6px;
+  padding: 0 12px;
+  border-radius: 15px;
+  background: #282a2c;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #c4c7c5;
+}
+.webpage__note {
+  flex: none;
+  padding-left: 10px;
+  font-size: 12px;
+  color: #a0a0a0;
+}
+.webpage__view {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+.pdfprev__doc {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 8px;
+  background: #525659;
+}
+@media (max-width: 720px) {
+  .webpage__note {
+    display: none;
+  }
+}
+
+/* Add link: a tonal button with a "+" badge, so it reads as "add" and stands apart from the plain icon buttons around it. */
+.addlink-btn {
+  position: relative;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+}
+.addlink-btn:hover {
+  background: var(--primary-container);
+  filter: brightness(0.96);
+}
+.addlink-btn__plus {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: 0 0 0 2px var(--primary-container);
+}
+
+/* A website's own icon in place of the globe. */
+.site-badge--favicon {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.site-badge--favicon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* ---------- Toolbar island ---------- */
+/* The tabs, filters and view switches float in their own fully rounded bar, apart from the table below. The selection bar takes
+   its place in exactly the same box (margins, padding, border, height), so selecting something never moves the page. */
+.chips-row.island,
+.selbar {
+  box-sizing: border-box;
+  margin: 12px 12px 4px;
+  padding: 6px 8px 6px 6px;
+  min-height: 54px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.chips-row.island {
+  background: var(--surface);
+}
+.selbar {
+  border-color: var(--primary-container);
+}
+.island .chip {
+  border-radius: 999px;
+}
+.island .chips-left {
+  gap: 8px;
+}
+.chips-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border);
+  flex: none;
+}
+.chip--important {
+  width: 40px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+}
+.chips-row__tools {
+  gap: 6px;
+}
+
+/* ---------- Important marker ---------- */
+.important-icon {
+  fill: none;
+  stroke: var(--text-3, #80868b);
+  flex: none;
+}
+.important-icon.is-on {
+  fill: #f4b400;
+  stroke: #e2a400;
+}
+.important-btn {
+  flex: none;
+}
+.important-btn:not(.is-on) .important-icon {
+  opacity: 0.55;
+}
+.important-btn:hover .important-icon,
+.important-btn:focus-visible .important-icon {
+  opacity: 1;
+}
+.col-important {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tile__head .important-btn {
+  width: 24px;
+  height: 24px;
+  margin: 0 -4px;
+}
+
+/* ---------- Site groups (links tab) ---------- */
+.group__label--domain {
+  margin-bottom: 8px;
+}
+.group__label--list.group__label--domain {
+  padding-left: 0;
+}
+.group-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px 0 6px;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+.group-toggle:hover {
+  background: var(--hover);
+}
+.group-toggle__chevron {
+  color: var(--text-2);
+  transition: transform 0.15s ease;
+}
+.group-toggle__chevron.is-open {
+  transform: rotate(90deg);
+}
+.group-toggle__count {
+  min-width: 22px;
+  height: 20px;
+  padding: 0 7px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  background: var(--surface-strong);
+  color: var(--text-2);
+  font-size: 12px;
+  display: inline-grid;
+  place-items: center;
+}
+
+/* ---------- Grid: download over a file's card ---------- */
+.tile__download {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 52px;
+  height: 52px;
+  margin: -26px 0 0 -26px;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 0.12s, transform 0.12s;
+}
+.tile:hover .tile__download,
+.tile:focus-within .tile__download,
+.tile__download:focus-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+.tile__download:focus-visible {
+  outline: 3px solid var(--primary-container);
+  outline-offset: 2px;
+}
+
+/* Icon switches (grid/list, expand/collapse): the icon under the thumb is drawn on top of it. */
+.icon-switch[aria-checked='false'] .icon-switch__off,
+.icon-switch[aria-checked='true'] .icon-switch__on {
+  color: var(--on-primary);
+}
+@media (max-width: 720px) {
+  .chips-row.island {
+    border-radius: 24px;
+    flex-wrap: wrap;
+  }
+}
+
+/* The Social box lies on its side: open, its flaps point right, toward the networks that hop out. */
+.side-box-icon {
+  display: inline-grid;
+  transform: rotate(90deg);
+}
+
+.icon-switch:disabled {
+  opacity: 0.4;
+  cursor: default;
 }

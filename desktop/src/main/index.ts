@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, safeStorage, session, shell } from 'electron';
 import { hostname } from 'node:os';
 import { createWriteStream, existsSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -8,7 +8,8 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import QRCode from 'qrcode';
 import type { FileItem, TagColor } from '@fatup/shared';
 import { autoUpdater } from 'electron-updater';
-import type { AppState, Item, Prefs, Result, UnlockResult, UpdateCheck } from '../shared-ipc';
+import type { AppState, Item, Prefs, Result, UnlockResult, UpdateCheck, ViewBounds } from '../shared-ipc';
+import { WebPreview } from './webpreview';
 import { ApiClient, ApiError, normalizeServerUrl } from './api';
 import { ConfigStore } from './config';
 import { uniqueFileName } from './filename';
@@ -24,6 +25,11 @@ protocol.registerSchemesAsPrivileged([{ scheme: PREVIEW_SCHEME, privileges: { st
 
 let config: ConfigStore;
 let unlocked = false;
+// Web pages opened from the link preview; created lazily, torn down on close and on lock.
+const webPreview = new WebPreview(
+  () => mainWindow,
+  (channel, payload) => mainWindow?.webContents.send(channel, payload),
+);
 /** True only while the Vault view is open and the PIN was re-entered. Never persisted. */
 let vaultOpen = false;
 let mainWindow: BrowserWindow | null = null;
@@ -163,6 +169,8 @@ function registerIpc() {
     const s = config.snapshot;
     return {
       platform: 'desktop',
+      // `FATUP_SERVER=https://… npm run dev:desktop` pre-fills the setup screen with that server.
+      defaultServerUrl: process.env.FATUP_SERVER || undefined,
       configured: Boolean(s.serverUrl && config.token),
       hasPin: Boolean(s.pin),
       unlocked,
@@ -212,6 +220,7 @@ function registerIpc() {
 
   ipcMain.handle('lock', () => {
     unlocked = false;
+    webPreview.hide();
     vaultOpen = false;
     uploads.cancelAll();
     itemCache.clear();
@@ -222,6 +231,7 @@ function registerIpc() {
     uploads.cancelAll();
     config.reset();
     unlocked = false;
+    webPreview.hide();
     itemCache.clear();
     await previews.clear(); // pictures of the old account's links must not outlive the connection
   });
@@ -259,7 +269,7 @@ function registerIpc() {
 
   ipcMain.handle(
     'updateFile',
-    guarded(async (id: string, patch: { name?: string; tags?: TagColor[]; url?: string }): Promise<Item> => {
+    guarded(async (id: string, patch: { name?: string; tags?: TagColor[]; url?: string; important?: boolean }): Promise<Item> => {
       const item = await client().update(id, patch);
       itemCache.set(id, item);
       if (patch.url) await previews.forget([id]); // the old picture belongs to the old address
@@ -334,6 +344,18 @@ function registerIpc() {
     'previewUrl',
     guarded(async (id: string) => client().downloadUrl(id)),
   );
+  ipcMain.handle(
+    'fileBytes',
+    guarded(async (id: string) => new Uint8Array(await fetchBytes(await client().downloadUrl(id)))),
+  );
+  ipcMain.handle('webPreview:show', (_e, url: string, bounds: ViewBounds) => {
+    if (unlocked) webPreview.show(url, bounds);
+  });
+  ipcMain.on('webPreview:bounds', (_e, bounds: ViewBounds) => webPreview.setBounds(bounds));
+  ipcMain.on('webPreview:hide', () => webPreview.hide());
+  ipcMain.on('webPreview:navigate', (_e, action: 'back' | 'forward' | 'reload') => {
+    if (['back', 'forward', 'reload'].includes(action)) webPreview.navigate(action);
+  });
 
   ipcMain.handle(
     'download',
@@ -439,11 +461,16 @@ function createWindow() {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      plugins: true, // Chromium's built-in PDF viewer, for PDFs opened in the preview
     },
   });
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  // Links clicked inside an embedded post or player ("Watch on YouTube") open in the browser, never in a new app window.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (unlocked && /^https?:\/\//i.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
   mainWindow.webContents.on('will-navigate', (e) => e.preventDefault());
 
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) {
@@ -467,6 +494,12 @@ app.whenReady().then(() => {
   if (process.platform !== 'darwin') Menu.setApplicationMenu(null);
   nativeTheme.themeSource = config.snapshot.prefs.theme ?? 'system';
   registerIpc();
+  // The app page is a file:// page, which sends no Referer, and YouTube refuses to play embeds without one (error 153).
+  session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['https://www.youtube-nocookie.com/*'] }, (details, done) => {
+    const headers = details.requestHeaders;
+    if (!headers.Referer && !headers.referer) headers.Referer = 'https://fatup.app/';
+    done({ requestHeaders: headers });
+  });
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

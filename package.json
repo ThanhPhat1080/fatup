@@ -9,6 +9,17 @@
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev:web": "npm run dev -w @fatup/web",
+    "dev:desktop": "npm run dev -w @fatup/desktop",
+    "dev:desktop:fresh": "FATUP_USER_DATA=\"$PWD/.dev-userdata\" npm run dev -w @fatup/desktop",
+    "dev:worker": "npm run db:migrate:local && npm run dev -w @fatup/worker",
+    "db:migrate": "npm run db:migrate:remote -w @fatup/worker",
+    "db:migrate:local": "npm run db:migrate:local -w @fatup/worker",
+    "deploy:worker": "npm run deploy -w @fatup/worker",
+    "release:worker": "npm run db:migrate && npm run deploy:worker",
+    "build:desktop": "npm run build -w @fatup/desktop",
+    "dist:mac": "npm run dist:mac -w @fatup/desktop",
+    "e2e": "npm run e2e -w @fatup/desktop"
   }
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { Share2 } from 'lucide-react';
+import { Package, PackageOpen } from 'lucide-react';
 import type { SiteCategory } from '@fatup/shared';
 import { BOXED_SITES, PINNED_SITES, type SiteFilter } from '../lib/format';
 import { useI18n } from '../lib/i18n';
@@ -10,7 +10,21 @@ const CLOSE_STEP_MS = 30;
 const SLOT = 48; // icon button width + gap, used to start each icon from inside the box
 
 /**
- * The link filter: "All", then the icons of Internet, YouTube, X and Threads, a divider, then a box. Opening the box hops the other platforms out to its
+ * The Social box: the same box as the colour-tag filter, turned on its side so its flaps open to the right, the way the networks
+ * hop out of it.
+ */
+function SideBox({ open }: { open: boolean }) {
+  const Icon = open ? PackageOpen : Package;
+  // Turned on a wrapper, so the box's bounce (a transform on the icon itself) still plays.
+  return (
+    <span className="side-box-icon" aria-hidden>
+      <Icon size={26} strokeWidth={1.75} />
+    </span>
+  );
+}
+
+/**
+ * The link filter: "All", then the icons of Internet and YouTube, a divider, then the Social box. Opening the box hops the social networks out to its
  * right, one after another (the same hop as the colour-tag box); closing hops them back in. Closing keeps the filter, and the box
  * shows the logo of the platform that is still selected.
  */
@@ -75,7 +89,7 @@ export function SiteFilterBar({ value, onChange, counts }: { value: SiteFilter; 
         aria-expanded={shown}
         onClick={toggle}
       >
-        <Share2 size={26} strokeWidth={1.75} />
+        <SideBox open={shown} />
         {hidden && (
           <span className="site-box__badge">
             <SiteBadge site={hidden} size={14} />

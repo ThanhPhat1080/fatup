@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Download, LayoutGrid, Link2, List, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Trash2, Upload, UploadCloud, X } from 'lucide-react';
+import { ArrowLeft, ChevronsDownUp, ChevronsUpDown, Download, LayoutGrid, Link2, List, Plus, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Trash2, Upload, UploadCloud, X } from 'lucide-react';
 import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shared-ipc';
 import { DEFAULT_QUOTA_BYTES, type TagColor } from '@fatup/shared';
-import { DEFAULT_SORT, groupByDay, inTab, matchesLink, matchesQuery, matchesSite, matchesTags, singleGroup, siteCounts, sortItems, type SiteFilter, type SortKey, type SortState } from '../lib/format';
+import { DEFAULT_SORT, groupByDay, groupByDomain, inTab, matchesLink, matchesQuery, matchesSite, matchesTags, singleGroup, siteCounts, sortItems, type SiteFilter, type SortKey, type SortState } from '../lib/format';
 import { errorText, useI18n } from '../lib/i18n';
 import { AddLinkDialog } from './AddLinkDialog';
 import { ConfirmDialog } from './Dialog';
 import { EmptyState, FileGrid, FileList } from './Files';
 import { Lightbox } from './Lightbox';
+import { LinkPreview } from './LinkPreview';
+import { IconSwitch } from './IconSwitch';
+import { ImportantIcon } from './Important';
+import { PdfPreview, isPdf } from './PdfPreview';
+import { opensDirect } from '../lib/directHosts';
 import { Logo } from './Logo';
 import { ContextMenu, type MenuState } from './Menu';
 import { Settings } from './Settings';
@@ -40,8 +45,16 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const [editing, setEditing] = useState<{ id: string; anchor: DOMRect } | null>(null);
   const [tagFilter, setTagFilter] = useState<TagColor[]>([]);
   const [siteFilter, setSiteFilter] = useState<SiteFilter>('all');
+  const [importantOnly, setImportantOnly] = useState(false);
+  /** Items that were important when the list was last loaded. They go first in their group; marking one later leaves it in place
+   *  until the next load, so nothing jumps under the mouse. */
+  const [topIds, setTopIds] = useState<ReadonlySet<string>>(new Set());
+  /** Folded domain groups on the links tab. */
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [addingLink, setAddingLink] = useState(false);
   const [lightboxId, setLightboxId] = useState<string | null>(null);
+  const [linkPreviewId, setLinkPreviewId] = useState<string | null>(null);
+  const [pdfId, setPdfId] = useState<string | null>(null);
   const [trashItems, setTrashItems] = useState<Item[] | null>(null);
   const [inTrash, setInTrash] = useState(false);
   const [usage, setUsage] = useState<Usage | null>(null);
@@ -89,6 +102,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     }
     if (res.ok) {
       setItems(res.value);
+      setTopIds(new Set([...res.value, ...(vaultRes?.ok ? vaultRes.value : [])].filter((it) => it.important).map((it) => it.id)));
       if (trashRes.ok) setTrashItems(trashRes.value);
       if (usageRes.ok) setUsage(usageRes.value);
       setError(null);
@@ -141,16 +155,34 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           (inTrash || inTab(it, tab)) &&
           (it.kind === 'link' ? matchesLink(it, query) : matchesQuery(it.name, query)) &&
           matchesTags(it.tags, tagFilter) &&
+          (inTrash || !importantOnly || !!it.important) &&
           (!linkTab || matchesSite(it, siteFilter)),
       ),
-    [source, inTrash, tab, query, tagFilter, linkTab, siteFilter],
+    [source, inTrash, tab, query, tagFilter, importantOnly, linkTab, siteFilter],
   );
   const counts = useMemo(() => siteCounts(source.filter((it) => it.kind === 'link')), [source]);
+  const kindCounts = useMemo(
+    () => ({ image: source.filter((it) => inTab(it, 'image')).length, file: source.filter((it) => inTab(it, 'file')).length, link: source.filter((it) => inTab(it, 'link')).length }),
+    [source],
+  );
   const sorted = useMemo(() => sortItems(visible, sort), [visible, sort]);
   // Day headings only make sense when ordered by upload time.
+  // Links tab with "All" platforms: one group per site (important links first in each); otherwise day headings when ordered by time.
+  const byDomain = linkTab && siteFilter === 'all';
   const groups = useMemo(
-    () => (sort.key === 'createdAt' ? groupByDay(sorted, Date.now(), t, locale) : singleGroup(sorted)),
-    [sorted, sort.key, t, locale],
+    () =>
+      byDomain ? groupByDomain(sorted, (s) => t.siteNames[s], (it) => topIds.has(it.id)) : sort.key === 'createdAt' ? groupByDay(sorted, Date.now(), t, locale) : singleGroup(sorted),
+    [byDomain, sorted, sort.key, t, locale, topIds],
+  );
+  const allExpanded = !byDomain || groups.every((g) => !collapsed.has(g.key));
+  const toggleGroup = useCallback(
+    (key: string) =>
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        if (!next.delete(key)) next.add(key);
+        return next;
+      }),
+    [],
   );
 
   // Selection only ever acts on what's currently visible, so a filter can't hide files from a bulk delete.
@@ -211,6 +243,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     setQuery('');
     setSettingsOpen(false);
     setLightboxId(null);
+    setLinkPreviewId(null);
+    setPdfId(null);
     setMenu(null);
     clearSelection();
   };
@@ -260,6 +294,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   async function moveToTrash(targets: Item[]) {
     if (targets.length === 0) return;
     setLightboxId((id) => (id && targets.some((it) => it.id === id) ? null : id));
+    setLinkPreviewId((id) => (id && targets.some((it) => it.id === id) ? null : id));
+    setPdfId((id) => (id && targets.some((it) => it.id === id) ? null : id));
     const { done, failed, locked } = await batch(targets, (id) => window.fatup.remove(id));
     if (locked) return;
     setItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
@@ -277,6 +313,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   async function moveToVault(targets: Item[]) {
     if (targets.length === 0) return;
     setLightboxId(null);
+    setLinkPreviewId(null);
+    setPdfId(null);
     const { done, failed, locked } = await batch(targets, (id) => window.fatup.setVault(id, true));
     if (locked) return;
     setItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
@@ -288,6 +326,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   async function removeFromVault(targets: Item[]) {
     if (targets.length === 0) return;
     setLightboxId(null);
+    setLinkPreviewId(null);
+    setPdfId(null);
     const { done, failed, locked } = await batch(targets, (id) => window.fatup.setVault(id, false));
     if (locked) return;
     setVaultItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
@@ -376,6 +416,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   }, [canUpload]);
 
   const images = useMemo(() => visible.filter((it) => it.kind === 'image'), [visible]);
+  const links = useMemo(() => visible.filter((it) => it.kind === 'link'), [visible]);
+  const pdfs = useMemo(() => visible.filter(isPdf), [visible]);
   const modeKey: Tab = inTrash ? 'all' : tab;
   const view = state.prefs.viewModes[modeKey];
 
@@ -416,6 +458,26 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     else toast(errorText(t, res.error), true);
     refresh();
   }
+
+  /** Flips the important marker at once, then keeps the server's copy (or puts it back if the server refused). */
+  const toggleImportant = useCallback(
+    async (item: Item) => {
+      const important = !item.important;
+      const swap = (list: Item[] | null) => list?.map((it) => (it.id === item.id ? { ...it, important } : it)) ?? null;
+      setItems(swap);
+      setVaultItems(swap);
+      const res = await window.fatup.updateFile(item.id, { important });
+      if (res.ok) applyItem(res.value);
+      else {
+        const back = (list: Item[] | null) => list?.map((it) => (it.id === item.id ? { ...it, important: item.important } : it)) ?? null;
+        setItems(back);
+        setVaultItems(back);
+        toast(errorText(t, res.error), true);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t],
+  );
 
   /** Swaps in the server's copy of an item (after a preview or an edit) wherever it is listed. */
   const applyItem = useCallback((next: Item) => {
@@ -527,7 +589,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) && (e.target as HTMLInputElement).type !== 'checkbox';
-      const overlay = lightboxId || settingsOpen || menu || confirm || (inVault && !vaultUnlocked);
+      const overlay = lightboxId || linkPreviewId || pdfId || settingsOpen || menu || confirm || (inVault && !vaultUnlocked);
       if (typing || overlay) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault();
@@ -541,13 +603,18 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lightboxId, settingsOpen, menu, confirm, picked, inTrash, inVault, vaultUnlocked, selectAll, clearSelection]);
+  }, [lightboxId, linkPreviewId, pdfId, settingsOpen, menu, confirm, picked, inTrash, inVault, vaultUnlocked, selectAll, clearSelection]);
 
   // Trashed files can't be opened; restore them first.
-  const open = (item: Item) => {
+  // Links open in the in-app preview; Ctrl/⌘ + click, or a site the person chose to always open directly, goes straight outside.
+  const open = (item: Item, outside = false) => {
     if (inTrash) return;
-    if (item.kind === 'link') void window.fatup.openExternal(item.url ?? '');
+    if (item.kind === 'link') {
+      if (outside || opensDirect(item.url)) void window.fatup.openExternal(item.url ?? '');
+      else setLinkPreviewId(item.id);
+    }
     else if (item.kind === 'image') setLightboxId(item.id);
+    else if (isPdf(item) && !outside) setPdfId(item.id);
     else void download(item);
   };
   const openMenu = (item: Item, x: number, y: number) => setMenu({ item, x, y });
@@ -562,8 +629,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     </div>
   );
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'all', label: t.tabAll },
+  // No "All" tab: the kinds work as toggles, and with none pressed everything shows. Each carries how many it holds.
+  const tabs: { id: Exclude<Tab, 'all'>; label: string }[] = [
     { id: 'image', label: t.tabImages },
     { id: 'file', label: t.tabFiles },
     { id: 'link', label: t.tabLinks },
@@ -593,8 +660,11 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               <span className="upload-btn__label">{t.upload}</span>
             </button>
           )}
-          <button className="icon-btn" onClick={() => setAddingLink(true)} title={t.addLink} aria-label={t.addLink}>
-            <Link2 size={22} />
+          <button className="icon-btn addlink-btn" onClick={() => setAddingLink(true)} title={t.addLink} aria-label={t.addLink}>
+            <Link2 size={20} />
+            <span className="addlink-btn__plus" aria-hidden>
+              <Plus size={11} strokeWidth={3.5} />
+            </span>
           </button>
           <button key={shiver} className={`icon-btn${inVault ? ' is-active' : ''}${shiver > 0 ? ' vault-btn--shiver' : ''}`} onClick={toggleVault} title={inVault ? t.closeVault : t.vault} aria-label={inVault ? t.closeVault : t.vault} aria-pressed={inVault}>
             <VaultIcon size={26} />
@@ -651,7 +721,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
             )}
           </div>
         ) : (
-          <div className="chips-row">
+          <div className="chips-row island">
             {inTrash ? (
               <div className="trashbar">
                 <button className="icon-btn" onClick={toggleTrash} title={t.backToFiles} aria-label={t.backToFiles}>
@@ -670,10 +740,26 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
             ) : (
               <div className="chips-left">
                 {inVault && vaultBackBar}
-                <nav className="chips" role="tablist">
+                <button
+                  className={`chip chip--icon chip--important${importantOnly ? ' chip--on' : ''}`}
+                  aria-pressed={importantOnly}
+                  aria-label={t.importantOnly}
+                  title={t.importantOnly}
+                  onClick={() => setImportantOnly((v) => !v)}
+                >
+                  <ImportantIcon on={importantOnly} size={20} />
+                </button>
+                <span className="chips-divider" aria-hidden />
+                <nav className="chips kind-tabs" aria-label={t.kindFilter}>
                   {tabs.map((tb) => (
-                    <button key={tb.id} role="tab" aria-selected={tab === tb.id} className={`chip ${tab === tb.id ? 'chip--on' : ''}`} onClick={() => setTab(tb.id)}>
+                    <button
+                      key={tb.id}
+                      aria-pressed={tab === tb.id}
+                      className={`chip chip--site ${tab === tb.id ? 'chip--on' : ''}`}
+                      onClick={() => setTab(tab === tb.id ? 'all' : tb.id)}
+                    >
                       {tb.label}
+                      <span className="chip__count">{kindCounts[tb.id]}</span>
                     </button>
                   ))}
                 </nav>
@@ -684,19 +770,29 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               <button className="icon-btn" onClick={refresh} title={`${t.refresh} (Ctrl+R)`} aria-label={t.refresh} disabled={loading}>
                 <RotateCw size={20} className={loading ? 'spin' : ''} />
               </button>
-              <button
-                className="icon-btn"
-                onClick={() => onPrefs({ viewModes: { ...state.prefs.viewModes, [modeKey]: view === 'grid' ? 'list' : 'grid' } })}
-                title={view === 'grid' ? t.listView : t.gridView}
-                aria-label={view === 'grid' ? t.listView : t.gridView}
-              >
-                {view === 'grid' ? <List size={20} /> : <LayoutGrid size={20} />}
-              </button>
+              {/* Always there on the links tab (so the bar never shifts under the mouse); greyed out when nothing is grouped. */}
+              {linkTab && (
+                <IconSwitch
+                  disabled={!byDomain || groups.length === 0}
+                  checked={allExpanded}
+                  onChange={(expand) => setCollapsed(expand ? new Set() : new Set(groups.map((g) => g.key)))}
+                  off={ChevronsDownUp}
+                  on={ChevronsUpDown}
+                  label={allExpanded ? t.collapseAll : t.expandAll}
+                />
+              )}
+              <IconSwitch
+                checked={view === 'list'}
+                onChange={(list) => onPrefs({ viewModes: { ...state.prefs.viewModes, [modeKey]: list ? 'list' : 'grid' } })}
+                off={LayoutGrid}
+                on={List}
+                label={view === 'grid' ? t.listView : t.gridView}
+              />
             </div>
           </div>
         )}
 
-        {linkTab && picked.length === 0 && <SiteFilterBar value={siteFilter} onChange={setSiteFilter} counts={counts} />}
+        {linkTab && <SiteFilterBar value={siteFilter} onChange={setSiteFilter} counts={counts} />}
 
         {error && (
           <div className="banner" role="alert">
@@ -711,9 +807,21 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           {!loaded ? (
             <div className="skeleton" aria-busy />
           ) : visible.length === 0 ? (
-            <EmptyState searching={(query !== '' || tagFilter.length > 0 || (linkTab && siteFilter !== 'all')) && source.length > 0} trash={inTrash} vault={vaultActive} links={linkTab} />
+            <EmptyState searching={(query !== '' || tagFilter.length > 0 || (importantOnly && !inTrash) || (linkTab && siteFilter !== 'all')) && source.length > 0} trash={inTrash} vault={vaultActive} links={linkTab} />
           ) : view === 'grid' ? (
-            <FileGrid groups={groups} selected={selected} onToggle={toggle} onOpen={open} onMenu={openMenu} onEdit={inTrash ? undefined : openEditor} onCopyLink={inTrash ? undefined : (it) => void copyLink(it)} />
+            <FileGrid
+              groups={groups}
+              selected={selected}
+              onToggle={toggle}
+              onOpen={open}
+              onMenu={openMenu}
+              onEdit={inTrash ? undefined : openEditor}
+              onCopyLink={inTrash ? undefined : (it) => void copyLink(it)}
+              onImportant={inTrash ? undefined : (it) => void toggleImportant(it)}
+              onDownload={inTrash ? undefined : (it) => void download(it)}
+              collapsed={collapsed}
+              onToggleGroup={toggleGroup}
+            />
           ) : (
             <FileList
               groups={groups}
@@ -723,6 +831,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               onMenu={openMenu}
               onEdit={inTrash ? undefined : openEditor}
               onCopyLink={inTrash ? undefined : (it) => void copyLink(it)}
+              onImportant={inTrash ? undefined : (it) => void toggleImportant(it)}
+              collapsed={collapsed}
+              onToggleGroup={toggleGroup}
               sort={sort}
               onSort={changeSort}
               allSelected={allSelected}
@@ -753,6 +864,28 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
             onReload: (it) => void previewNow(it.id, true),
           }}
           trash={inTrash ? { onRestore: (it) => void restoreMany([it]), onForever: (it) => setConfirm({ kind: 'forever', items: [it] }) } : undefined}
+        />
+      )}
+      {linkPreviewId && (
+        <LinkPreview
+          items={links}
+          currentId={linkPreviewId}
+          onChange={setLinkPreviewId}
+          onClose={() => setLinkPreviewId(null)}
+          onOpenExternal={(it) => void window.fatup.openExternal(it.url ?? '')}
+          onCopyLink={(it) => void copyLink(it)}
+          onDelete={(it) => void moveToTrash([it])}
+          platform={state.platform}
+        />
+      )}
+      {pdfId && (
+        <PdfPreview
+          items={pdfs}
+          currentId={pdfId}
+          onChange={setPdfId}
+          onClose={() => setPdfId(null)}
+          onDownload={download}
+          onDelete={(it) => void moveToTrash([it])}
         />
       )}
       {lightboxId && (

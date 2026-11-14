@@ -14,9 +14,11 @@ Gửi ảnh và file giữa **điện thoại Android** và **máy tính** (macO
 
 - **Android → máy tính:** chọn ảnh/file → **Chia sẻ → FatUp**. Mất mạng thì app xếp hàng rồi tự gửi lại.
 - **Máy tính → cloud:** nút **Tải lên**, `Ctrl/⌘+U` hoặc kéo-thả file vào cửa sổ. Có bảng tiến trình kiểu Google Drive, hủy được từng file.
-- **Danh sách:** mới nhất lên đầu, nhóm theo ngày, tab **Tất cả / Ảnh / File**, tìm kiếm không phân biệt dấu, chế độ lưới hoặc danh sách. Bấm tiêu đề cột để **sắp xếp** theo Tên / Tải lên / Dung lượng.
+- **Danh sách:** mới nhất lên đầu, nhóm theo ngày, nút lọc **Ảnh / File / Liên kết** có số lượng ngay trên nút (bấm lại để bỏ lọc, không chọn gì là xem tất cả), tìm kiếm không phân biệt dấu, công tắc lưới / danh sách. Bấm tiêu đề cột để **sắp xếp** theo Tên / Tải lên / Dung lượng.
+- **Quan trọng:** nhãn vàng (như Gmail) ngay sau checkbox của mọi file, ảnh, link; nút lọc nhanh có nhãn vàng đứng đầu thanh công cụ chỉ hiện mục quan trọng. Trong nhóm link, mục quan trọng lên đầu (tính lúc tải danh sách, nên đánh dấu xong item không nhảy chỗ).
+- **Xem ngay trong app:** bấm link là mở khung xem trước thay vì tab mới: YouTube, TikTok, Instagram, Threads, X phát/hiện bằng trình nhúng chính thức; Facebook hiện thẻ tiêu đề + ảnh; trang web khác mở **nguyên trang** ngay trong app desktop (phiên riêng, không lưu đăng nhập), còn PWA hiện trang nếu trang cho nhúng, không thì hiện thẻ. Bấm **PDF** là xem bằng trình xem PDF của trình duyệt. `Ctrl/⌘` + bấm vẫn mở ngoài (link) hoặc tải về (PDF) như cũ.
 - **Chọn nhiều file:** mỗi file có checkbox. `Shift`+bấm chọn một dãy, `Ctrl/⌘+A` chọn tất cả. Chuyển vào thùng rác hoặc két sắt hàng loạt, hoặc **Tải tất cả**.
-- **Liên kết (bookmark):** chia sẻ một link từ Android (**Chia sẻ → FatUp**) hoặc từ bản web đã cài (PWA), hoặc bấm nút **Thêm liên kết** rồi dán URL. Link nằm ở tab **Liên kết**, tự phân loại theo tên miền (**Facebook, YouTube, Instagram, Threads, X, Shopee, TikTok, Internet**), sửa được tiêu đề và URL, gắn thẻ màu như file, **không bao giờ tự hết hạn**. Tiêu đề và ảnh xem trước được tải khi bạn mở app (YouTube, TikTok luôn có; Facebook, Instagram, Threads, Shopee thường không cho đọc nên hiện con bò cowsay thay ảnh). Xem [bên dưới](#liên-kết-bookmark).
+- **Liên kết (bookmark):** chia sẻ một link từ Android (**Chia sẻ → FatUp**) hoặc từ bản web đã cài (PWA), hoặc bấm nút **Thêm liên kết** rồi dán URL. Link nằm ở tab **Liên kết**, tự phân loại theo nền tảng (**Facebook, YouTube, Instagram, Threads, X, TikTok, Internet**), sửa được tiêu đề và URL, gắn thẻ màu như file, **không bao giờ tự hết hạn**. Tiêu đề, ảnh xem trước và favicon của trang được tải khi bạn mở app (YouTube, TikTok luôn có; Instagram, Threads thường không cho đọc nên hiện con bò cowsay thay ảnh). Xem [bên dưới](#liên-kết-bookmark).
 - **Đổi tên và thẻ màu:** bút chì cạnh mỗi file mở popover để đổi tên (giữ nguyên phần mở rộng) và gắn tối đa **3 chấm màu**. Nút hình hộp cạnh nút làm mới để **lọc theo màu**.
 - **Xem ảnh:** vừa khung, zoom 10–800% (nút, lăn chuột, `+`/`-`, phím **↓ phóng to / ↑ thu nhỏ**), kéo để di chuyển, `←`/`→` chuyển ảnh, bảng **Chi tiết** (tên, loại, dung lượng, kích thước, thời gian, thiết bị).
 - **Thùng rác:** xóa file là chuyển vào thùng rác, khôi phục được trong 30 ngày. Xem [bên dưới](#thùng-rác-trash).
@@ -29,7 +31,9 @@ Gửi ảnh và file giữa **điện thoại Android** và **máy tính** (macO
 
 - **Ba đường vào:** (1) Android: trong trình duyệt hoặc app bất kỳ bấm **Chia sẻ → FatUp**; (2) PWA: sau khi cài, FatUp xuất hiện trong menu Chia sẻ của Android; link được giữ qua màn hình khóa PIN rồi lưu ngay khi bạn mở khóa; (3) nút **Thêm liên kết** (biểu tượng sợi xích cạnh Tải lên) trên desktop và web, tự điền link nếu clipboard đang có.
 - **Lưu ngay, xem trước sau:** link được lưu tức thì với tiêu đề lấy từ nơi chia sẻ (hoặc tên miền). Khi bạn mở app, Worker đọc trang để lấy tiêu đề và địa chỉ ảnh xem trước (tối đa 20 link mỗi lần mở, mới nhất trước); **ảnh do chính app tải và giữ trên máy bạn** (thư mục dữ liệu của app, hoặc bộ nhớ của trình duyệt với PWA), Worker không lưu ảnh. Ảnh của link trong Két sắt không được lưu lại. **Tải lại xem trước** nằm trong menu `⋮`.
-- **Phân loại theo tên miền** (hàng icon trong tab Liên kết: Tất cả, Internet, YouTube, X, Threads, một đường kẻ, rồi nút chia sẻ bấm vào để Facebook, Instagram, Shopee, TikTok nhảy ra; logo thật của từng nền tảng, số lượng hiện khi rê chuột; danh sách có cột Nguồn để sắp xếp theo nền tảng): Facebook, YouTube, Instagram, Threads, X, Shopee, TikTok, Internet (mọi tên miền khác). Kết hợp được với lọc theo màu và tìm kiếm (theo tiêu đề và URL).
+- **Phân loại theo nền tảng** (hàng nút tròn trong tab Liên kết: Tất cả, Internet, YouTube, một đường kẻ, rồi hộp **Mạng xã hội** bấm vào để Facebook, Instagram, Threads, X, TikTok nhảy ra; logo thật của từng nền tảng, trang web khác hiện favicon của chính nó; danh sách có cột Nguồn để sắp xếp theo nền tảng). Kết hợp được với lọc theo màu, lọc quan trọng và tìm kiếm (theo tiêu đề và URL).
+- **Nhóm theo nền tảng / tên miền:** khi đang xem Tất cả, link được gom thành nhóm (mỗi nền tảng một nhóm, `youtu.be` và `youtube.com` chung nhóm YouTube; trang web khác nhóm theo tên miền), tiêu đề nhóm có icon và số lượng, bấm để gập/mở; công tắc trên thanh công cụ gập/mở tất cả.
+- **Danh sách link:** cột nút sửa / sao chép canh thẳng hàng bên phải, rê chuột hoặc focus hiện thêm nút **mở trong trình duyệt**.
 - **Sửa liên kết:** bút chì → popover có ô Tiêu đề, ô URL và chấm màu. Đổi URL thì xem trước được tải lại. URL đã lưu rồi thì báo "Liên kết này đã có".
 - Link có thể vào két sắt hoặc thùng rác như file; **không tự xóa sau 30 ngày**. Bản app cũ không thấy link (server không trả link cho danh sách file thường).
 - **PWA đã cài trước đây:** Android cập nhật mục "Chia sẻ" của PWA chậm (tới khoảng một ngày sau khi bản web mới được deploy), có thể phải gỡ rồi cài lại PWA.
@@ -263,17 +267,19 @@ npm run -w @fatup/worker db:migrate:local
 npm run -w @fatup/worker dev
 ```
 
-Desktop:
+Desktop (dùng chung cấu hình với app FatUp đã cài, nên nối thẳng vào server thật; `dev:desktop:fresh` dùng một hồ sơ riêng trong `.dev-userdata/`, thêm `FATUP_SERVER=https://…` để điền sẵn địa chỉ server):
 
 ```bash
-npm run -w @fatup/desktop dev
+npm run dev:desktop
 ```
 
-Web (PWA, dùng chung giao diện với desktop, chạy ở http://localhost:5173 và nối vào server bạn nhập):
+Web (PWA, dùng chung giao diện với desktop, chạy ở http://localhost:5173). Muốn dùng database và file thật trên server: chép `web/.env.example` thành `web/.env.local` và điền `FATUP_SERVER=https://fatup.<tên-bạn>.workers.dev`; Vite sẽ chuyển các lệnh gọi API sang Worker đó (Worker không bật CORS nên phải qua proxy). Ở màn hình thiết lập giữ nguyên địa chỉ `localhost:5173` đã điền sẵn và nhập token thật:
 
 ```bash
-npm run -w @fatup/web dev
+npm run dev:web
 ```
+
+Server: `npm run release:worker` = migrate D1 trên server rồi deploy Worker (kèm PWA); hoặc từng bước `npm run db:migrate`, `npm run deploy:worker`.
 
 Test:
 
@@ -287,7 +293,7 @@ npm run -w @fatup/desktop e2e
 
 Chỉ muốn kiểm tra màn hình khóa trên điện thoại (cửa Moria, lắc PIN, nháy đèn, mở cửa) thì chạy `npm run -w @fatup/desktop e2e:lock`, nhanh hơn nhiều.
 
-Lệnh `e2e` build app rồi điều khiển nó bằng Playwright, dùng một API giả. **Lưu ý:** script này viết từ bản đầu và chưa được cập nhật theo giao diện mới (thùng rác, két sắt, chọn nhiều file…), nên có thể fail ở các bước đó. Trên Linux không có màn hình thì chạy qua `xvfb-run -a`. Đặt biến `SCREENSHOT_DIR=…` để lưu ảnh chụp từng màn hình.
+Lệnh `e2e` build app rồi điều khiển nó bằng Playwright, dùng một API giả. Trên Linux không có màn hình thì chạy qua `xvfb-run -a`. Đặt biến `SCREENSHOT_DIR=…` để lưu ảnh chụp từng màn hình.
 
 Android (cần JDK 21 và Android SDK có `platforms;android-37.0`):
 

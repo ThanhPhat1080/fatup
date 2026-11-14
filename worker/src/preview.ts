@@ -1,21 +1,24 @@
-import { isPublicUrl, siteOf } from '@fatup/shared';
+import { isPublicUrl, siteOf, type FrameCheck } from '@fatup/shared';
 
 export { isPublicUrl };
 
 /** A link's title and the address of its picture. The picture itself is never fetched here; see PreviewResponse. */
-export type Preview = { title: string | null; imageUrl: string | null };
+export type Preview = { title: string | null; imageUrl: string | null; iconUrl?: string | null };
 
 const EMPTY: Preview = { title: null, imageUrl: null };
 const MAX_REDIRECTS = 3;
 const MAX_HTML_BYTES = 512 * 1024;
 const UA = 'Mozilla/5.0 (compatible; FatUp-LinkPreview/1.0)';
+/** Facebook only puts its og: tags in pages served to its own link-preview crawler; everyone else gets a login wall. */
+const FACEBOOK_UA = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
+const userAgentFor = (url: string) => (siteOf(url) === 'facebook' ? FACEBOOK_UA : UA);
 
-/** GET with manual redirects so every hop is checked against isPublicUrl. Null when refused, failed or too many hops. */
-async function get(url: string, fetchImpl: typeof fetch, signal: AbortSignal, accept: string): Promise<Response | null> {
+/** GET with manual redirects so every hop is checked against isPublicUrl. Null when refused, failed or too many hops; else the response and the address it came from. */
+async function get(url: string, fetchImpl: typeof fetch, signal: AbortSignal, accept: string): Promise<{ res: Response; url: string } | null> {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     if (!isPublicUrl(current)) return null;
-    const res = await fetchImpl(current, { redirect: 'manual', signal, headers: { 'User-Agent': UA, Accept: accept } });
+    const res = await fetchImpl(current, { redirect: 'manual', signal, headers: { 'User-Agent': userAgentFor(current), Accept: accept } });
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get('location');
       await res.body?.cancel().catch(() => undefined);
@@ -27,7 +30,7 @@ async function get(url: string, fetchImpl: typeof fetch, signal: AbortSignal, ac
       }
       continue;
     }
-    return res.ok ? res : null;
+    return res.ok ? { res, url: current } : null;
   }
   return null;
 }
@@ -77,7 +80,21 @@ const clean = (text: string | null | undefined) => {
 };
 
 /** Reads og:/twitter: meta tags and <title> out of an HTML head. */
-export function parseHtml(html: string): { title: string | null; image: string | null } {
+/** The page's own icon: apple-touch-icon (large, square), else rel="icon", else "shortcut icon". Href as written; null when none. */
+function iconHref(html: string): string | null {
+  const found = new Map<string, string>();
+  for (const tag of html.matchAll(/<link\b[^>]*>/gi)) {
+    const attrs = new Map<string, string>();
+    for (const a of tag[0].matchAll(/([a-z:_-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)) attrs.set(a[1].toLowerCase(), a[2] ?? a[3] ?? a[4] ?? '');
+    const rel = (attrs.get('rel') ?? '').toLowerCase().split(/\s+/);
+    const href = decodeEntities(attrs.get('href') ?? '').trim();
+    if (!href) continue;
+    for (const kind of ['apple-touch-icon', 'icon']) if (rel.includes(kind) && !found.has(kind)) found.set(kind, href);
+  }
+  return found.get('apple-touch-icon') ?? found.get('icon') ?? null;
+}
+
+export function parseHtml(html: string): { title: string | null; image: string | null; icon?: string | null } {
   const meta = new Map<string, string>();
   for (const tag of html.matchAll(/<meta\b[^>]*>/gi)) {
     const attrs = new Map<string, string>();
@@ -91,6 +108,7 @@ export function parseHtml(html: string): { title: string | null; image: string |
     title: clean(meta.get('og:title') ?? meta.get('twitter:title') ?? titleTag),
     // Attribute values are HTML, so "&amp;" stands for "&": an address with its entities left in (as Instagram's signed ones have) is refused by the CDN.
     image: decodeEntities(meta.get('og:image') ?? meta.get('og:image:url') ?? meta.get('twitter:image') ?? meta.get('twitter:image:src') ?? '').trim() || null,
+    icon: iconHref(html),
   };
 }
 
@@ -100,7 +118,7 @@ async function oembed(url: string, fetchImpl: typeof fetch, signal: AbortSignal)
   const endpoint =
     site === 'youtube' ? `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json` : site === 'tiktok' ? `https://www.tiktok.com/oembed?url=${encodeURIComponent(url)}` : null;
   if (!endpoint) return null;
-  const res = await get(endpoint, fetchImpl, signal, 'application/json');
+  const res = (await get(endpoint, fetchImpl, signal, 'application/json'))?.res;
   if (!res) return null;
   const data = (await res.json().catch(() => null)) as { title?: unknown; thumbnail_url?: unknown } | null;
   if (!data) return null;
@@ -115,17 +133,19 @@ export async function fetchPreview(url: string, fetchImpl: typeof fetch = (i, in
     let base = url;
     let found = await oembed(url, fetchImpl, signal).catch(() => null);
     if (!found) {
-      const res = await get(url, fetchImpl, signal, 'text/html,application/xhtml+xml');
+      const got = await get(url, fetchImpl, signal, 'text/html,application/xhtml+xml');
+      const res = got?.res;
       const type = (res?.headers.get('content-type') ?? '').toLowerCase();
       if (!res || !(type.includes('html') || type.includes('xml'))) {
         await res?.body?.cancel().catch(() => undefined);
         return EMPTY;
       }
-      base = res.url || url;
+      base = got?.url ?? url;
       const bytes = await readLimited(res, MAX_HTML_BYTES, false);
       found = parseHtml(new TextDecoder().decode(bytes ?? new Uint8Array()));
     }
-    return { title: found.title, imageUrl: absolutePublic(found.image, base) };
+    const iconUrl = absolutePublic((found as { icon?: string | null }).icon ?? null, base);
+    return { title: found.title, imageUrl: absolutePublic(found.image, base), ...(iconUrl ? { iconUrl } : {}) };
   } catch {
     return EMPTY;
   }
@@ -139,5 +159,32 @@ function absolutePublic(image: string | null, base: string): string | null {
     return isPublicUrl(href) ? href : null;
   } catch {
     return null;
+  }
+}
+
+
+/** True unless X-Frame-Options or a CSP frame-ancestors directive keeps the page out of other sites' frames. */
+export function allowsFraming(headers: Headers): boolean {
+  const xfo = headers.get('x-frame-options');
+  if (xfo && /deny|sameorigin/i.test(xfo)) return false;
+  const csp = headers.get('content-security-policy');
+  if (!csp) return true;
+  for (const directive of csp.split(/[;,]/)) {
+    const [name, ...sources] = directive.trim().split(/\s+/);
+    if (name?.toLowerCase() === 'frame-ancestors') return sources.some((s) => s === '*' || s.toLowerCase() === 'https:');
+  }
+  return true;
+}
+
+/** Asks the page itself (headers only) whether the web app can frame it. An https app can't frame plain http, so that counts as no. */
+export async function checkFrame(url: string, fetchImpl: typeof fetch = (i, init) => fetch(i, init), timeoutMs = 6000): Promise<FrameCheck> {
+  if (!isPublicUrl(url)) return { framable: false, url };
+  try {
+    const got = await get(url, fetchImpl, AbortSignal.timeout(timeoutMs), 'text/html,application/xhtml+xml');
+    if (!got) return { framable: false, url };
+    await got.res.body?.cancel().catch(() => undefined);
+    return { framable: got.url.startsWith('https:') && allowsFraming(got.res.headers), url: got.url };
+  } catch {
+    return { framable: false, url };
   }
 }

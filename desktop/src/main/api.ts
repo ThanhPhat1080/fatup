@@ -1,4 +1,4 @@
-import type { TagColor, PreviewResponse, CreateLinkRequest, CreateUploadRequest, CreateUploadResponse, DownloadResponse, EmptyTrashResponse, UsageResponse, FileItem, ListFilesResponse } from '@fatup/shared';
+import type { TagColor, FrameCheck, PreviewResponse, CreateLinkRequest, CreateUploadRequest, CreateUploadResponse, DownloadResponse, EmptyTrashResponse, UsageResponse, FileItem, ListFilesResponse } from '@fatup/shared';
 
 export class ApiError extends Error {
   constructor(
@@ -86,6 +86,10 @@ export class ApiClient {
     return this.request(`/links/${encodeURIComponent(id)}/preview`, { method: 'POST' });
   }
 
+  linkFrame(id: string): Promise<FrameCheck> {
+    return this.request(`/links/${encodeURIComponent(id)}/frame`);
+  }
+
   async downloadUrl(id: string): Promise<string> {
     const res: DownloadResponse = await this.request(`/files/${encodeURIComponent(id)}/download`);
     return res.url;
@@ -99,7 +103,7 @@ export class ApiClient {
     return this.request(`/uploads/${encodeURIComponent(id)}/complete`, { method: 'POST' });
   }
 
-  update(id: string, patch: { name?: string; tags?: TagColor[]; url?: string }): Promise<FileItem> {
+  update(id: string, patch: { name?: string; tags?: TagColor[]; url?: string; important?: boolean }): Promise<FileItem> {
     return this.request(`/files/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
 
