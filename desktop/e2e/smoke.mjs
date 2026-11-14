@@ -221,6 +221,7 @@ try {
   await typePin(page, '0000');
   await page.getByText('Wrong PIN. 4 tries left.').waitFor();
   await shot(page, '09-lock-en');
+
   await typePin(page, '1234');
   await page.getByText('Today').first().waitFor();
   log('close app (2nd run)');
