@@ -272,11 +272,6 @@ export function LockMoria({ open, panicKey, children, below }: Props) {
               <stop offset="0" stopColor="#6fb4ff" stopOpacity="0.55" />
               <stop offset="1" stopColor="#6fb4ff" stopOpacity="0" />
             </radialGradient>
-            <radialGradient id="moria-burst" cx="0.5" cy="0.5" r="0.5">
-              <stop offset="0" stopColor="#ffffff" />
-              <stop offset="0.5" stopColor="#bfe3ff" />
-              <stop offset="1" stopColor="#6fb4ff" stopOpacity="0" />
-            </radialGradient>
             <linearGradient id="moria-lake" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0" stopColor="#0e1c33" />
               <stop offset="1" stopColor="#060b16" />

@@ -45,10 +45,15 @@ const RUNES: { x: number; y: number; rot: number; k: number; t: number }[] = (()
 
 export const star4 = (x: number, y: number, s: number) => `M${x} ${y - s}Q${x} ${y} ${x + s} ${y}Q${x} ${y} ${x} ${y + s}Q${x} ${y} ${x - s} ${y}Q${x} ${y} ${x} ${y - s}Z`;
 
-/** What the gate needs in <defs>: the wall's and the door's stone patterns, the glow filter, the doorway clip, and the carving drawn once (dim and lit copies <use> it). */
+/** What the gate needs in <defs>: the light that pours out when it opens, the wall's and the door's stone patterns, the glow filter, the doorway clip, and the carving drawn once (dim and lit copies <use> it). */
 export function DoorDefs() {
   return (
     <>
+            <radialGradient id="moria-burst" cx="0.5" cy="0.5" r="0.5">
+              <stop offset="0" stopColor="#ffffff" />
+              <stop offset="0.5" stopColor="#bfe3ff" />
+              <stop offset="1" stopColor="#6fb4ff" stopOpacity="0" />
+            </radialGradient>
             <pattern id="moria-rock" width="150" height="100" patternUnits="userSpaceOnUse">
               <rect width="150" height="100" fill="#172640" />
               <path d="M0 0H150M0 50H150M75 0V50M30 50V100M120 50V100" fill="none" stroke="#0a1220" strokeWidth="3" />

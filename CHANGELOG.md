@@ -7,7 +7,8 @@ Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy
 ## [Chưa phát hành]
 
 ### Đổi
-- **Màn hình khóa trên điện thoại nhẹ hơn:** ở màn hình hẹp (≤ 720px, hoặc điện thoại xoay ngang) chỉ vẽ **đúng cánh cửa hầm Moria** (vòm khắc chữ rune, hai cây, vương miện, ngôi sao tám cánh) và ô nhập PIN. Không còn cây hai bên, bạch tuộc, đoàn người, hồ nước hay hiệu ứng mở cửa; các rune đứng yên, chỉ có ánh sáng nhấp nháy bằng cách đổi độ trong suốt của một lớp đã vẽ sẵn (rất nhẹ, tắt khi bật giảm chuyển động), nên PWA không còn giật lag. Nhập đúng PIN thì vào app ngay. Màn hình rộng (desktop, máy tính bảng) vẫn giữ cảnh Moria đầy đủ. Cổng két sắt (ông phù thủy) chưa đổi.
+- **Màn hình khóa trên điện thoại nhẹ hơn:** ở màn hình hẹp (≤ 720px, hoặc điện thoại xoay ngang) chỉ vẽ **đúng cánh cửa hầm Moria** (vòm khắc chữ rune, hai cây, vương miện, ngôi sao tám cánh), vẽ **dài hơn** một chút, với **ô PIN nằm trên thân cửa, dưới ngôi sao**. Không còn cây hai bên, bạch tuộc, đoàn người, hồ nước; các rune đứng yên và ánh sáng nhấp nháy bằng cách đổi độ trong suốt của các lớp đã vẽ sẵn (rất nhẹ, nên PWA không còn giật lag). **Sai PIN:** ô PIN lắc và đèn của cửa nháy giật. **Đúng PIN:** cửa mở như ở bản đầy đủ rồi mới vào app. Màn hình rộng (desktop, máy tính bảng) vẫn giữ cảnh Moria đầy đủ. Cổng két sắt (ông phù thủy) chưa đổi.
+- Dòng báo "Sai PIN" của lần nhập trước không còn lơ lửng khi cửa đang mở (cả bản đầy đủ lẫn bản điện thoại).
 
 ## [0.3.2] — 2026-11-14
 

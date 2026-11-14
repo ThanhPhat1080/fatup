@@ -12,7 +12,8 @@ const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion:
 
 export function Lock({ onUnlocked, onReset }: { onUnlocked: () => void; onReset: () => void }) {
   const { t } = useI18n();
-  // On a phone the lock screen is only the lit gate: no scene, no animation (the full scene makes phones lag).
+  // On a phone the lock screen is only the door of Moria (the full scene makes phones lag), but it still reacts: a wrong PIN stutters its
+  // lights and shakes the PIN, the right one opens it.
   const phone = useMediaQuery(PHONE_QUERY);
   const [message, setMessage] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState(0);
@@ -38,8 +39,9 @@ export function Lock({ onUnlocked, onReset }: { onUnlocked: () => void; onReset:
   async function submit(pin: string) {
     const res = await window.fatup.unlock(pin);
     if (res.ok) {
+      setMessage(null); // the last wrong-PIN line must not hang over the opening door
       // The right PIN swings the Doors of Durin open; the app appears once the light has flooded the screen.
-      if (phone || prefersReducedMotion()) return onUnlocked();
+      if (prefersReducedMotion()) return onUnlocked();
       setOpen(true);
       openTimer.current = setTimeout(onUnlocked, OPEN_MS);
       return;
@@ -68,7 +70,9 @@ export function Lock({ onUnlocked, onReset }: { onUnlocked: () => void; onReset:
   return (
     <div className="moria-lock">
       {phone ? (
-        <LockGate below={below}>{pin}</LockGate>
+        <LockGate open={open} panicKey={errorKey} below={below}>
+          {pin}
+        </LockGate>
       ) : (
         <LockMoria open={open} panicKey={errorKey} below={below}>
           {pin}

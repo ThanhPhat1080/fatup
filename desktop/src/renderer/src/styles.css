@@ -2444,7 +2444,7 @@ h2 {
 .moria__below .btn--text:not(:disabled):hover {
   background: rgba(6, 12, 26, 0.85);
 }
-/* ---------- Lock screen on a phone: the lit gate and nothing else (no animation) ---------- */
+/* ---------- Lock screen on a phone: the door of Moria and nothing else ---------- */
 .gate {
   position: relative;
   height: 100%;
@@ -2452,8 +2452,8 @@ h2 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 18px;
-  padding: 24px 16px;
+  gap: 14px;
+  padding: 16px 0 24px;
   box-sizing: border-box;
 }
 .gate__halo {
@@ -2468,11 +2468,13 @@ h2 {
   background: radial-gradient(closest-side, rgba(143, 208, 255, 0.28), rgba(143, 208, 255, 0.08) 55%, transparent 100%);
   pointer-events: none;
 }
+/* The door, drawn a little taller than in the scene (the artwork is stretched to this box). Sizes inside it are in cqw. */
 .gate__door {
   position: relative;
   width: min(100vw, 460px);
-  aspect-ratio: 550 / 470;
+  aspect-ratio: 550 / 560;
   flex: none;
+  container-type: inline-size;
 }
 .gate__base,
 .gate__lit {
@@ -2495,29 +2497,6 @@ h2 {
   will-change: opacity;
   animation: moria-stage 5.2s linear infinite;
 }
-.gate__pin,
-.gate__below {
-  position: relative;
-}
-.gate__pin .pin {
-  margin: 0;
-}
-.gate__pin .pin__cells {
-  gap: 10px;
-}
-.gate__pin .pin__cell {
-  width: 46px;
-  height: 56px;
-  border-radius: 10px;
-  background: rgba(8, 18, 38, 0.88);
-  border: 1.5px solid rgba(143, 208, 255, 0.75);
-}
-.gate__pin .pin__cell--active {
-  border-color: #e6f5ff;
-}
-.gate__pin .pin__cell--filled::after {
-  background: #d6efff;
-}
 /* In the full scene every rune pulses on its own (dozens of animated strokes). On a phone they stand still; the whole lit layer breathes instead. */
 .gate .moria__rune {
   animation: none;
@@ -2531,17 +2510,79 @@ h2 {
   0%, 100% { opacity: 0.65; }
   50% { opacity: 1; }
 }
+
+/* The PIN sits on the body of the door, a little below the star (placed in the artwork's coordinates: x 670-930, y 540-600 of the scene). */
+.gate__pin {
+  position: absolute;
+  left: 26.4%;
+  top: 74.5%;
+  width: 47.3%;
+  height: 12.8%;
+  display: grid;
+  place-items: center;
+}
+.gate__pin .pin {
+  margin: 0;
+}
+.gate__pin .pin__cells {
+  gap: 1.7cqw;
+}
+.gate__pin .pin__cell {
+  width: 8.4cqw;
+  height: 10.6cqw;
+  border-radius: 1.5cqw;
+  background: rgba(8, 18, 38, 0.88);
+  border: 1.5px solid rgba(143, 208, 255, 0.75);
+  box-shadow: 0 0 8px rgba(111, 180, 255, 0.5), inset 0 0 6px rgba(111, 180, 255, 0.25);
+}
+.gate__pin .pin__cell--active {
+  border-color: #e6f5ff;
+  box-shadow: 0 0 12px rgba(160, 215, 255, 0.9), inset 0 0 8px rgba(160, 215, 255, 0.4);
+}
+.gate__pin .pin__cell--filled::after {
+  background: #d6efff;
+  box-shadow: 0 0 6px #8fd0ff;
+}
+
+/* A wrong PIN: the cells shake (.pin--shake) and the lights of the door stutter. */
+.gate__lit--panic {
+  animation: gate-stutter 0.9s linear, moria-stage 5.2s linear 0.9s infinite;
+}
+@keyframes gate-stutter {
+  0% { opacity: 0.1; }
+  10% { opacity: 1; }
+  22% { opacity: 0.15; }
+  34% { opacity: 0.95; }
+  48% { opacity: 0.2; }
+  62% { opacity: 0.9; }
+  80% { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+
+/* The right PIN: the same as in the full scene. The leaves swing open, the carving dims and light floods out (the .moria__burst and .moria__flash rules). */
+.gate--open .moria__leaf {
+  animation: moria-leaf 1.1s ease-in forwards;
+}
+.gate--open .moria__seam {
+  display: none;
+}
+.gate--open .gate__lit {
+  animation: moria-glow-out 1.2s ease-in forwards;
+}
+.gate--open .gate__base {
+  -webkit-mask-image: none;
+  mask-image: none; /* let the flood spill past the edge of the wall */
+}
 @media (prefers-reduced-motion: reduce) {
   .gate__lit,
+  .gate__lit--panic,
   .gate__halo {
     animation: none;
   }
 }
-/* a wrong PIN is told by the message, not by shaking */
-.gate .pin--shake {
-  animation: none;
-}
+
 .gate__below {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;

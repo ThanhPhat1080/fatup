@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "e2e": "electron-vite build && node e2e/smoke.mjs",
+    "e2e:lock": "electron-vite build && node e2e/lock-phone.mjs",
     "dist": "electron-vite build && electron-builder --publish never",
     "dist:mac": "electron-vite build && electron-builder --mac --publish never",
     "dist:win": "electron-vite build && electron-builder --win --publish never",

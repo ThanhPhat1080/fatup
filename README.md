@@ -285,6 +285,8 @@ npm test
 npm run -w @fatup/desktop e2e
 ```
 
+Chỉ muốn kiểm tra màn hình khóa trên điện thoại (cửa Moria, lắc PIN, nháy đèn, mở cửa) thì chạy `npm run -w @fatup/desktop e2e:lock`, nhanh hơn nhiều.
+
 Lệnh `e2e` build app rồi điều khiển nó bằng Playwright, dùng một API giả. **Lưu ý:** script này viết từ bản đầu và chưa được cập nhật theo giao diện mới (thùng rác, két sắt, chọn nhiều file…), nên có thể fail ở các bước đó. Trên Linux không có màn hình thì chạy qua `xvfb-run -a`. Đặt biến `SCREENSHOT_DIR=…` để lưu ảnh chụp từng màn hình.
 
 Android (cần JDK 21 và Android SDK có `platforms;android-37.0`):
