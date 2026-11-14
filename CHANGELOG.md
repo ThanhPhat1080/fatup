@@ -4,6 +4,11 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [Chưa phát hành]
+
+### Đổi
+- **Màn hình khóa trên điện thoại nhẹ hơn:** ở màn hình hẹp (≤ 720px, hoặc điện thoại xoay ngang) chỉ còn **cánh cổng sáng tĩnh** và ô nhập PIN. Không còn bạch tuộc, đoàn người, hồ nước hay hoạt họa nào, nên PWA không còn giật lag; nhập đúng PIN thì vào app ngay. Màn hình rộng (desktop, máy tính bảng) vẫn giữ cảnh Moria đầy đủ. Cổng két sắt (ông phù thủy) chưa đổi.
+
 ## [0.3.2] — 2026-11-14
 
 ### Sửa

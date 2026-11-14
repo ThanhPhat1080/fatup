@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useI18n } from '../lib/i18n';
 import { ConfirmDialog } from './Dialog';
+import { useMediaQuery, PHONE_QUERY } from '../lib/media';
+import { LockGate } from './LockGate';
 import { DOORS_OPEN_S, LockMoria } from './LockMoria';
 import { PinInput } from './PinInput';
 
@@ -10,6 +12,8 @@ const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion:
 
 export function Lock({ onUnlocked, onReset }: { onUnlocked: () => void; onReset: () => void }) {
   const { t } = useI18n();
+  // On a phone the lock screen is only the lit gate: no scene, no animation (the full scene makes phones lag).
+  const phone = useMediaQuery(PHONE_QUERY);
   const [message, setMessage] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState(0);
   const [lockedUntil, setLockedUntil] = useState(0);
@@ -35,7 +39,7 @@ export function Lock({ onUnlocked, onReset }: { onUnlocked: () => void; onReset:
     const res = await window.fatup.unlock(pin);
     if (res.ok) {
       // The right PIN swings the Doors of Durin open; the app appears once the light has flooded the screen.
-      if (prefersReducedMotion()) return onUnlocked();
+      if (phone || prefersReducedMotion()) return onUnlocked();
       setOpen(true);
       openTimer.current = setTimeout(onUnlocked, OPEN_MS);
       return;
@@ -49,24 +53,27 @@ export function Lock({ onUnlocked, onReset }: { onUnlocked: () => void; onReset:
     }
   }
 
+  const below = (
+    <>
+      <p className={`error ${message || locked ? '' : 'error--hidden'}`} role="alert">
+        {locked ? t.lockedFor(Math.ceil((lockedUntil - now) / 1000)) : (message ?? ' ')}
+      </p>
+      <button className="btn btn--text" onClick={() => setConfirmReset(true)} disabled={open}>
+        {t.forgotPin}
+      </button>
+    </>
+  );
+  const pin = <PinInput label={t.enterPin} onComplete={submit} errorKey={errorKey} disabled={locked || open} />;
+
   return (
     <div className="moria-lock">
-      <LockMoria
-        open={open}
-        panicKey={errorKey}
-        below={
-          <>
-            <p className={`error ${message || locked ? '' : 'error--hidden'}`} role="alert">
-              {locked ? t.lockedFor(Math.ceil((lockedUntil - now) / 1000)) : (message ?? ' ')}
-            </p>
-            <button className="btn btn--text" onClick={() => setConfirmReset(true)} disabled={open}>
-              {t.forgotPin}
-            </button>
-          </>
-        }
-      >
-        <PinInput label={t.enterPin} onComplete={submit} errorKey={errorKey} disabled={locked || open} />
-      </LockMoria>
+      {phone ? (
+        <LockGate below={below}>{pin}</LockGate>
+      ) : (
+        <LockMoria open={open} panicKey={errorKey} below={below}>
+          {pin}
+        </LockMoria>
+      )}
       {confirmReset && (
         <ConfirmDialog
           title={t.forgotPin.replace(/\?.*/, '?')}

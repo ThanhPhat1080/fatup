@@ -2444,6 +2444,76 @@ h2 {
 .moria__below .btn--text:not(:disabled):hover {
   background: rgba(6, 12, 26, 0.85);
 }
+/* ---------- Lock screen on a phone: the lit gate and nothing else (no animation) ---------- */
+.gate {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 24px 16px;
+  box-sizing: border-box;
+}
+.gate__halo {
+  position: absolute;
+  left: 50%;
+  top: 38%;
+  width: 150vw;
+  height: 150vw;
+  max-width: 900px;
+  max-height: 900px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(closest-side, rgba(143, 208, 255, 0.28), rgba(143, 208, 255, 0.08) 55%, transparent 100%);
+  pointer-events: none;
+}
+.gate__svg {
+  position: relative;
+  width: min(62vw, 260px);
+  height: auto;
+  display: block;
+  flex: none;
+}
+.gate__pin,
+.gate__below {
+  position: relative;
+}
+.gate__pin .pin {
+  margin: 0;
+}
+.gate__pin .pin__cells {
+  gap: 10px;
+}
+.gate__pin .pin__cell {
+  width: 46px;
+  height: 56px;
+  border-radius: 10px;
+  background: rgba(8, 18, 38, 0.88);
+  border: 1.5px solid rgba(143, 208, 255, 0.75);
+}
+.gate__pin .pin__cell--active {
+  border-color: #e6f5ff;
+}
+.gate__pin .pin__cell--filled::after {
+  background: #d6efff;
+}
+/* a wrong PIN is told by the message, not by shaking */
+.gate .pin--shake {
+  animation: none;
+}
+.gate__below {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.gate__below .error {
+  color: #ffb4a8;
+  margin: 0 0 4px;
+}
+.gate__below .btn--text {
+  color: #d6ecff;
+}
 /* the carving lights up from the left foot, over the arch, to the right foot */
 .moria__reveal {
   transform-box: fill-box;

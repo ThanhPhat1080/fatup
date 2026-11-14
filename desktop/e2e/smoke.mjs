@@ -221,6 +221,20 @@ try {
   await typePin(page, '0000');
   await page.getByText('Wrong PIN. 4 tries left.').waitFor();
   await shot(page, '09-lock-en');
+
+  // On a phone the lock screen is only the lit gate: nothing is drawn but the door, nothing moves, and the right PIN opens the app at once.
+  log('lock screen on a phone');
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.locator('.gate').waitFor();
+  assert.equal(await page.locator('.moria').count(), 0, 'the Moria scene is not drawn on a phone');
+  assert.equal(await page.locator('.gate svg').count(), 1, 'just the gate');
+  await page.waitForTimeout(800);
+  assert.equal(await page.evaluate(() => document.getAnimations().length), 0, 'nothing is animating on the phone lock screen');
+  await shot(page, '09b-lock-phone');
+  await page.setViewportSize({ width: 1180, height: 760 });
+  await page.locator('.moria').waitFor(); // a wide window gets the full scene back
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.locator('.gate').waitFor();
   await typePin(page, '1234');
   await page.getByText('Today').first().waitFor();
   log('close app (2nd run)');

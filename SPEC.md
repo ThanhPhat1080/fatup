@@ -344,6 +344,7 @@ Hai màn hình nhập PIN vẽ hoàn toàn bằng **SVG + CSS** (không có file
   - **Bấm vào Gollum:** nó nhảy lên. **Bấm vào vòi bạch tuộc:** vòi duỗi thẳng và cả đoàn nhảy lên.
 - **Cổng két sắt** (`VaultGate.tsx` + `LockWizard.tsx`, toàn màn hình): ông phù thủy đứng trên cây cầu đá, gậy giơ lên nhún nhảy, râu bay, tro, tia lửa và sao băng rơi, lửa bập bùng từ đáy màn hình. Có nút **← Quay lại**: ông hạ gậy và nói "GO BACK TO THE SHADOW!" nhẹ nhàng, giữ màn hình đủ lâu để đọc rồi mới thoát. **PIN đúng:** "Fire in the hole!", quả bom, vụ nổ, ông bay đi (`Boom.tsx` dùng chung).
 - `prefers-reduced-motion`: tắt hoạt họa, mở khóa ngay, vòi bạch tuộc chỉ vẽ một lần.
+- **Màn hình điện thoại** (`max-width: 720px`, hoặc màn cảm ứng nằm ngang cao ≤ 520px; `lib/media.ts`): cảnh Moria quá nặng cho trình duyệt điện thoại (giật, lag) nên **không vẽ gì ngoài cánh cổng sáng tĩnh** (`LockGate.tsx`): không bạch tuộc, không đoàn người, không hồ, không hoạt họa nào (kể cả rung ô PIN khi sai PIN: chỉ có dòng báo lỗi). Nhập đúng PIN thì vào app ngay, không hoạt họa mở cửa. Đổi kích thước/xoay màn hình thì đổi cảnh tương ứng. Cổng két sắt (ông phù thủy) chưa đổi.
 - Các cảnh là tác phẩm tự vẽ theo phong cách riêng, không sao chép hình ảnh nào; chữ rune chỉ là nét trang trí.
 
 ---
