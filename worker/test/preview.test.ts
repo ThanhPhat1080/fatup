@@ -149,3 +149,80 @@ describe('fetchPreview', () => {
     expect(await fetchPreview('https://slow.test/', hang, 30)).toEqual({ title: null, imageUrl: null });
   });
 });
+
+describe('GET /links/:id/frame', () => {
+  const page = (headers: Record<string, string> = {}) => () => new Response('<html></html>', { headers: { 'content-type': 'text/html', ...headers } });
+
+  it.each([
+    [{}, true],
+    [{ 'x-frame-options': 'DENY' }, false],
+    [{ 'x-frame-options': 'sameorigin' }, false],
+    [{ 'content-security-policy': "default-src 'self'; frame-ancestors 'self'" }, false],
+    [{ 'content-security-policy': "frame-ancestors 'none'" }, false],
+    [{ 'content-security-policy': 'frame-ancestors *' }, true],
+    [{ 'content-security-policy': "script-src 'self'" }, true],
+  ])('%o → framable %s', async (headers, framable) => {
+    const t = setup({ 'https://site.test/a': page(headers) });
+    const link = await t.add('https://site.test/a');
+    const res = await t.call(`/links/${link.id}/frame`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ framable, url: 'https://site.test/a' });
+  });
+
+  it('follows redirects and frames the final address', async () => {
+    const t = setup({
+      'https://short.test/x': () => new Response(null, { status: 301, headers: { location: 'https://site.test/long' } }),
+      'https://site.test/long': page(),
+    });
+    const link = await t.add('https://short.test/x');
+    expect(await (await t.call(`/links/${link.id}/frame`)).json()).toEqual({ framable: true, url: 'https://site.test/long' });
+  });
+
+  it('says no for plain http and for pages that fail', async () => {
+    const t = setup({ 'http://site.test/a': page() });
+    const plain = await t.add('http://site.test/a');
+    expect(((await (await t.call(`/links/${plain.id}/frame`)).json()) as { framable: boolean }).framable).toBe(false);
+    const gone = await t.add('https://site.test/missing');
+    expect(((await (await t.call(`/links/${gone.id}/frame`)).json()) as { framable: boolean }).framable).toBe(false);
+  });
+
+  it('is 404 for an unknown link', async () => {
+    const t = setup({});
+    expect((await t.call('/links/nope/frame')).status).toBe(404);
+  });
+});
+
+describe('site icons', () => {
+  it('prefers apple-touch-icon, resolves it against the page and keeps it on the link', async () => {
+    const t = setup({
+      'https://site.test/a': () => html(`<title>A</title><link rel="icon" href="/fav.png"><link rel="apple-touch-icon" sizes="180x180" href="/touch.png">`),
+    });
+    const link = await t.add('https://site.test/a');
+    const res = (await (await t.preview(link.id)).json()) as PreviewResponse;
+    expect(res.iconUrl).toBe('https://site.test/touch.png');
+    const listed = (await (await t.call('/files?kind=link')).json()) as { items: FileItem[] };
+    expect(listed.items[0].iconUrl).toBe('https://site.test/touch.png');
+  });
+
+  it('uses rel="shortcut icon" and leaves iconUrl null when the page has none', async () => {
+    const t = setup({
+      'https://site.test/a': () => html(`<link rel="shortcut icon" href="https://cdn.site.test/i.ico">`),
+      'https://site.test/b': () => html(`<title>B</title>`),
+    });
+    expect(await fetchPreview('https://site.test/a', t.fakeFetch)).toMatchObject({ iconUrl: 'https://cdn.site.test/i.ico' });
+    const b = await t.add('https://site.test/b');
+    expect(((await (await t.preview(b.id)).json()) as PreviewResponse).iconUrl).toBeNull();
+  });
+
+  it('asks Facebook as its own link-preview crawler, so the og: tags come back', async () => {
+    let agent = '';
+    const t = setup({
+      'https://www.facebook.com/page/posts/1': (_u, init) => {
+        agent = new Headers(init?.headers).get('user-agent') ?? '';
+        return html(`<meta property="og:title" content="A post">`);
+      },
+    });
+    expect((await fetchPreview('https://www.facebook.com/page/posts/1', t.fakeFetch)).title).toBe('A post');
+    expect(agent).toMatch(/^facebookexternalhit\//);
+  });
+});

@@ -20,7 +20,7 @@ export type TagColor = (typeof TAG_COLORS)[number];
 export const MAX_TAGS = 3;
 
 /** Where a link points, judged by its domain. `internet` is everything else. */
-export const SITE_CATEGORIES = ['facebook', 'youtube', 'instagram', 'threads', 'x', 'shopee', 'tiktok', 'internet'] as const;
+export const SITE_CATEGORIES = ['facebook', 'youtube', 'instagram', 'threads', 'x', 'tiktok', 'internet'] as const;
 export type SiteCategory = (typeof SITE_CATEGORIES)[number];
 
 export const MAX_URL_LENGTH = 2048;
@@ -32,7 +32,6 @@ const SITE_DOMAINS: Record<Exclude<SiteCategory, 'internet'>, string[]> = {
   instagram: ['instagram.com'],
   threads: ['threads.net', 'threads.com'],
   x: ['x.com', 'twitter.com', 't.co'],
-  shopee: ['shopee.vn', 'shopee.com', 'shp.ee'],
   tiktok: ['tiktok.com'],
 };
 
@@ -121,9 +120,16 @@ export type FileItem = {
   site: SiteCategory | null;
   /** True once a preview (title and image) has been attempted for a link. */
   previewed: boolean;
+  /** A link's site icon, read with its preview; null when none was found or not yet read. Optional for older servers. */
+  iconUrl?: string | null;
+  /** Marked important (the yellow label). Optional for older servers. */
+  important?: boolean;
 };
 
 /** What `POST /links/:id/preview` returns: the link (its title now filled in) plus the address of its picture. The server never stores or fetches the picture; each client does, and keeps its own copy. */
+/** What `GET /links/:id/frame` returns: whether the web app may show the page in a frame, and the address to frame (after redirects). */
+export type FrameCheck = { framable: boolean; url: string };
+
 export type PreviewResponse = FileItem & {
   /** Absolute public http(s) address of the page's og:image (or oEmbed thumbnail), or null when there is none. Such addresses often expire within days. */
   previewImage: string | null;
@@ -168,3 +174,4 @@ export type EmptyTrashResponse = { deleted: number };
 export type DownloadResponse = { url: string };
 
 export type ApiError = { error: { code: string; message: string } };
+export * from './embed';

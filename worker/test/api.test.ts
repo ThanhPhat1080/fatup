@@ -514,3 +514,22 @@ describe('helpers', () => {
     expect(url.searchParams.get('X-Amz-Signature')).toMatch(/^[0-9a-f]{64}$/);
   });
 });
+
+describe('important', () => {
+  const mark = (id: string, important: unknown) =>
+    call(`/files/${id}`, { method: 'PATCH', body: JSON.stringify({ important }), headers: { 'Content-Type': 'application/json' } });
+
+  it('starts unmarked, can be marked and unmarked, and is listed', async () => {
+    const a = await upload('a.jpg', 'image/jpeg');
+    expect(a.important).toBe(false);
+    expect(((await (await mark(a.id, true)).json()) as FileItem).important).toBe(true);
+    expect(((await (await call('/files')).json()) as ListFilesResponse).items[0].important).toBe(true);
+    expect(((await (await mark(a.id, false)).json()) as FileItem).important).toBe(false);
+  });
+
+  it('only takes true or false', async () => {
+    const a = await upload('a.jpg', 'image/jpeg');
+    expect((await mark(a.id, 'yes')).status).toBe(400);
+    expect((await mark(a.id, 1)).status).toBe(400);
+  });
+});
