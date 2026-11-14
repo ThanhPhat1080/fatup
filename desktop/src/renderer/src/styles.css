@@ -2498,6 +2498,31 @@ h2 {
 .gate__pin .pin__cell--filled::after {
   background: #d6efff;
 }
+/* The light flickers: two layers whose opacity changes, out of step with each other. Opacity is cheap to animate; no filter, no repaint. */
+.gate__flicker {
+  animation: gate-flicker 3.6s ease-in-out infinite;
+}
+.gate__halo {
+  will-change: opacity;
+  animation: gate-halo 5.3s ease-in-out infinite;
+}
+@keyframes gate-flicker {
+  0%, 100% { opacity: 0.1; }
+  18% { opacity: 0.85; }
+  34% { opacity: 0.35; }
+  52% { opacity: 1; }
+  74% { opacity: 0.25; }
+}
+@keyframes gate-halo {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gate__flicker,
+  .gate__halo {
+    animation: none;
+  }
+}
 /* a wrong PIN is told by the message, not by shaking */
 .gate .pin--shake {
   animation: none;

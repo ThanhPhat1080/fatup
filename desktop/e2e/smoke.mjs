@@ -229,7 +229,12 @@ try {
   assert.equal(await page.locator('.moria').count(), 0, 'the Moria scene is not drawn on a phone');
   assert.equal(await page.locator('.gate svg').count(), 1, 'just the gate');
   await page.waitForTimeout(800);
-  assert.equal(await page.evaluate(() => document.getAnimations().length), 0, 'nothing is animating on the phone lock screen');
+  // The light flickers, and that is all: a couple of animations that only change opacity (cheap), nothing else moving.
+  const moving = await page.evaluate(() =>
+    document.getAnimations().map((a) => ({ target: a.effect?.target?.getAttribute?.('class') ?? '', props: [...new Set((a.effect?.getKeyframes?.() ?? []).flatMap((k) => Object.keys(k)).filter((p) => !['offset', 'easing', 'composite', 'computedOffset'].includes(p)))] })),
+  );
+  assert.deepEqual(moving.map((m) => m.target).sort(), ['gate__flicker', 'gate__halo'], 'only the two light layers animate on the phone lock screen');
+  assert.ok(moving.every((m) => m.props.length === 1 && m.props[0] === 'opacity'), 'and they only change opacity');
   await shot(page, '09b-lock-phone');
   await page.setViewportSize({ width: 1180, height: 760 });
   await page.locator('.moria').waitFor(); // a wide window gets the full scene back
