@@ -55,8 +55,8 @@ const recordAnimations = (page) =>
 /** Resolves once an animation with this name has started since recordAnimations. */
 const started = (page, name) => page.waitForFunction((n) => window.__started?.has(n), name, { timeout: 5_000 });
 
-// The door's geometry in the scene's own units (see LockGate.tsx): view box x 525-1075, y 190-660; star centred at y 470, 30 tall.
-const VIEW = { x: 525, y: 190, w: 550, h: 470 };
+// The door's geometry in the scene's own units (see LockGate.tsx): view box x 525-1075, y 190-750; star centred at y 470, 30 tall; threshold at y 640.
+const VIEW = { x: 525, y: 190, w: 550, h: 560 };
 const yFrac = (sceneY) => (sceneY - VIEW.y) / VIEW.h;
 const xFrac = (sceneX) => (sceneX - VIEW.x) / VIEW.w;
 
@@ -92,12 +92,15 @@ try {
   const door = await page.locator('.gate__door').boundingBox();
   const pin = await page.locator('.gate__pin .pin__cells').boundingBox();
   assert.ok(door && pin);
-  assert.ok(door.height / door.width > 0.95, `the door is long (${(door.height / door.width).toFixed(2)} tall for each unit of width; the scene's is ${(VIEW.h / VIEW.w).toFixed(2)})`);
+  assert.ok(door.height / door.width > 1.05, `the door is long (${(door.height / door.width).toFixed(2)} tall for each unit of width)`);
   assert.ok(pin.y > door.y + yFrac(500) * door.height, 'the PIN is below the star');
   assert.ok(pin.y < door.y + yFrac(540) * door.height + 40, 'but only a little below it');
   assert.ok(pin.y + pin.height < door.y + yFrac(640) * door.height, 'and above the threshold: it is on the door');
   assert.ok(pin.x > door.x + xFrac(640) * door.width && pin.x + pin.width < door.x + xFrac(960) * door.width, 'inside the doorway');
   assert.ok(Math.abs(pin.x + pin.width / 2 - (door.x + door.width / 2)) < 3, 'and centred');
+  // At its foot: rough stones lie on the ground and light spills from the doorway onto them (as part of the lit layer, so it flickers with it).
+  assert.ok((await page.locator('.gate__stones > g').count()) >= 10, 'rough stones at the foot of the door');
+  assert.equal(await page.locator('.gate__lit .gate__spill').count(), 1, 'light spills out onto them');
   await page.waitForTimeout(500);
   await shot(page, 'lock-phone-1-door');
 

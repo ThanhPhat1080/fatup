@@ -2472,7 +2472,7 @@ h2 {
 .gate__door {
   position: relative;
   width: min(100vw, 460px);
-  aspect-ratio: 550 / 560;
+  aspect-ratio: 550 / 667;
   flex: none;
   container-type: inline-size;
 }
@@ -2485,11 +2485,11 @@ h2 {
   display: block;
   overflow: visible;
 }
-/* The wall around the door fades into the night at its sides and top instead of ending in a hard rectangle. */
+/* The wall and the ground fade into the night at the sides, top and bottom instead of ending in a hard rectangle. */
 .gate__base {
-  -webkit-mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent), linear-gradient(to bottom, transparent, #000 12%);
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent), linear-gradient(to bottom, transparent, #000 10%, #000 90%, transparent);
   -webkit-mask-composite: source-in;
-  mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent), linear-gradient(to bottom, transparent, #000 12%);
+  mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent), linear-gradient(to bottom, transparent, #000 10%, #000 90%, transparent);
   mask-composite: intersect;
 }
 /* The lit carving breathes like stage lighting (the same keyframes as the full scene). Opacity of a layer that is already painted. */
@@ -2511,13 +2511,13 @@ h2 {
   50% { opacity: 1; }
 }
 
-/* The PIN sits on the body of the door, a little below the star (placed in the artwork's coordinates: x 670-930, y 540-600 of the scene). */
+/* The PIN sits on the body of the door, a little below the star (placed in the artwork's coordinates: x 670-930, y 540-600 of the scene, whose view box is y 190-750). */
 .gate__pin {
   position: absolute;
   left: 26.4%;
-  top: 74.5%;
+  top: 62.5%;
   width: 47.3%;
-  height: 12.8%;
+  height: 10.7%;
   display: grid;
   place-items: center;
 }
