@@ -2468,12 +2468,32 @@ h2 {
   background: radial-gradient(closest-side, rgba(143, 208, 255, 0.28), rgba(143, 208, 255, 0.08) 55%, transparent 100%);
   pointer-events: none;
 }
-.gate__svg {
+.gate__door {
   position: relative;
-  width: min(62vw, 260px);
-  height: auto;
-  display: block;
+  width: min(100vw, 460px);
+  aspect-ratio: 550 / 470;
   flex: none;
+}
+.gate__base,
+.gate__lit {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+/* The wall around the door fades into the night at its sides and top instead of ending in a hard rectangle. */
+.gate__base {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent), linear-gradient(to bottom, transparent, #000 12%);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(to right, transparent, #000 14%, #000 86%, transparent), linear-gradient(to bottom, transparent, #000 12%);
+  mask-composite: intersect;
+}
+/* The lit carving breathes like stage lighting (the same keyframes as the full scene). Opacity of a layer that is already painted. */
+.gate__lit {
+  will-change: opacity;
+  animation: moria-stage 5.2s linear infinite;
 }
 .gate__pin,
 .gate__below {
@@ -2498,27 +2518,21 @@ h2 {
 .gate__pin .pin__cell--filled::after {
   background: #d6efff;
 }
-/* The light flickers: two layers whose opacity changes, out of step with each other. Opacity is cheap to animate; no filter, no repaint. */
-.gate__flicker {
-  animation: gate-flicker 3.6s ease-in-out infinite;
+/* In the full scene every rune pulses on its own (dozens of animated strokes). On a phone they stand still; the whole lit layer breathes instead. */
+.gate .moria__rune {
+  animation: none;
 }
+/* A soft light around the door, pulsing slowly (opacity only). */
 .gate__halo {
   will-change: opacity;
   animation: gate-halo 5.3s ease-in-out infinite;
-}
-@keyframes gate-flicker {
-  0%, 100% { opacity: 0.1; }
-  18% { opacity: 0.85; }
-  34% { opacity: 0.35; }
-  52% { opacity: 1; }
-  74% { opacity: 0.25; }
 }
 @keyframes gate-halo {
   0%, 100% { opacity: 0.65; }
   50% { opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .gate__flicker,
+  .gate__lit,
   .gate__halo {
     animation: none;
   }

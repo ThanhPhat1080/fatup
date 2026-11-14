@@ -7,7 +7,7 @@ Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy
 ## [Chưa phát hành]
 
 ### Đổi
-- **Màn hình khóa trên điện thoại nhẹ hơn:** ở màn hình hẹp (≤ 720px, hoặc điện thoại xoay ngang) chỉ còn **cánh cổng** với ánh sáng nhấp nháy nhẹ và ô nhập PIN. Không còn bạch tuộc, đoàn người, hồ nước hay bộ lọc làm mờ; ánh sáng chỉ đổi độ trong suốt nên rất nhẹ (tắt khi bật giảm chuyển động), nhờ vậy PWA không còn giật lag; nhập đúng PIN thì vào app ngay. Màn hình rộng (desktop, máy tính bảng) vẫn giữ cảnh Moria đầy đủ. Cổng két sắt (ông phù thủy) chưa đổi.
+- **Màn hình khóa trên điện thoại nhẹ hơn:** ở màn hình hẹp (≤ 720px, hoặc điện thoại xoay ngang) chỉ vẽ **đúng cánh cửa hầm Moria** (vòm khắc chữ rune, hai cây, vương miện, ngôi sao tám cánh) và ô nhập PIN. Không còn cây hai bên, bạch tuộc, đoàn người, hồ nước hay hiệu ứng mở cửa; các rune đứng yên, chỉ có ánh sáng nhấp nháy bằng cách đổi độ trong suốt của một lớp đã vẽ sẵn (rất nhẹ, tắt khi bật giảm chuyển động), nên PWA không còn giật lag. Nhập đúng PIN thì vào app ngay. Màn hình rộng (desktop, máy tính bảng) vẫn giữ cảnh Moria đầy đủ. Cổng két sắt (ông phù thủy) chưa đổi.
 
 ## [0.3.2] — 2026-11-14
 
