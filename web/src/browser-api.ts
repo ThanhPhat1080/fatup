@@ -308,6 +308,15 @@ export function installBrowserApi(): void {
 
     previewUrl: (id) => guarded(() => client().downloadUrl(id)),
 
+    fileBytes: (id) =>
+      guarded(async () => {
+        const res = await fetch(await client().downloadUrl(id), { signal: AbortSignal.timeout(120_000) });
+        if (!res.ok) throw new ApiError('download_failed', `HTTP ${res.status}`, res.status);
+        return new Uint8Array(await res.arrayBuffer());
+      }),
+
+    linkFrame: (id) => guarded(() => client().linkFrame(id)),
+
     download: (id) =>
       guarded(async () => {
         const url = await client().downloadUrl(id);

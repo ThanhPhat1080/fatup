@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { FatupApi, UpdateProgress, UploadJob } from '../shared-ipc';
+import type { FatupApi, UpdateProgress, UploadJob, WebPreviewState } from '../shared-ipc';
 
 const api: FatupApi = {
   getState: () => ipcRenderer.invoke('state'),
@@ -23,6 +23,23 @@ const api: FatupApi = {
   previewLink: (id, force) => ipcRenderer.invoke('previewLink', id, force),
   openExternal: (url) => ipcRenderer.invoke('openExternal', url),
   previewUrl: (id) => ipcRenderer.invoke('previewUrl', id),
+  fileBytes: (id) => ipcRenderer.invoke('fileBytes', id),
+  webPreview: {
+    show: (url, bounds) => ipcRenderer.invoke('webPreview:show', url, bounds),
+    setBounds: (bounds) => ipcRenderer.send('webPreview:bounds', bounds),
+    hide: () => ipcRenderer.send('webPreview:hide'),
+    navigate: (action) => ipcRenderer.send('webPreview:navigate', action),
+    onState: (cb) => {
+      const handler = (_e: Electron.IpcRendererEvent, s: WebPreviewState) => cb(s);
+      ipcRenderer.on('webPreview:state', handler);
+      return () => ipcRenderer.removeListener('webPreview:state', handler);
+    },
+    onEscape: (cb) => {
+      const handler = () => cb();
+      ipcRenderer.on('webPreview:escape', handler);
+      return () => ipcRenderer.removeListener('webPreview:escape', handler);
+    },
+  },
   download: (id, reveal) => ipcRenderer.invoke('download', id, reveal),
   copyImage: (id) => ipcRenderer.invoke('copyImage', id),
   remove: (id) => ipcRenderer.invoke('remove', id),

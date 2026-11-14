@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SITE_CATEGORIES } from '@fatup/shared';
-import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems, splitExt, matchesTags, cowsay, matchesLink, matchesSite, siteCounts, inTab, PINNED_SITES, BOXED_SITES } from '../src/renderer/src/lib/format';
+import { fileVisual, formatSize, groupByDay, matchesQuery, singleGroup, sortItems, splitExt, matchesTags, cowsay, matchesLink, matchesSite, siteCounts, inTab, PINNED_SITES, BOXED_SITES, groupByDomain, importantFirst } from '../src/renderer/src/lib/format';
 import { dictionaries, errorText, resolveLocale } from '../src/renderer/src/lib/i18n';
 
 const at = (y: number, m: number, d: number, h = 12) => new Date(y, m - 1, d, h).getTime();
@@ -183,7 +183,7 @@ describe('links', () => {
     const items = [link('https://youtu.be/a'), link('https://www.youtube.com/b'), link('https://shopee.vn/c'), link('https://example.com'), link('https://x.com/a/status/1')];
     expect(items.filter((i) => matchesSite(i, 'youtube'))).toHaveLength(2);
     expect(items.filter((i) => matchesSite(i, 'all'))).toHaveLength(5);
-    expect(siteCounts(items)).toEqual({ all: 5, facebook: 0, youtube: 2, instagram: 0, threads: 0, x: 1, shopee: 1, tiktok: 0, internet: 1 });
+    expect(siteCounts(items)).toEqual({ all: 5, facebook: 0, youtube: 2, instagram: 0, threads: 0, x: 1, tiktok: 0, internet: 2 });
   });
 
   it('keeps links out of the other tabs and everything else out of the link tab', () => {
@@ -199,10 +199,46 @@ describe('links', () => {
   it('translates the new strings in both languages', () => {
     for (const lang of ['en', 'vi'] as const) {
       const t = dictionaries[lang];
-      expect(Object.keys(t.siteNames).sort()).toEqual(['facebook', 'instagram', 'internet', 'shopee', 'threads', 'tiktok', 'x', 'youtube']);
+      expect(Object.keys(t.siteNames).sort()).toEqual(['facebook', 'instagram', 'internet', 'threads', 'tiktok', 'x', 'youtube']);
       expect(t.tabLinks).toBeTruthy();
       expect(errorText(t, 'duplicate_url')).not.toBe(t.err_generic);
       expect(errorText(t, 'bad_url')).not.toBe(t.err_generic);
     }
+  });
+});
+
+describe('groupByDomain', () => {
+  const l = (id: string, url: string, important = false) => ({ id, url, important });
+  const names = (s: string) => ({ youtube: 'YouTube', facebook: 'Facebook', internet: 'Internet' })[s] ?? s;
+
+  it('makes one group per platform (any of its domains) and per other website, even for a single link, in first-seen order', () => {
+    const groups = groupByDomain(
+      [l('a', 'https://www.example.com/1'), l('b', 'https://youtu.be/x'), l('c', 'https://example.com/2'), l('d', 'https://www.youtube.com/watch?v=y'), l('e', 'https://solo.test/')],
+      names,
+    );
+    expect(groups.map((g) => [g.label, g.items.map((it) => it.id)])).toEqual([
+      ['example.com', ['a', 'c']],
+      ['YouTube', ['b', 'd']],
+      ['solo.test', ['e']],
+    ]);
+    expect(groups[1].domain?.site).toBe('youtube');
+  });
+
+  it('puts the links picked as "top" first, by default the important ones', () => {
+    const items = [l('a', 'https://x.test/1'), l('b', 'https://x.test/2', true), l('c', 'https://x.test/3')];
+    expect(groupByDomain(items, names)[0].items.map((it) => it.id)).toEqual(['b', 'a', 'c']);
+    // Marked after loading: not in the top set, so it stays where it was.
+    expect(groupByDomain(items, names, (it) => it.id === 'c')[0].items.map((it) => it.id)).toEqual(['c', 'a', 'b']);
+    expect(groupByDomain(items, names, () => false)[0].items.map((it) => it.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('returns no groups for no links', () => {
+    expect(groupByDomain([], names)).toEqual([]);
+  });
+});
+
+describe('importantFirst', () => {
+  it('moves important items up and keeps the rest in order', () => {
+    expect(importantFirst([{ id: 1 }, { id: 2, important: true }, { id: 3 }, { id: 4, important: true }]).map((x) => x.id)).toEqual([2, 4, 1, 3]);
   });
 });

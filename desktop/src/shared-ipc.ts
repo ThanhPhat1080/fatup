@@ -1,5 +1,5 @@
 /** Contract between the preload bridge and the renderer. */
-import type { FileItem, TagColor, UsageResponse } from '@fatup/shared';
+import type { FileItem, FrameCheck, TagColor, UsageResponse } from '@fatup/shared';
 
 export type Lang = 'auto' | 'en' | 'vi';
 export type Theme = 'system' | 'light' | 'dark';
@@ -53,6 +53,19 @@ export type UploadJob = {
 
 export type UpdateProgress = { percent: number };
 
+export type ViewBounds = { x: number; y: number; width: number; height: number };
+export type WebPreviewState = { url: string; loading: boolean; canGoBack: boolean; canGoForward: boolean };
+/** Desktop only: a real browser view laid over part of the window, for web pages that can't be framed. */
+export type WebPreviewApi = {
+  show(url: string, bounds: ViewBounds): Promise<void>;
+  setBounds(bounds: ViewBounds): void;
+  hide(): void;
+  navigate(action: 'back' | 'forward' | 'reload'): void;
+  onState(cb: (s: WebPreviewState) => void): () => void;
+  /** Esc pressed while the page has focus (the app never sees that key press itself). */
+  onEscape(cb: () => void): () => void;
+};
+
 export type FatupApi = {
   getState(): Promise<AppState>;
   testConnection(serverUrl: string, token: string): Promise<Result>;
@@ -73,7 +86,7 @@ export type FatupApi = {
   listVault(): Promise<Result<Item[]>>;
   setVault(id: string, inVault: boolean): Promise<Result>;
   /** Changes a file's display name and/or colour tags. Fails with 'not_found' if it is gone or in the trash. */
-  updateFile(id: string, patch: { name?: string; tags?: TagColor[]; url?: string }): Promise<Result<Item>>;
+  updateFile(id: string, patch: { name?: string; tags?: TagColor[]; url?: string; important?: boolean }): Promise<Result<Item>>;
   /** Bookmarks a link. Fails with 'bad_url' for an address that is not http(s). */
   addLink(url: string, title?: string, vault?: boolean): Promise<Result<Item>>;
   /** Web only: a link that arrived through the Android share sheet while the app was locked. Returned once; `url` is empty when the share held no link. */
@@ -83,6 +96,11 @@ export type FatupApi = {
   /** Opens an http(s) address in the system browser. */
   openExternal(url: string): Promise<void>;
   previewUrl(id: string): Promise<Result<string>>;
+  /** A file's contents, for showing it inside the app (PDF). */
+  fileBytes(id: string): Promise<Result<Uint8Array>>;
+  /** Web build only: whether a link's page can be shown in a frame here, and the address to frame. */
+  linkFrame?(id: string): Promise<Result<FrameCheck>>;
+  webPreview?: WebPreviewApi;
   /** Saves a file to the downloads folder. `reveal` (default true) also shows it in the file manager; bulk downloads pass false for all but the last. */
   download(id: string, reveal?: boolean): Promise<Result<string>>;
   copyImage(id: string): Promise<Result>;
