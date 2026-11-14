@@ -4,6 +4,32 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [0.4.0] — 2026-11-14
+
+### Thêm
+- **Xem ngay trong app, không mở tab mới:** bấm một link là mở khung xem trước (nền tối như khi xem ảnh, `←`/`→` chuyển link, `Esc` đóng, bảng **Chi tiết** bật/tắt bằng `i`):
+  - **YouTube** (cả Shorts, giữ mốc `?t=`), **TikTok**, **Instagram**, **Threads**, **X**: trình phát / bài đăng nhúng chính thức.
+  - **Facebook**: thẻ tiêu đề + ảnh `og:image` (Facebook chặn nhúng), nút **Mở trong trình duyệt**.
+  - **Trang web khác:** app desktop mở **nguyên trang** ngay trong khung (thanh lùi / tiến / tải lại / địa chỉ; phiên riêng không lưu cookie hay đăng nhập; chặn camera, vị trí, thông báo, tải file). PWA hỏi Worker xem trang có cho nhúng không: cho thì hiện trang, không thì hiện thẻ xem trước với ô "Lần sau mở thẳng link …".
+  - `Ctrl/⌘` + bấm vẫn mở link ra trình duyệt như trước.
+- **Xem PDF ngay trong app** bằng trình xem PDF của trình duyệt (trang, zoom, tìm, in). File > 100 MB hoặc trình duyệt không có trình xem PDF (Chrome Android) thì hiện thẻ **Tải về**. `Ctrl/⌘` + bấm tải về ngay như cũ.
+- **Đánh dấu quan trọng** (nhãn vàng kiểu Gmail) ngay sau checkbox của mọi file, ảnh, link; nút lọc nhanh có nhãn vàng ở đầu thanh công cụ chỉ hiện mục quan trọng.
+- **Nhóm link theo nền tảng / tên miền** khi xem Tất cả trong tab Liên kết: mỗi nền tảng một nhóm (`youtu.be` và `youtube.com` chung nhóm YouTube), trang web khác nhóm theo tên miền; tiêu đề nhóm có icon và số lượng, gập/mở từng nhóm hoặc tất cả bằng công tắc trên thanh công cụ. Mục quan trọng lên đầu nhóm (tính lúc tải danh sách, nên đánh dấu xong item không nhảy chỗ).
+- **Favicon cho link Internet:** Worker đọc `apple-touch-icon` / `rel="icon"` của trang; không có thì thử `/favicon.ico`, cuối cùng mới là quả địa cầu.
+- **Lưới:** rê chuột hoặc `Tab` tới thẻ của một file hiện nút **Tải về** ở giữa.
+- **Lệnh dev ở thư mục gốc:** `dev:web` (Vite chuyển API sang Worker thật nếu có `FATUP_SERVER` trong `web/.env.local`), `dev:desktop`, `dev:desktop:fresh`, `db:migrate`, `deploy:worker`, `release:worker`.
+
+### Đổi
+- Thanh công cụ thành một "đảo" bo tròn tách khỏi bảng; thanh "đã chọn" dùng đúng khung đó nên chọn file không làm trang nhảy. Bỏ tab **Tất cả**: **Ảnh / File / Liên kết** là nút bật/tắt có số lượng. Lưới / danh sách là công tắc như công tắc giao diện sáng/tối.
+- Danh sách: bỏ cột **Từ** ở mọi bảng; danh sách link bỏ cột Dung lượng, các nút sửa / sao chép thẳng hàng bên phải, rê chuột hiện thêm nút **mở trong trình duyệt**.
+- Bộ lọc nền tảng: nút tròn; **X** và **Threads** vào hộp **Mạng xã hội** cùng Facebook, Instagram, TikTok (icon hộp nằm ngang, mở sang phải).
+- **Shopee** tạm bỏ khỏi danh sách nền tảng: link Shopee thuộc nhóm Internet (hiện favicon Shopee).
+- Nút **Thêm liên kết** có nền riêng và dấu "+". Icon PDF có chữ "PDF". Không có kết quả tìm kiếm thì con bò cowsay báo "Không có gì khớp".
+- Worker đọc trang Facebook bằng User-Agent của trình xem trước link của Facebook để lấy được `og:` (trang Facebook đã lưu trước đây: bấm **Tải lại xem trước**).
+
+### Nâng cấp
+Có **2 migration** (`0006_link_icon.sql`: cột `icon_url`; `0007_important.sql`: cột `important`), chỉ thêm cột, không dựng lại bảng. Thứ tự: `npm run db:migrate` rồi `npm run deploy:worker` (hoặc gộp: `npm run release:worker`). Worker có thêm `GET /links/:id/frame` và `PATCH /files/:id` nhận `important`. App desktop cập nhật qua bản release; PWA cập nhật sau khi deploy (mở lại PWA hai lần để service worker nhận bản mới). Android không đổi.
+
 ## [0.3.3] — 2026-11-14
 
 ### Đổi
