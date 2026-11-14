@@ -4,11 +4,14 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
-## [Chưa phát hành]
+## [0.3.3] — 2026-11-14
 
 ### Đổi
 - **Màn hình khóa trên điện thoại nhẹ hơn:** ở màn hình hẹp (≤ 720px, hoặc điện thoại xoay ngang) chỉ vẽ **đúng cánh cửa hầm Moria** (vòm khắc chữ rune, hai cây, vương miện, ngôi sao tám cánh), vẽ **dài hơn** một chút, với **ô PIN nằm trên thân cửa, dưới ngôi sao**, **chân cửa có phiến đá ngưỡng và những viên đá thô, với ánh sáng hắt từ cửa ra nền đá** (nháy cùng đèn của cửa). Không còn cây hai bên, bạch tuộc, đoàn người, hồ nước; các rune đứng yên và ánh sáng nhấp nháy bằng cách đổi độ trong suốt của các lớp đã vẽ sẵn (rất nhẹ, nên PWA không còn giật lag). **Sai PIN:** ô PIN lắc và đèn của cửa nháy giật. **Đúng PIN:** cửa mở như ở bản đầy đủ rồi mới vào app. Màn hình rộng (desktop, máy tính bảng) vẫn giữ cảnh Moria đầy đủ. Cổng két sắt (ông phù thủy) chưa đổi.
 - Dòng báo "Sai PIN" của lần nhập trước không còn lơ lửng khi cửa đang mở (cả bản đầy đủ lẫn bản điện thoại).
+
+### Nâng cấp
+Không có migration và API không đổi. Thay đổi nằm ở giao diện: **PWA** chỉ cập nhật khi chạy `npm run deploy` trong `worker/` (lệnh này build lại PWA); mở lại PWA hai lần để service worker nhận bản mới. App desktop cập nhật qua bản release. Android không đổi. Muốn thử màn hình khóa điện thoại ở local: `npm run build -w @fatup/web`, `npm run -w @fatup/worker dev`, mở `http://localhost:8787` ở khung rộng dưới 720px (kiểm tra tự động: `npm run -w @fatup/desktop e2e:lock`).
 
 ## [0.3.2] — 2026-11-14
 
