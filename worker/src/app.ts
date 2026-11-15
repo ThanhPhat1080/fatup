@@ -41,6 +41,7 @@ type Row = {
   deleted_at: number | null;
   in_vault: number;
   tags: string;
+  /** Unused since files stopped expiring outside the trash; the column stays so no migration is needed. */
   retain_from: number | null;
   url: string | null;
   previewed_at: number | null;
@@ -415,9 +416,9 @@ export function createApp(options: AppOptions = {}) {
     const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready'`).bind(id).first<Row>();
     if (!row) return fail(c, 404, 'not_found', 'File not found');
     if (row.deleted_at === null) return c.json(await toItem(row, c.get('presigner')));
-    const now = Date.now();
-    await c.env.DB.prepare('UPDATE files SET deleted_at = NULL, retain_from = ? WHERE id = ?').bind(now, id).run();
-    return c.json(await toItem({ ...row, deleted_at: null, retain_from: now }, c.get('presigner')));
+    // Out of the trash a file is kept for good, so there is no clock to restart (retain_from is unused now).
+    await c.env.DB.prepare('UPDATE files SET deleted_at = NULL WHERE id = ?').bind(id).run();
+    return c.json(await toItem({ ...row, deleted_at: null }, c.get('presigner')));
   });
 
   app.delete('/files/:id/permanent', async (c) => {

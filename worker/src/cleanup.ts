@@ -1,4 +1,4 @@
-import { PENDING_TTL_HOURS, RETENTION_DAYS, TRASH_RETENTION_DAYS } from '@fatup/shared';
+import { PENDING_TTL_HOURS, TRASH_RETENTION_DAYS } from '@fatup/shared';
 import type { Env } from './env';
 import { fileKey, thumbKey } from './presign';
 
@@ -17,12 +17,12 @@ export async function purge(env: Env, ids: string[]): Promise<void> {
 }
 
 /**
- * Removes expired files, files that sat in the trash for 30 days, and abandoned uploads.
- * Files in the trash are not subject to the upload retention; restoring one restarts that clock.
+ * Removes files that sat in the trash for 30 days and abandoned uploads.
+ * A finished file outside the trash is never removed, however old it is: only the user's own
+ * delete (which moves it to the trash) starts the 30-day clock.
  * Returns how many rows were deleted.
  */
 export async function cleanup(env: Env, now = Date.now()): Promise<number> {
-  const readyCutoff = now - RETENTION_DAYS * DAY;
   const trashCutoff = now - TRASH_RETENTION_DAYS * DAY;
   const pendingCutoff = now - PENDING_TTL_HOURS * 60 * 60 * 1000;
   let total = 0;
@@ -30,12 +30,11 @@ export async function cleanup(env: Env, now = Date.now()): Promise<number> {
   for (;;) {
     const { results } = await env.DB.prepare(
       `SELECT id FROM files
-       WHERE (status = 'ready' AND kind != 'link' AND deleted_at IS NULL AND COALESCE(retain_from, created_at) < ?)
-          OR (status = 'ready' AND deleted_at IS NOT NULL AND deleted_at < ?)
+       WHERE (status = 'ready' AND deleted_at IS NOT NULL AND deleted_at < ?)
           OR (status = 'pending' AND created_at < ?)
        LIMIT ?`,
     )
-      .bind(readyCutoff, trashCutoff, pendingCutoff, BATCH)
+      .bind(trashCutoff, pendingCutoff, BATCH)
       .all<{ id: string }>();
     if (results.length === 0) break;
 
