@@ -4,6 +4,15 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [0.4.1] — 2026-11-15
+
+### Đổi
+- **Thứ tự tab:** Liên kết → File → Ảnh.
+- **Nút sửa (bút chì) và sao chép ở danh sách:** file và ảnh giờ nằm ở cột bên phải, thẳng hàng với link, thay vì nằm ngay sau tên.
+
+### Nâng cấp
+Không có migration và API không đổi. Chỉ thay đổi giao diện app desktop, cập nhật qua bản release.
+
 ## [0.4.0] — 2026-11-14
 
 ### Thêm

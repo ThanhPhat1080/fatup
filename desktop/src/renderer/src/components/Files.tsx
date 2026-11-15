@@ -314,17 +314,13 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, onI
           {item.name}
         </span>
         <TagDots tags={item.tags} />
-        {!siteColumn && onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
-        {!siteColumn && <CopyLinkButton item={item} onCopy={onCopyLink} />}
       </span>
-      {siteColumn && (
-        // Links: the buttons get their own right-aligned column so they line up on every row; "open outside" joins them on hover or focus.
-        <span role="cell" className="col-actions">
-          {onEdit && <OpenOutsideButton onClick={() => onOpen(item, true)} />}
-          {onEdit && <RenameButton link onClick={(r) => onEdit(item, r)} />}
-          <CopyLinkButton item={item} onCopy={onCopyLink} />
-        </span>
-      )}
+      {/* The buttons get their own right-aligned column, so the pencil and copy line up on every row (links, files and photos alike); "open outside" joins them on hover or focus on the links tab. */}
+      <span role="cell" className="col-actions">
+        {siteColumn && onEdit && <OpenOutsideButton onClick={() => onOpen(item, true)} />}
+        {onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
+        <CopyLinkButton item={item} onCopy={onCopyLink} />
+      </span>
       <span role="cell" className="muted col-time">
         {formatTime(item.createdAt)}
       </span>
@@ -403,7 +399,7 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, o
         <span role="columnheader" className="col-important" aria-label={t.important} />
         {siteColumn && <SortHead id="site" label={t.colSite} sort={sort} onSort={onSort} className="col-site" />}
         <SortHead id="name" label={t.colName} sort={sort} onSort={onSort} />
-        {siteColumn && <span role="columnheader" className="col-actions" />}
+        <span role="columnheader" className="col-actions" />
         <SortHead id="createdAt" label={timeLabel} sort={sort} onSort={onSort} className="col-time" />
         {!siteColumn && <SortHead id="size" label={t.colSize} sort={sort} onSort={onSort} className="col-size" />}
         <span />

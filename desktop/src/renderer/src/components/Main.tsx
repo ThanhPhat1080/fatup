@@ -631,9 +631,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
 
   // No "All" tab: the kinds work as toggles, and with none pressed everything shows. Each carries how many it holds.
   const tabs: { id: Exclude<Tab, 'all'>; label: string }[] = [
-    { id: 'image', label: t.tabImages },
-    { id: 'file', label: t.tabFiles },
     { id: 'link', label: t.tabLinks },
+    { id: 'file', label: t.tabFiles },
+    { id: 'image', label: t.tabImages },
   ];
 
   return (
