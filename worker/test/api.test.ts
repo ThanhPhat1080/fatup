@@ -347,7 +347,7 @@ describe('trash', () => {
 });
 
 describe('cleanup', () => {
-  it('removes files older than 30 days and stale pending uploads only', async () => {
+  it('removes stale pending uploads only, never a finished file outside the trash', async () => {
     const old = await upload('old.txt', 'text/plain');
     const fresh = await upload('fresh.txt', 'text/plain');
     const day = 24 * 60 * 60 * 1000;
@@ -357,10 +357,28 @@ describe('cleanup', () => {
     const freshPending = (await (await postJson('/uploads', { name: 'q', mime: 'text/plain', size: 1, hasThumb: false })).json()) as CreateUploadResponse;
     await env.DB.prepare('UPDATE files SET created_at = ? WHERE id = ?').bind(Date.now() - 2 * day, pending.id).run();
 
-    expect(await cleanup(env)).toBe(2);
+    expect(await cleanup(env)).toBe(1);
     const ids = (await env.DB.prepare('SELECT id FROM files').all<{ id: string }>()).results.map((r) => r.id).sort();
-    expect(ids).toEqual([fresh.id, freshPending.id].sort());
-    expect(await env.BUCKET.head(fileKey(old.id))).toBeNull();
+    expect(ids).toEqual([old.id, fresh.id, freshPending.id].sort());
+    expect(await env.BUCKET.head(fileKey(old.id))).not.toBeNull();
+  });
+
+  it('keeps old files outside the trash no matter their age, including vaulted and important ones', async () => {
+    const day = 24 * 60 * 60 * 1000;
+    const plain = await upload('plain.txt', 'text/plain', 'hello', true);
+    const vaulted = await upload('vaulted.txt', 'text/plain');
+    const important = await upload('important.txt', 'text/plain');
+    await env.DB.prepare('UPDATE files SET in_vault = 1 WHERE id = ?').bind(vaulted.id).run();
+    await env.DB.prepare('UPDATE files SET important = 1 WHERE id = ?').bind(important.id).run();
+    await env.DB.prepare('UPDATE files SET created_at = ?').bind(Date.now() - 400 * day).run();
+
+    expect(await cleanup(env)).toBe(0);
+    expect(await cleanup(env, Date.now() + 1000 * day)).toBe(0);
+    for (const item of [plain, vaulted, important]) {
+      expect(await env.BUCKET.head(fileKey(item.id))).not.toBeNull();
+    }
+    expect(await env.BUCKET.head(thumbKey(plain.id))).not.toBeNull();
+    expect((await env.DB.prepare('SELECT COUNT(*) AS n FROM files').first<{ n: number }>())?.n).toBe(3);
   });
 });
 
@@ -370,7 +388,7 @@ describe('cleanup and the trash', () => {
   it('purges files only after 30 days in the trash, regardless of upload age', async () => {
     const trashedLong = await upload('long.txt', 'text/plain');
     const trashedRecent = await upload('recent.txt', 'text/plain');
-    // Both were uploaded 40 days ago, which would normally expire them.
+    // Both were uploaded 40 days ago: upload age must not matter for files in the trash.
     await env.DB.prepare('UPDATE files SET created_at = ?').bind(Date.now() - 40 * day).run();
     await env.DB.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').bind(Date.now() - 31 * day, trashedLong.id).run();
     await env.DB.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').bind(Date.now() - 5 * day, trashedRecent.id).run();
@@ -380,15 +398,16 @@ describe('cleanup and the trash', () => {
     expect(await env.BUCKET.head(fileKey(trashedRecent.id))).not.toBeNull();
   });
 
-  it('restarts the retention clock when an old file is restored', async () => {
+  it('keeps a restored file indefinitely, however old it is', async () => {
     const item = await upload('old.txt', 'text/plain');
     await env.DB.prepare('UPDATE files SET created_at = ? WHERE id = ?').bind(Date.now() - 40 * day, item.id).run();
     await call(`/files/${item.id}`, { method: 'DELETE' });
     await call(`/files/${item.id}/restore`, { method: 'POST' });
     expect(await cleanup(env)).toBe(0);
     expect(await env.BUCKET.head(fileKey(item.id))).not.toBeNull();
-    // ...and it does expire 30 days after the restore.
-    expect(await cleanup(env, Date.now() + 31 * day)).toBe(1);
+    // Out of the trash it is never purged, even a long time later.
+    expect(await cleanup(env, Date.now() + 400 * day)).toBe(0);
+    expect(await env.BUCKET.head(fileKey(item.id))).not.toBeNull();
   });
 });
 
