@@ -25,7 +25,7 @@ Gửi ảnh và file giữa **điện thoại Android** và **máy tính** (macO
 - **Két sắt (Secret Vault):** cất file ra khỏi danh sách chính, mỗi lần mở phải nhập lại PIN. Xem [bên dưới](#két-sắt-secret-vault).
 - **Thanh dung lượng (Store):** cạnh ô tìm kiếm, cho biết đã dùng bao nhiêu GB trên R2: xanh, **cam từ 70%**, **đỏ từ 90%**.
 - **Giao diện:** En/Vi, **sáng/tối** (công tắc mặt trời/mặt trăng trong Cài đặt, mặc định theo hệ điều hành). Bấm logo FatUp để về trang chủ. Màn hình khóa là cảnh hoạt họa cổng Moria; cổng két sắt có ông phù thủy trên cầu đá.
-- **Kiểm tra cập nhật** trong Cài đặt (app máy tính). File tự xóa sau **30 ngày** (link thì không), giới hạn **100 MB/file**.
+- **Kiểm tra cập nhật** trong Cài đặt (app máy tính). File ngoài thùng rác **được giữ mãi, không tự xóa**; chỉ file trong thùng rác bị xóa sau 30 ngày. Giới hạn **100 MB/file**.
 
 ### Liên kết (bookmark)
 
@@ -35,7 +35,7 @@ Gửi ảnh và file giữa **điện thoại Android** và **máy tính** (macO
 - **Nhóm theo nền tảng / tên miền:** khi đang xem Tất cả, link được gom thành nhóm (mỗi nền tảng một nhóm, `youtu.be` và `youtube.com` chung nhóm YouTube; trang web khác nhóm theo tên miền), tiêu đề nhóm có icon và số lượng, bấm để gập/mở; công tắc trên thanh công cụ gập/mở tất cả.
 - **Danh sách link:** cột nút sửa / sao chép canh thẳng hàng bên phải, rê chuột hoặc focus hiện thêm nút **mở trong trình duyệt**.
 - **Sửa liên kết:** bút chì → popover có ô Tiêu đề, ô URL và chấm màu. Đổi URL thì xem trước được tải lại. URL đã lưu rồi thì báo "Liên kết này đã có".
-- Link có thể vào két sắt hoặc thùng rác như file; **không tự xóa sau 30 ngày**. Bản app cũ không thấy link (server không trả link cho danh sách file thường).
+- Link có thể vào két sắt hoặc thùng rác như file; ngoài thùng rác thì **giữ mãi** như mọi file. Bản app cũ không thấy link (server không trả link cho danh sách file thường).
 - **PWA đã cài trước đây:** Android cập nhật mục "Chia sẻ" của PWA chậm (tới khoảng một ngày sau khi bản web mới được deploy), có thể phải gỡ rồi cài lại PWA.
 - Nâng cấp server: `npm run db:migrate:remote` (migration `0005` **dựng lại bảng `files`**, nên sao lưu D1 trước) rồi `npm run deploy`.
 
@@ -44,7 +44,7 @@ Gửi ảnh và file giữa **điện thoại Android** và **máy tính** (macO
 - **Xóa = chuyển vào thùng rác**, không xóa thật và không hỏi xác nhận. Thông báo hiện nút **Hoàn tác** trong vài giây.
 - Mở thùng rác bằng biểu tượng thùng rác ở thanh trên cùng (nút ← để quay lại). Ở đó bạn **Khôi phục** file về danh sách chính, **Xóa vĩnh viễn** từng file hoặc nhiều file, hay **Dọn sạch thùng rác**. Xóa vĩnh viễn và dọn sạch đều có hộp xác nhận vì không hoàn tác được.
 - File trong thùng rác chưa mở/tải được, phải khôi phục trước.
-- File nằm trong thùng rác **30 ngày thì bị xóa vĩnh viễn** (cron chạy 03:00 UTC mỗi ngày). File được khôi phục thì được tính lại 30 ngày kể từ lúc khôi phục, nên file cũ khôi phục xong sẽ không bị xóa ngay đêm đó.
+- File nằm trong thùng rác **30 ngày thì bị xóa vĩnh viễn** (cron chạy 03:00 UTC mỗi ngày). File được khôi phục thì trở lại danh sách chính và được giữ mãi.
 - File trong thùng rác vẫn chiếm dung lượng R2 cho đến khi bị xóa vĩnh viễn.
 
 ### Két sắt (Secret Vault)
@@ -55,7 +55,7 @@ Một khu vực để **cất file ra khỏi danh sách chính**. Chỉ xem đư
 - **Mở két:** bấm biểu tượng két sắt cạnh thùng rác, app luôn bắt nhập lại PIN (kể cả khi app đang mở khóa). Thoát ra (nút ←, bấm logo, vào thùng rác, khóa app) là két đóng lại, lần sau phải nhập PIN lại. Sai PIN dùng chung giới hạn 5 lần / khóa 30 giây với màn hình khóa.
 - **Trong két:** xem, tải, copy ảnh, tìm kiếm, chọn nhiều file như bình thường. Có **Đưa ra khỏi Két sắt** để trả file về danh sách chính. Tải file lên khi đang mở két thì file vào thẳng két.
 - **Xóa file trong két:** file ra khỏi két và vào thùng rác thường. Bấm **Hoàn tác** sẽ đưa nó về két.
-- **Lưu ý quan trọng:** két sắt là lớp che ở giao diện app, **không phải mã hóa**. File vẫn nằm bình thường trên R2, và ai có API token (ví dụ app Android hay client khác) vẫn có thể thấy chúng qua API. File trong két vẫn tính vào dung lượng và vẫn tự xóa sau 30 ngày như mọi file.
+- **Lưu ý quan trọng:** két sắt là lớp che ở giao diện app, **không phải mã hóa**. File vẫn nằm bình thường trên R2, và ai có API token (ví dụ app Android hay client khác) vẫn có thể thấy chúng qua API. File trong két vẫn tính vào dung lượng; như mọi file ngoài thùng rác, chúng được giữ mãi.
 
 Thiết kế chi tiết nằm ở [SPEC.md](SPEC.md). Lịch sử thay đổi theo từng phiên bản nằm ở [CHANGELOG.md](CHANGELOG.md).
 
@@ -185,7 +185,7 @@ Lệnh in ra URL kiểu `https://fatup.<tên-bạn>.workers.dev`. Kiểm tra nha
 curl https://fatup.<tên-bạn>.workers.dev/health
 ```
 
-Kết quả đúng là `{"ok":true}`. Cron dọn dẹp chạy lúc 03:00 UTC mỗi ngày: xóa file quá 30 ngày kể từ lúc tải lên, file đã nằm trong thùng rác quá 30 ngày, và các lượt tải lên dở dang quá 24 giờ.
+Kết quả đúng là `{"ok":true}`. Cron dọn dẹp chạy lúc 03:00 UTC mỗi ngày: xóa file đã nằm trong thùng rác quá 30 ngày và các lượt tải lên dở dang quá 24 giờ. File ngoài thùng rác không bao giờ bị cron xóa.
 
 ### Bước 9. Dùng bản web (PWA)
 
