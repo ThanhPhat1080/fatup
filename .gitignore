@@ -22,3 +22,6 @@ worker/public/*
 # Local dev settings (e.g. web/.env.local with FATUP_SERVER) and the throwaway desktop profile
 *.local
 .dev-userdata/
+
+# Present while a failing test is being made to pass: .claude/hooks/block-test-edits.sh then refuses test edits
+.claude/tests-frozen
