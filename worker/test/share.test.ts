@@ -164,7 +164,7 @@ describe('owner API', () => {
 });
 
 describe('a link dies the moment the file is hidden or removed', () => {
-  const actions: [string, (id: string) => Promise<unknown>][] = [
+  const actions: [string, (id: string) => unknown][] = [
     ['it goes to the trash', (id) => call(`/files/${id}`, { method: 'DELETE' })],
     ['it goes to the vault', (id) => call(`/files/${id}/vault`, json({ inVault: true }))],
     ['sharing is stopped', (id) => call(`/files/${id}/share`, { method: 'DELETE' })],
