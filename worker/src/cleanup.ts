@@ -10,6 +10,9 @@ export async function purge(env: Env, ids: string[]): Promise<void> {
   for (let i = 0; i < ids.length; i += BATCH) {
     const chunk = ids.slice(i, i + BATCH);
     await env.BUCKET.delete(chunk.flatMap((id) => [fileKey(id), thumbKey(id)]));
+    await env.DB.prepare(`DELETE FROM shares WHERE file_id IN (${chunk.map(() => '?').join(',')})`)
+      .bind(...chunk)
+      .run();
     await env.DB.prepare(`DELETE FROM files WHERE id IN (${chunk.map(() => '?').join(',')})`)
       .bind(...chunk)
       .run();
@@ -26,6 +29,9 @@ export async function cleanup(env: Env, now = Date.now()): Promise<number> {
   const trashCutoff = now - TRASH_RETENTION_DAYS * DAY;
   const pendingCutoff = now - PENDING_TTL_HOURS * 60 * 60 * 1000;
   let total = 0;
+
+  // Expired share links are already refused on every request; this just tidies the rows.
+  await env.DB.prepare('DELETE FROM shares WHERE expires_at IS NOT NULL AND expires_at < ?').bind(now).run();
 
   for (;;) {
     const { results } = await env.DB.prepare(

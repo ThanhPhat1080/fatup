@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Package, PackageOpen } from 'lucide-react';
 import type { SiteCategory } from '@fatup/shared';
 import { BOXED_SITES, PINNED_SITES, type SiteFilter } from '../lib/format';
@@ -28,7 +28,7 @@ function SideBox({ open }: { open: boolean }) {
  * right, one after another (the same hop as the colour-tag box); closing hops them back in. Closing keeps the filter, and the box
  * shows the logo of the platform that is still selected.
  */
-export function SiteFilterBar({ value, onChange, counts }: { value: SiteFilter; onChange: (next: SiteFilter) => void; counts: Record<SiteFilter, number> }) {
+export function SiteFilterBar({ value, onChange, counts, title }: { value: SiteFilter; onChange: (next: SiteFilter) => void; counts: Record<SiteFilter, number>; /** Where you are (icon and name); shown first on the row, set off from the filters by a light divider. */ title?: ReactNode }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -74,6 +74,12 @@ export function SiteFilterBar({ value, onChange, counts }: { value: SiteFilter; 
   const hidden = !shown && (BOXED_SITES as string[]).includes(value) ? (value as SiteCategory) : null; // a selected platform tucked inside the box
   return (
     <nav className="site-chips" aria-label={t.tabLinks}>
+      {title && (
+        <>
+          <h2 className="view-title view-title--inline">{title}</h2>
+          <span className="site-chips__sep" aria-hidden />
+        </>
+      )}
       <button type="button" className={`chip chip--site ${value === 'all' ? 'chip--on' : ''}`} aria-pressed={value === 'all'} title={t.allSites} onClick={() => onChange('all')}>
         {t.allSites}
         <span className="chip__count">{counts.all}</span>

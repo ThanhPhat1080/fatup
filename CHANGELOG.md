@@ -4,18 +4,35 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
-## [Chưa phát hành]
+## [0.4.2] — 2026-11-16
+
+### Thêm
+- **Chia sẻ file bằng link công khai.** Menu `⋮` → **Chia sẻ…** (hoặc chọn nhiều file → **Chia sẻ**) tạo một link `/s/<mã>` cho ảnh hoặc file; người nhận mở bằng bất kỳ trình duyệt nào, không cần token, chỉ **xem và tải về**. Hạn: không hết hạn (mặc định), 1, 7 hoặc 30 ngày; đổi hạn hoặc **Dừng chia sẻ** bất cứ lúc nào; xem số lượt tải và lần mở gần nhất.
+  - **Hết hiệu lực ngay** khi file vào Két sắt hoặc thùng rác (và khi hết hạn, dừng chia sẻ, xóa vĩnh viễn), và **không sống lại** khi khôi phục hay lấy ra khỏi két: chia sẻ lại là một link mới. Worker kiểm tra database ở mỗi lượt truy cập và truyền file từ R2 (không dùng presigned URL vì không thu hồi được); một trigger SQL xóa link khi file bị ẩn, bất kể đường nào.
+  - Giao diện: nút lọc **Đã chia sẻ** (xanh lá) sau nhóm Liên kết / File / Ảnh; file đang chia sẻ có biểu tượng nhiều người cạnh bút chì (tooltip bên trái, bấm để mở cài đặt nhanh).
+  - An toàn: chỉ ảnh raster được xem trực tiếp; SVG, HTML và mọi loại khác luôn là tải về (không chạy trên origin của app); trang người nhận không có JS, không bị công cụ tìm kiếm đánh chỉ mục; mọi lý do link chết cho cùng một trang 404.
+  - Service worker của PWA bỏ qua `/s/` để không lưu trang chia sẻ hay file vào bộ nhớ thiết bị và không ghi đè bản app đã lưu.
 
 ### Sửa
 - **File ngoài thùng rác không còn bị tự xóa sau 30 ngày.** Cron dọn dẹp (03:00 UTC mỗi ngày) trước đây xóa cả file đã tải xong khi file đó quá 30 ngày kể từ lúc tải lên (link thì không), trái với quy tắc dự định: chỉ file **trong thùng rác** mới bị xóa vĩnh viễn sau 30 ngày. Giờ cron chỉ còn xóa (1) file đã nằm trong thùng rác quá 30 ngày và (2) lượt tải lên dở dang quá 24 giờ. File ngoài thùng rác, kể cả trong Két sắt hoặc có nhãn quan trọng, được giữ mãi.
 
 ### Đổi
-- **Nút bút chì ở danh sách file và ảnh** nằm trong cột riêng canh phải (trước cột thời gian), giống danh sách link, nên thẳng hàng ở mọi dòng thay vì bám theo đuôi tên file. Thùng rác không có bút chì nên giữ nguyên.
+- **Nút Tất cả** (tím, có icon) ở đầu island, cạnh nút quan trọng. **Tất cả giờ gồm cả liên kết** (ảnh, file, liên kết xếp phẳng theo ngày, không nhóm theo tên miền); Ảnh / File / Liên kết vẫn chỉ hiện loại của mình.
+- **Tiêu đề phía trên bảng** cho biết đang ở đâu (Tất cả, Ảnh, File, Liên kết, Két sắt, Thùng rác, kèm icon); bộ lọc Quan trọng thêm ngôi sao, bộ lọc Đã chia sẻ thêm nhãn xanh. Ở tab Liên kết, tiêu đề nằm cùng hàng với các nút lọc nền tảng. Vào Két sắt hoặc Thùng rác thì mở ở Tất cả, và island không còn lặp tên hai nơi này.
 - Khôi phục file khỏi thùng rác không còn "tính lại 30 ngày" (không còn hạn nào để tính lại). Cột `retain_from` không còn được ghi; cột vẫn nằm trong bảng nên không cần migration. Hằng `RETENTION_DAYS` bị bỏ khỏi `@fatup/shared`.
 - Thêm hook của Claude Code (`.claude/hooks/block-test-edits.sh`) chặn sửa file test khi tồn tại `.claude/tests-frozen`, dùng khi sửa lỗi theo kiểu viết test thất bại trước.
 
 ### Nâng cấp
-Không có migration, API không đổi. Chỉ cần `npm run deploy:worker` (trong thư mục gốc) hoặc `npm run deploy` trong `worker/`. **File đã bị cron xóa trước khi deploy bản này thì không lấy lại được**; nên deploy sớm. Vì file không còn tự hết hạn, dung lượng R2 (gói miễn phí 10 GB) sẽ đầy dần; thanh dung lượng cảnh báo cam từ 70% và đỏ từ 90%. Thay đổi giao diện danh sách (bút chì) chỉ có tác dụng khi phát hành app máy tính mới và deploy lại PWA (`npm run deploy:worker` build lại PWA; mở lại PWA hai lần để service worker nhận bản mới).
+Có **1 migration** (`0008_shares.sql`: bảng `shares` và trigger `shares_revoke_on_hide`, không dựng lại bảng `files`). Thứ tự: `npm run db:migrate` rồi `npm run deploy:worker` (hoặc `npm run release:worker`). Sau khi migrate, kiểm tra trigger đã có trên D1 thật: `wrangler d1 execute fatup --remote --command "SELECT name FROM sqlite_master WHERE type='trigger'"` phải ra `shares_revoke_on_hide`. Giao diện chia sẻ cần phát hành app máy tính mới và deploy lại PWA (mở lại PWA hai lần để service worker nhận bản mới); app cũ vẫn chạy, chỉ không thấy nút Chia sẻ. Cron cũng xóa dòng `shares` đã hết hạn. Phần sửa lỗi hạn 30 ngày: chỉ cần `npm run deploy:worker` (trong thư mục gốc) hoặc `npm run deploy` trong `worker/`. **File đã bị cron xóa trước khi deploy bản này thì không lấy lại được**; nên deploy sớm. Vì file không còn tự hết hạn, dung lượng R2 (gói miễn phí 10 GB) sẽ đầy dần; thanh dung lượng cảnh báo cam từ 70% và đỏ từ 90%.
+
+## [0.4.1] — 2026-11-15
+
+### Đổi
+- **Thứ tự tab:** Liên kết → File → Ảnh.
+- **Nút sửa (bút chì) và sao chép ở danh sách:** file và ảnh giờ nằm ở cột bên phải, thẳng hàng với link, thay vì nằm ngay sau tên.
+
+### Nâng cấp
+Không có migration và API không đổi. Chỉ thay đổi giao diện app desktop, cập nhật qua bản release.
 
 ## [0.4.0] — 2026-11-14
 

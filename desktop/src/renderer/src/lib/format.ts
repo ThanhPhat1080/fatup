@@ -132,10 +132,8 @@ export function siteCounts(items: { url: string | null }[]): Record<SiteFilter, 
   return counts;
 }
 
-/** Links only appear in their own tab; All, Photos and Files stay about files. */
+/** All shows everything (photos, files and links, flat); Photos, Files and Links each show only their own kind. */
 export function inTab(item: { kind: string }, tab: 'all' | 'image' | 'file' | 'link'): boolean {
-  if (tab === 'link') return item.kind === 'link';
-  if (item.kind === 'link') return false;
   return tab === 'all' || item.kind === tab;
 }
 

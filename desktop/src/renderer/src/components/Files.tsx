@@ -1,5 +1,5 @@
 import { useRef, useState, type MouseEvent, type PointerEvent } from 'react';
-import { ArrowDown, ArrowUp, ChevronRight, Copy, Download, MoreVertical, Pencil, SquareArrowOutUpRight } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronRight, Copy, Download, MoreVertical, Pencil, SquareArrowOutUpRight, Users } from 'lucide-react';
 import type { Item } from '../../../shared-ipc';
 import { cowsay, formatSize, formatTime, type DateGroup, type SortKey, type SortState } from '../lib/format';
 import { useI18n } from '../lib/i18n';
@@ -21,6 +21,8 @@ type ViewProps = {
   onCopyLink?: (item: Item) => void;
   /** Toggles the important marker; without it (the trash) the marker only shows, as a plain icon, on items that have it. */
   onImportant?: (item: Item) => void;
+  /** Opens the share settings below `anchor`; the shared icon (an icon only, left of the pencil) shows on shared items and is hidden when this is not given. */
+  onShare?: (item: Item, anchor: DOMRect) => void;
   /** Grid: a download button over the middle of a file's card on hover or keyboard focus (hidden when not given, e.g. in the trash). */
   onDownload?: (item: Item) => void;
   /** Keys of the folded domain groups (links grouped by site). */
@@ -133,6 +135,26 @@ function MoreButton({ item, onMenu }: { item: Item; onMenu: ViewProps['onMenu'] 
   );
 }
 
+/** Shown only on a shared item, left of the pencil: icon only, the tooltip grows to the left so it can never shift the layout. */
+function SharedButton({ item, onShare }: { item: Item; onShare?: (item: Item, anchor: DOMRect) => void }) {
+  const { t } = useI18n();
+  if (!item.shared || !onShare) return null;
+  return (
+    <button
+      className="icon-btn icon-btn--sm share-btn"
+      aria-label={t.manageShare}
+      data-tip={t.shareTip}
+      onClick={(e) => {
+        e.stopPropagation();
+        onShare(item, e.currentTarget.getBoundingClientRect());
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <Users size={17} />
+    </button>
+  );
+}
+
 function RenameButton({ onClick, link }: { onClick: (anchor: DOMRect) => void; link?: boolean }) {
   const { t } = useI18n();
   const label = link ? t.editLink : t.rename;
@@ -239,10 +261,10 @@ function KindIcon({ item, size }: { item: Item; size: number }) {
   return <FileIcon name={item.name} mime={item.mime} size={size} />;
 }
 
-type ItemProps = Pick<ViewProps, 'selected' | 'onToggle' | 'onOpen' | 'onMenu' | 'onEdit' | 'onCopyLink' | 'onImportant' | 'onDownload'> & { item: Item };
-type RowProps = ItemProps & { siteColumn: boolean; actions: boolean };
+type ItemProps = Pick<ViewProps, 'selected' | 'onToggle' | 'onOpen' | 'onMenu' | 'onEdit' | 'onShare' | 'onCopyLink' | 'onImportant' | 'onDownload'> & { item: Item };
+type RowProps = ItemProps & { siteColumn: boolean; actions: boolean; /** The list mixes links with files: non-link rows keep an empty slot where a link's copy button is, so every pencil lines up. */ copySlot?: boolean };
 
-function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, onImportant, onDownload }: ItemProps) {
+function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, onDownload }: ItemProps) {
   const { t } = useI18n();
   const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
   return (
@@ -263,6 +285,12 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, on
           {item.name}
         </span>
         <TagDots tags={item.tags} />
+        {item.shared && onShare && (
+          // Always visible (it is a state), floating over the end of the name like the pencil does; it slides left when the pencil appears.
+          <span className="tile__shared">
+            <SharedButton item={item} onShare={onShare} />
+          </span>
+        )}
         {(onEdit || (item.kind === 'link' && onCopyLink)) && (
           <span className="tile__actions">
             {onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
@@ -293,7 +321,7 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, on
   );
 }
 
-function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, onImportant, siteColumn, actions }: RowProps) {
+function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, siteColumn, actions, copySlot }: RowProps) {
   const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
   return (
     <div className={`list__row${selected.has(item.id) ? ' list__row--selected' : ''}`} role="row" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen(item)} {...press}>
@@ -320,8 +348,10 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, onI
         // on the links tab "open outside" joins them on hover or focus.
         <span role="cell" className="col-actions">
           {siteColumn && onEdit && <OpenOutsideButton onClick={() => onOpen(item, true)} />}
+          <SharedButton item={item} onShare={onShare} />
           {onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
           <CopyLinkButton item={item} onCopy={onCopyLink} />
+          {copySlot && item.kind !== 'link' && <span className="col-actions__slot" aria-hidden />}
         </span>
       )}
       <span role="cell" className="muted col-time">
@@ -339,7 +369,7 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, onI
   );
 }
 
-export function FileGrid({ groups, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, onImportant, onDownload, collapsed, onToggleGroup }: ViewProps) {
+export function FileGrid({ groups, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, onDownload, collapsed, onToggleGroup }: ViewProps) {
   return (
     <>
       {groups.map((g) => (
@@ -348,7 +378,7 @@ export function FileGrid({ groups, selected, onToggle, onOpen, onMenu, onEdit, o
           {!collapsed?.has(g.key) && (
             <div className={`grid${selected.size > 0 ? ' grid--selecting' : ''}`}>
               {g.items.map((item) => (
-                <Tile key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} onCopyLink={onCopyLink} onImportant={onImportant} onDownload={onDownload} />
+                <Tile key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} onShare={onShare} onCopyLink={onCopyLink} onImportant={onImportant} onDownload={onDownload} />
               ))}
             </div>
           )}
@@ -382,12 +412,14 @@ function SortHead({ id, label, sort, onSort, className }: { id: SortKey; label: 
   );
 }
 
-export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, onImportant, collapsed, onToggleGroup, sort, onSort, allSelected, someSelected, onToggleAll, timeLabel, siteColumn = false }: ListProps) {
+export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, collapsed, onToggleGroup, sort, onSort, allSelected, someSelected, onToggleAll, timeLabel, siteColumn = false }: ListProps) {
   const { t } = useI18n();
   // The trash has no pencil (onEdit is not given), so it keeps the plain columns.
   const actions = siteColumn || !!onEdit;
+  // All shows photos, files and links together; only then do rows differ in how many buttons they have.
+  const mixed = actions && !siteColumn && groups.some((g) => g.items.some((it) => it.kind === 'link'));
   return (
-    <div className={`list${siteColumn ? ' list--site' : actions ? ' list--actions' : ''}`} role="table">
+    <div className={`list${siteColumn ? ' list--site' : actions ? ' list--actions' : ''}${mixed ? ' list--mixed' : ''}`} role="table">
       <div className="list__row list__row--head" role="row">
         <span role="columnheader">
           <input
@@ -414,7 +446,7 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, o
           <GroupHeading group={g} list collapsed={collapsed} onToggleGroup={onToggleGroup} />
           {!collapsed?.has(g.key) &&
             g.items.map((item) => (
-              <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} onCopyLink={onCopyLink} onImportant={onImportant} siteColumn={siteColumn} actions={actions} />
+              <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} onShare={onShare} onCopyLink={onCopyLink} onImportant={onImportant} siteColumn={siteColumn} actions={actions} copySlot={mixed} />
             ))}
         </section>
       ))}

@@ -222,6 +222,10 @@ export function installBrowserApi(): void {
 
     listTrash: () => guarded(async (): Promise<Item[]> => previews.decorate((await client().listEverything({ trash: true })).map((it) => ({ ...it, downloaded: false })))),
 
+    getShare: (id) => guarded(() => client().getShare(id)),
+    setShare: (id, days) => guarded(() => client().setShare(id, days)),
+    stopShare: (id) => guarded(() => client().stopShare(id)),
+
     updateFile: (id, patch) =>
       guarded(async (): Promise<Item> => {
         const item = await client().update(id, patch);
