@@ -10,12 +10,20 @@ Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy
 - **File ngoài thùng rác không còn bị tự xóa sau 30 ngày.** Cron dọn dẹp (03:00 UTC mỗi ngày) trước đây xóa cả file đã tải xong khi file đó quá 30 ngày kể từ lúc tải lên (link thì không), trái với quy tắc dự định: chỉ file **trong thùng rác** mới bị xóa vĩnh viễn sau 30 ngày. Giờ cron chỉ còn xóa (1) file đã nằm trong thùng rác quá 30 ngày và (2) lượt tải lên dở dang quá 24 giờ. File ngoài thùng rác, kể cả trong Két sắt hoặc có nhãn quan trọng, được giữ mãi.
 
 ### Đổi
-- **Nút bút chì ở danh sách file và ảnh** nằm trong cột riêng canh phải (trước cột thời gian), giống danh sách link, nên thẳng hàng ở mọi dòng thay vì bám theo đuôi tên file. Thùng rác không có bút chì nên giữ nguyên.
 - Khôi phục file khỏi thùng rác không còn "tính lại 30 ngày" (không còn hạn nào để tính lại). Cột `retain_from` không còn được ghi; cột vẫn nằm trong bảng nên không cần migration. Hằng `RETENTION_DAYS` bị bỏ khỏi `@fatup/shared`.
 - Thêm hook của Claude Code (`.claude/hooks/block-test-edits.sh`) chặn sửa file test khi tồn tại `.claude/tests-frozen`, dùng khi sửa lỗi theo kiểu viết test thất bại trước.
 
 ### Nâng cấp
-Không có migration, API không đổi. Chỉ cần `npm run deploy:worker` (trong thư mục gốc) hoặc `npm run deploy` trong `worker/`. **File đã bị cron xóa trước khi deploy bản này thì không lấy lại được**; nên deploy sớm. Vì file không còn tự hết hạn, dung lượng R2 (gói miễn phí 10 GB) sẽ đầy dần; thanh dung lượng cảnh báo cam từ 70% và đỏ từ 90%. Thay đổi giao diện danh sách (bút chì) chỉ có tác dụng khi phát hành app máy tính mới và deploy lại PWA (`npm run deploy:worker` build lại PWA; mở lại PWA hai lần để service worker nhận bản mới).
+Không có migration, API không đổi. Chỉ cần `npm run deploy:worker` (trong thư mục gốc) hoặc `npm run deploy` trong `worker/`. **File đã bị cron xóa trước khi deploy bản này thì không lấy lại được**; nên deploy sớm. Vì file không còn tự hết hạn, dung lượng R2 (gói miễn phí 10 GB) sẽ đầy dần; thanh dung lượng cảnh báo cam từ 70% và đỏ từ 90%.
+
+## [0.4.1] — 2026-11-15
+
+### Đổi
+- **Thứ tự tab:** Liên kết → File → Ảnh.
+- **Nút sửa (bút chì) và sao chép ở danh sách:** file và ảnh giờ nằm ở cột bên phải, thẳng hàng với link, thay vì nằm ngay sau tên.
+
+### Nâng cấp
+Không có migration và API không đổi. Chỉ thay đổi giao diện app desktop, cập nhật qua bản release.
 
 ## [0.4.0] — 2026-11-14
 
