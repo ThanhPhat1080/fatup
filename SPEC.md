@@ -34,7 +34,7 @@ Chuyển ảnh và file giữa **điện thoại Android** và **máy tính** (m
 ```
 
 - File **không đi qua Worker**: Worker chỉ cấp presigned URL (ký bằng `aws4fetch`) nên không dính giới hạn request body của Worker.
-- Cron mỗi ngày (03:00 UTC) dọn file hết hạn, file ở thùng rác quá 30 ngày và upload dở dang (xem [mục 6](#6-vòng-đời-file-thùng-rác-và-dọn-dẹp)).
+- Cron mỗi ngày (03:00 UTC) dọn file ở thùng rác quá 30 ngày và upload dở dang (file ngoài thùng rác không bao giờ hết hạn) (xem [mục 6](#6-vòng-đời-file-thùng-rác-và-dọn-dẹp)).
 
 ### Monorepo
 
@@ -61,7 +61,7 @@ npm workspaces cho `shared`, `worker`, `desktop`, `web`. `android/` là project 
 | Share nhiều file một lúc (Android) | Share text thuần (không có link) |
 | **Liên kết**: share từ Android/PWA hoặc "Thêm liên kết", không hết hạn, phân loại theo tên miền, sửa tiêu đề/URL | Lưu bản sao nội dung trang, nhập bookmark từ trình duyệt |
 | Thumbnail ảnh (Android và desktop tạo) | Video thumbnail |
-| File tự xóa sau 30 ngày (link thì không) | Lưu trữ vĩnh viễn cho file |
+| File ngoài thùng rác được giữ mãi, không tự hết hạn | Tự xóa file cũ theo hạn |
 | **Thùng rác** 30 ngày, khôi phục, xóa vĩnh viễn | Chia sẻ link công khai |
 | **Két sắt**: che file sau PIN nhập lại mỗi lần mở | Mã hóa nội dung file (xem [mục 7](#7-bảo-mật)) |
 | Chọn nhiều file, sắp xếp, xóa hàng loạt, **Tải tất cả** | Thư mục, album |
@@ -92,7 +92,7 @@ CREATE TABLE files (
 
 -- 0002_trash.sql
 ALTER TABLE files ADD COLUMN deleted_at  INTEGER;   -- NULL = không ở thùng rác
-ALTER TABLE files ADD COLUMN retain_from INTEGER;   -- đặt khi khôi phục: mốc mới để tính hạn 30 ngày
+ALTER TABLE files ADD COLUMN retain_from INTEGER;   -- không còn dùng (trước đây: mốc tính hạn 30 ngày sau khôi phục); cột giữ lại để không cần migration
 
 -- 0003_vault.sql
 ALTER TABLE files ADD COLUMN in_vault INTEGER NOT NULL DEFAULT 0;   -- 1 = đang ở két sắt
@@ -128,7 +128,7 @@ Tất cả trả JSON, lỗi có dạng `{ "error": { "code": string, "message":
 | `GET` | `/files?trash=1` | Thùng rác, sắp theo thời điểm xóa (mới xóa trước). Cursor theo `deleted_at` |
 | `GET` | `/files/:id/download` | `{ url }`: presigned GET có `response-content-disposition` theo tên gốc. 404 nếu file ở thùng rác |
 | `DELETE` | `/files/:id` | **Chuyển vào thùng rác** (idempotent): đặt `deleted_at`, đưa ra khỏi két sắt (`in_vault = 0`). Riêng upload `pending` thì xóa hẳn |
-| `POST` | `/files/:id/restore` | Khôi phục khỏi thùng rác: `deleted_at = NULL`, `retain_from = now`. Idempotent. Trả `FileItem` |
+| `POST` | `/files/:id/restore` | Khôi phục khỏi thùng rác: `deleted_at = NULL`. Idempotent. Trả `FileItem` |
 | `DELETE` | `/files/:id/permanent` | Xóa vĩnh viễn (R2 + D1). Chỉ cho file đang ở thùng rác, không thì `409 not_in_trash` |
 | `DELETE` | `/trash` | Dọn sạch thùng rác. Trả `{ deleted }` |
 | `PATCH` | `/files/:id` | Body `{ name?, tags? }`, phải có ít nhất một. `name` là tên hiển thị mới (đã gồm phần mở rộng); `tags` là mảng tối đa 3 màu khác nhau trong `TAG_COLORS`. Chỉ sửa D1: object R2 đặt theo `id` nên đổi tên không động tới R2. Trả `FileItem` |
@@ -163,7 +163,7 @@ Một link là một row `files` với `kind = 'link'`, `mime = 'text/uri-list'`
 
 - `GET /files?kind=all` **không trả link** (để bản app cũ không thấy chúng); lấy link bằng `kind=link` (kết hợp được với `vault=1`). Thùng rác trả mọi loại.
 - `GET /files/:id/download` với link: `400 not_a_file`.
-- Cron **bỏ qua link** ở nhóm hết hạn 30 ngày. Link ở thùng rác quá 30 ngày vẫn bị xóa như file.
+- Link, như mọi file ngoài thùng rác, không bao giờ hết hạn. Link ở thùng rác quá 30 ngày vẫn bị xóa như file.
 - Thùng rác, két sắt, khôi phục, xóa vĩnh viễn, thẻ màu dùng nguyên.
 
 ---
@@ -174,9 +174,9 @@ Một link là một row `files` với `kind = 'link'`, `mime = 'text/uri-list'`
 
 - **Xóa = chuyển vào thùng rác**, không xóa thật. Không hỏi xác nhận; thông báo "Đã chuyển N file vào thùng rác" có nút **Hoàn tác** (8 giây).
 - File trong thùng rác **không mở/tải được**; phải khôi phục trước. R2 object vẫn còn nguyên cho đến khi bị xóa vĩnh viễn.
-- **Khôi phục** đưa file về danh sách chính. Vì hạn 30 ngày tính từ lúc upload, một file cũ khôi phục xong có thể bị cron xóa ngay đêm đó. Để tránh, khôi phục ghi `retain_from = now` và hạn được tính từ mốc mới.
+- **Khôi phục** đưa file về danh sách chính. File ngoài thùng rác không có hạn nên không cần tính lại mốc nào (`retain_from` không còn được ghi).
 - **Xóa vĩnh viễn** và **Dọn sạch thùng rác** đều có hộp xác nhận (không hoàn tác được).
-- Cron xóa vĩnh viễn file có `deleted_at < now − 30 ngày`. Trong thùng rác, file **không** bị tính hạn upload 30 ngày.
+- Cron xóa vĩnh viễn file có `deleted_at < now − 30 ngày`. Đây là cách duy nhất một file đã tải xong bị cron xóa.
 - Màn hình thùng rác: biểu tượng thùng rác trên thanh trên cùng, header "← Thùng rác", cột "Thời gian xóa", chọn nhiều file để khôi phục hoặc xóa vĩnh viễn.
 
 ### 5.2 Két sắt (Secret Vault)
@@ -188,7 +188,7 @@ Một khu vực để **cất file ra khỏi danh sách chính**, chỉ xem đư
 - **Cơ chế (desktop):** main process giữ cờ `vaultOpen` (chỉ trong bộ nhớ, không lưu đĩa). `vaultOpen(pin)` kiểm tra PIN bằng chính hàm `tryUnlock` của màn hình khóa, nên **dùng chung giới hạn sai 5 lần / khóa 30 giây**. `listVault` chỉ chạy khi cờ bật, nếu không trả `vault_locked`. Danh sách két không được tải vào renderer khi két đang đóng. Đưa file *ra* khỏi két cũng đòi két đang mở.
 - **Trong két:** xem, tải, copy ảnh, tìm kiếm, tab Tất cả/Ảnh/File, chọn nhiều file như bình thường. Có "Đưa ra khỏi Két sắt". Tải file lên khi đang mở két thì file vào thẳng két (upload xong gọi `PUT /files/:id/vault`).
 - **Xóa file trong két** chuyển file vào thùng rác thường và đưa nó ra khỏi két. "Hoàn tác" khôi phục rồi đưa nó về két.
-- File trong két vẫn tính vào dung lượng và vẫn hết hạn sau 30 ngày như mọi file.
+- File trong két vẫn tính vào dung lượng; như mọi file ngoài thùng rác, chúng không hết hạn.
 - **Giới hạn quan trọng:** két sắt **không mã hóa nội dung**. Đây là lớp che ở giao diện: file vẫn nằm bình thường trên R2, và bất kỳ ai có API token (ví dụ app Android, hoặc client khác) vẫn đọc được qua API. Chỉ người dùng app desktop/web mới bị chặn bằng PIN. Mã hóa phía client (E2EE) là hướng mở rộng, chưa làm.
 
 ---
@@ -200,14 +200,15 @@ Một khu vực để **cất file ra khỏi danh sách chính**, chỉ xem đư
                 │                  │  ▲                    │   ▲
                 │ 24h              │  └──── restore ───────┘   │
                 ▼                  │                           └── DELETE /permanent, DELETE /trash
-          cron xóa                 └─ 30 ngày kể từ max(created_at, retain_from) ──▶ cron xóa
+          cron xóa                 └─ ngoài thùng rác: giữ mãi, không hết hạn
 ```
 
-**Cron** (`0 3 * * *`), xóa ở cả R2 lẫn D1, gồm ba nhóm:
+**Cron** (`0 3 * * *`), xóa ở cả R2 lẫn D1, gồm hai nhóm:
 
-1. `ready`, **không** ở thùng rác, và `COALESCE(retain_from, created_at) < now − 30 ngày`.
-2. `ready`, ở thùng rác, và `deleted_at < now − 30 ngày`.
-3. `pending` cũ hơn 24 giờ.
+1. `ready`, ở thùng rác, và `deleted_at < now − 30 ngày`.
+2. `pending` cũ hơn 24 giờ.
+
+File `ready` ngoài thùng rác (kể cả trong két, có nhãn quan trọng, hoặc là link) **không bao giờ bị cron xóa**, dù cũ đến đâu.
 
 ---
 

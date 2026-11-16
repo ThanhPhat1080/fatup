@@ -1,7 +1,6 @@
 /** Types and constants shared by the Worker API and the desktop client. */
 
 export const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
-export const RETENTION_DAYS = 30;
 export const TRASH_RETENTION_DAYS = 30;
 export const PENDING_TTL_HOURS = 24;
 export const DEFAULT_PAGE_SIZE = 100;
