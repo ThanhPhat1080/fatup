@@ -59,8 +59,8 @@ if has '^android/app/src/main/'; then
 fi
 
 if has '^\.github/workflows/|^package\.json$|/package\.json$|^worker/wrangler\.toml$'; then
-  has '^docs/spec/build-release\.md$|^README\.md$|(^|/)CLAUDE\.md$' \
-    || echo "  · CI, script npm hoặc wrangler.toml đổi: xem docs/spec/build-release.md, README.md và lệnh trong CLAUDE.md có cần sửa không"
+  has '^docs/spec/build-release\.md$|^docs/development\.md$|^README\.md$|(^|/)CLAUDE\.md$' \
+    || echo "  · CI, script npm hoặc wrangler.toml đổi: xem docs/spec/build-release.md, docs/development.md, README.md và lệnh trong CLAUDE.md có cần sửa không"
 fi
 
 for f in $(printf '%s\n' "$changed" | grep -E '^docs/spec/[^/]+\.md$' || true); do

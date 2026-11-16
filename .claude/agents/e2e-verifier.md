@@ -11,7 +11,7 @@ Bạn kiểm tra app có làm đúng điều spec nói hay không, từ phía ng
 Đọc `CLAUDE.md` và `desktop/CLAUDE.md`. Rồi chọn cách rẻ nhất mà vẫn chạy thật hành vi đó:
 
 1. **Các vùng E2E có sẵn của Electron**: chỉ chạy vùng liên quan, `npm run e2e -- <vùng>` (`setup`, `files`, `share`, `links`, `settings`; xem `desktop/CLAUDE.md`), hoặc `npm run e2e:lock -w @fatup/desktop` cho màn khóa trên điện thoại. Chúng dùng `desktop/e2e/mock-server.mjs`. Đặt `SCREENSHOT_DIR` vào một thư mục tạm. Chạy toàn bộ (`npm run e2e`) chỉ khi người gọi yêu cầu hoặc trước khi tạo PR.
-2. **PWA với Worker local**: `npm run dev:worker` (migration D1 local + `wrangler dev`), build hoặc chạy bản web, rồi điều khiển bằng Playwright (`playwright-core` đã là phụ thuộc của desktop). Token local lấy từ `worker/.dev.vars` (chép từ `worker/.dev.vars.example`, xem `README.md` §4). Không trỏ app vào server đã deploy trừ khi người gọi yêu cầu, và không bao giờ in token thật.
+2. **PWA với Worker local**: `npm run dev:worker` (migration D1 local + `wrangler dev`), build hoặc chạy bản web, rồi điều khiển bằng Playwright (`playwright-core` đã là phụ thuộc của desktop). Token local lấy từ `worker/.dev.vars` (chép từ `worker/.dev.vars.example`, xem `docs/development.md`). Không trỏ app vào server đã deploy trừ khi người gọi yêu cầu, và không bao giờ in token thật.
 3. **Trang chia sẻ công khai** (`/s/<token>`): request HTTP thường là đủ; kiểm tra mã trạng thái và các header liệt kê trong ADR 0004.
 
 Chạy server lâu dài ở chế độ nền và tắt khi xong.
