@@ -3190,6 +3190,10 @@ body {
 .list--site .list__row {
   grid-template-columns: 24px 32px 56px minmax(0, 1fr) 112px 90px 40px;
 }
+/* Files and photos: same right-aligned actions column as links (room for the pencil and, on a link row, copy). */
+.list--actions .list__row {
+  grid-template-columns: 24px 32px minmax(0, 1fr) 68px 90px 90px 40px;
+}
 /* Open-outside, edit, copy: pinned to the right edge of every link row so they line up. */
 .col-actions {
   display: flex;
@@ -3233,6 +3237,9 @@ body {
 @media (max-width: 720px) {
   .list--site .list__row {
     grid-template-columns: 24px 32px 36px minmax(0, 1fr) auto 56px 40px;
+  }
+  .list--actions .list__row {
+    grid-template-columns: 24px 32px minmax(0, 1fr) auto 60px 40px;
   }
   .open-out-btn {
     display: none;

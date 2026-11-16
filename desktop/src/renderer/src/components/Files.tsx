@@ -240,7 +240,7 @@ function KindIcon({ item, size }: { item: Item; size: number }) {
 }
 
 type ItemProps = Pick<ViewProps, 'selected' | 'onToggle' | 'onOpen' | 'onMenu' | 'onEdit' | 'onCopyLink' | 'onImportant' | 'onDownload'> & { item: Item };
-type RowProps = ItemProps & { siteColumn: boolean };
+type RowProps = ItemProps & { siteColumn: boolean; actions: boolean };
 
 function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, onImportant, onDownload }: ItemProps) {
   const { t } = useI18n();
@@ -293,7 +293,7 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, on
   );
 }
 
-function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, onImportant, siteColumn }: RowProps) {
+function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, onImportant, siteColumn, actions }: RowProps) {
   const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
   return (
     <div className={`list__row${selected.has(item.id) ? ' list__row--selected' : ''}`} role="row" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen(item)} {...press}>
@@ -314,14 +314,13 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, onI
           {item.name}
         </span>
         <TagDots tags={item.tags} />
-        {!siteColumn && onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
-        {!siteColumn && <CopyLinkButton item={item} onCopy={onCopyLink} />}
       </span>
-      {siteColumn && (
-        // Links: the buttons get their own right-aligned column so they line up on every row; "open outside" joins them on hover or focus.
+      {actions && (
+        // The pencil (and copy for links) get their own right-aligned column so they line up on every row, links or files;
+        // on the links tab "open outside" joins them on hover or focus.
         <span role="cell" className="col-actions">
-          {onEdit && <OpenOutsideButton onClick={() => onOpen(item, true)} />}
-          {onEdit && <RenameButton link onClick={(r) => onEdit(item, r)} />}
+          {siteColumn && onEdit && <OpenOutsideButton onClick={() => onOpen(item, true)} />}
+          {onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
           <CopyLinkButton item={item} onCopy={onCopyLink} />
         </span>
       )}
@@ -385,8 +384,10 @@ function SortHead({ id, label, sort, onSort, className }: { id: SortKey; label: 
 
 export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, onCopyLink, onImportant, collapsed, onToggleGroup, sort, onSort, allSelected, someSelected, onToggleAll, timeLabel, siteColumn = false }: ListProps) {
   const { t } = useI18n();
+  // The trash has no pencil (onEdit is not given), so it keeps the plain columns.
+  const actions = siteColumn || !!onEdit;
   return (
-    <div className={`list${siteColumn ? ' list--site' : ''}`} role="table">
+    <div className={`list${siteColumn ? ' list--site' : actions ? ' list--actions' : ''}`} role="table">
       <div className="list__row list__row--head" role="row">
         <span role="columnheader">
           <input
@@ -403,7 +404,7 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, o
         <span role="columnheader" className="col-important" aria-label={t.important} />
         {siteColumn && <SortHead id="site" label={t.colSite} sort={sort} onSort={onSort} className="col-site" />}
         <SortHead id="name" label={t.colName} sort={sort} onSort={onSort} />
-        {siteColumn && <span role="columnheader" className="col-actions" />}
+        {actions && <span role="columnheader" className="col-actions" />}
         <SortHead id="createdAt" label={timeLabel} sort={sort} onSort={onSort} className="col-time" />
         {!siteColumn && <SortHead id="size" label={t.colSize} sort={sort} onSort={onSort} className="col-size" />}
         <span />
@@ -413,7 +414,7 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, o
           <GroupHeading group={g} list collapsed={collapsed} onToggleGroup={onToggleGroup} />
           {!collapsed?.has(g.key) &&
             g.items.map((item) => (
-              <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} onCopyLink={onCopyLink} onImportant={onImportant} siteColumn={siteColumn} />
+              <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} onCopyLink={onCopyLink} onImportant={onImportant} siteColumn={siteColumn} actions={actions} />
             ))}
         </section>
       ))}
