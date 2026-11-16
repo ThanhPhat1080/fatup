@@ -3881,3 +3881,41 @@ body {
   flex: 1;
   min-width: 0;
 }
+
+/* ---------- View title (above the table) ---------- */
+.view-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  margin: 4px 20px 0;
+  padding: 0 0 0 12px;
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--text);
+}
+.view-title svg {
+  flex: none;
+  color: var(--text-2);
+}
+.view-title__sub {
+  font-size: 15px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+/* The Shared filter's tag, next to the title: the same green as the filter chip. */
+.view-title__tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+}
+.view-title__tag svg {
+  color: inherit;
+}

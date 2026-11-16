@@ -172,7 +172,10 @@ try {
     await page.getByRole('dialog').getByRole('button', { name: 'Đóng' }).last().click();
     const chip = page.locator('.chip--shared');
     assert.equal(await chip.locator('.chip__count').textContent(), '1');
+    // The title above the table says where you are: All with nothing toggled, the kind when one is, and a tag while Shared is on.
+    assert.equal((await page.locator('.view-title').textContent())?.trim(), 'Tất cả');
     await chip.click();
+    assert.equal(await page.locator('.view-title__tag').textContent(), 'Đã chia sẻ', 'the Shared filter adds a tag beside the title');
     assert.equal(await page.locator('.list__row:not(.list__row--head)').count(), 1, 'only the shared file shows');
     await shot(page, '02f-shared-filter');
 
@@ -190,6 +193,7 @@ try {
     await shot(page, '02g-share-grid');
     await page.getByRole('switch', { name: 'Dạng danh sách' }).click();
     await kind(page, 'Ảnh').click();
+    assert.match((await page.locator('.view-title').textContent()) ?? '', /^Ảnh/, 'the title follows the toggled kind');
     assert.equal(await page.locator('.list__row:not(.list__row--head), .tile').count(), 0, 'shared AND photos: nothing');
     await kind(page, 'Ảnh').click();
     await chip.click();
@@ -201,6 +205,25 @@ try {
     await page.getByText(/Link chia sẻ của file này đã hết hiệu lực/).waitFor();
     assert.equal(await page.locator('.share-btn').count(), 0);
     assert.equal(await chip.locator('.chip__count').textContent(), '0');
+
+    // The trash opens on everything (the kind toggled before is dropped) and is named above the table.
+    await kind(page, 'File').click();
+    await page.getByRole('button', { name: 'Thùng rác' }).click();
+    await page.locator('.view-title', { hasText: 'Thùng rác' }).waitFor();
+    assert.equal(await page.locator('.kind-tabs [aria-pressed="true"]').count(), 0, 'no kind is toggled in the trash');
+    await shot(page, '02h-trash-title');
+    await page.getByRole('button', { name: 'Quay lại danh sách file' }).first().click();
+    assert.equal((await page.locator('.view-title').textContent())?.trim(), 'Tất cả');
+
+    // The Vault too: it opens on everything, and its name sits above the table.
+    await kind(page, 'Ảnh').click();
+    await page.getByRole('button', { name: 'Két sắt', exact: true }).first().click();
+    await typePin(page, '1234');
+    await page.locator('.view-title', { hasText: 'Két sắt' }).waitFor();
+    assert.equal(await page.locator('.kind-tabs [aria-pressed="true"]').count(), 0, 'no kind is toggled in the Vault');
+    await shot(page, '02i-vault-title');
+    await page.getByRole('button', { name: 'Quay lại danh sách file' }).first().click();
+    assert.equal((await page.locator('.view-title').textContent())?.trim(), 'Tất cả');
   }
 
   log('tabs');

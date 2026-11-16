@@ -237,7 +237,11 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
 
   const toggleTrash = () => {
     if (inVault) leaveVault();
-    if (!inTrash) setTrashKick((n) => n + 1);
+    // Opening the trash starts from everything, not from whichever kind was toggled in the file list.
+    if (!inTrash) {
+      setTrashKick((n) => n + 1);
+      setTab('all');
+    }
     setTrashInfoOpen(false);
     setInTrash((v) => !v);
     clearSelection();
@@ -262,6 +266,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     else {
       setInTrash(false);
       setInVault(true);
+      setTab('all'); // the Vault opens on everything in it, whatever kind was toggled outside
     }
     clearSelection();
   };
@@ -655,6 +660,34 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   };
   const openMenu = (item: Item, x: number, y: number) => setMenu({ item, x, y });
 
+  // Where you are, above the table: Trash and Vault by name, otherwise the toggled kind (All when none), plus a tag while the Shared filter is on.
+  const tabLabel = { all: t.tabAll, image: t.tabImages, file: t.tabFiles, link: t.tabLinks }[tab];
+  const showShared = sharedOnly && !inTrash && !inVault;
+  const viewTitle = inTrash ? (
+    <h2 className="view-title">
+      <TrashIcon size={22} />
+      {t.trash}
+    </h2>
+  ) : inVault ? (
+    vaultUnlocked && (
+      <h2 className="view-title">
+        <VaultIcon size={22} />
+        {t.vault}
+        {tab !== 'all' && <span className="view-title__sub">· {tabLabel}</span>}
+      </h2>
+    )
+  ) : (
+    <h2 className="view-title">
+      {tabLabel}
+      {showShared && (
+        <span className="view-title__tag">
+          <Users size={14} />
+          {t.sharedFilter}
+        </span>
+      )}
+    </h2>
+  );
+
   // "← Vault", the same header the Trash has.
   const vaultBackBar = (
     <div className="trashbar">
@@ -857,6 +890,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
             </button>
           </div>
         )}
+
+        {viewTitle}
 
         <div className="panel__scroll">
           {!loaded ? (
