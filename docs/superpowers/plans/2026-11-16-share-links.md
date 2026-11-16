@@ -9,7 +9,7 @@
 **Tech Stack:** Hono + D1 + R2 (Workers, vitest workers pool), Electron/React renderer shared with the PWA.
 
 **Spec:** `docs/superpowers/specs/2026-11-16-share-links-design.md`
-**Prototype:** `docs/superpowers/prototypes/share-links/index.html` (dashboard + the share form in variants A/B/C; the winning form variant is folded in at Task 7, the rest go to a throwaway branch). The recipient page is **not** prototyped: it is a centered card (spec §4.5) and the user reviews it in a second browser once the Worker serves it.
+**Prototype:** `docs/superpowers/prototypes/share-links/index.html` (dashboard + the share form in variants A/B/C; the chosen form is a **combination**: variant B (popover anchored to the icon) when the Users icon is clicked, variant A (dialog) when **Chia sẻ… / Quản lý chia sẻ…** is chosen from the menu; both fold into Task 7, the rest go to a throwaway branch). The recipient page is **not** prototyped: it is a centered card (spec §4.5) and the user reviews it in a second browser once the Worker serves it.
 
 ## Global Constraints
 
@@ -22,7 +22,7 @@
 - Same-origin safety: only `image/jpeg|png|gif|webp|avif` may be inline (`?inline=1`, no download count); everything else, SVG and HTML included, is `attachment`. `Content-Disposition` uses RFC 5987 for non-ASCII names (`contentDisposition` in `worker/src/presign.ts` already does this; reuse it).
 - All values in the HTML page pass through `escapeHtml`; the page has no JS.
 - No `Range` support, no rate limiting, no Open Graph tags (spec §5, §7).
-- Dashboard UI (spec §4.7): an **Đã chia sẻ** filter chip in the island placed right before the Ảnh/File/Liên kết group (own `.chips-divider`, green `--success` tone, count, AND with the kind tabs and search, hidden in Vault/trash); a `Users` icon-only button (no text) left of the pencil on shared items only, tooltip growing to the **left** (absolutely positioned, never shifts layout); clicking it opens the share form. List: reuse the existing 68px `.col-actions` column, no grid-template change. Grid: the icon floats over the end of the name, always visible, sliding left when the hover-only pencil appears.
+- Dashboard UI (spec §4.7): an **Đã chia sẻ** filter chip in the island placed right after the Liên kết/File/Ảnh group (a `.chips-divider` between them, green `--success` tone, count, AND with the kind tabs and search, hidden in Vault/trash); a `Users` icon-only button (no text) left of the pencil on shared items only, tooltip growing to the **left** (absolutely positioned, never shifts layout); clicking it opens the share form. List: reuse the existing 68px `.col-actions` column, no grid-template change. Grid: the icon floats over the end of the name, always visible, sliding left when the hover-only pencil appears.
 - UI strings in both `en` and `vi` (`desktop/src/renderer/src/lib/i18n.ts`). No change to the Android app.
 - Upgrade order: `npm run db:migrate` then `npm run deploy:worker`; desktop release + PWA deploy for the UI.
 

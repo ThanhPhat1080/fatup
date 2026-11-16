@@ -347,11 +347,11 @@ File `ready` ngoài thùng rác (kể cả trong két, có nhãn quan trọng, h
 
 ### 9.2d Chia sẻ link
 
-*(Đề xuất, chờ chọn biến thể từ prototype `docs/superpowers/prototypes/share-links/index.html`.)* Có ở desktop và PWA, không có ở Android.
+*(Đề xuất. Form cấu hình: popover neo vào icon khi bấm icon nhiều người, hộp thoại khi chọn Chia sẻ… từ menu. Prototype: `docs/superpowers/prototypes/share-links/index.html`.)* Có ở desktop và PWA, không có ở Android.
 
 - Menu `⋮`/chuột phải: **Chia sẻ…** (thành **Quản lý chia sẻ…** khi đang chia sẻ); ẩn với link/text và trong Két sắt, thùng rác.
 - Hộp thoại: chọn hạn (không hết hạn mặc định, 1/7/30 ngày) → **Tạo link và sao chép**. Khi đang chia sẻ: ô link + Sao chép, đổi hạn, số lượt tải, lần mở gần nhất, ghi chú về Két sắt/thùng rác, **Dừng chia sẻ**.
-- Nút lọc **Đã chia sẻ** trên island (trước nhóm Ảnh/File/Liên kết, tách bằng đường kẻ, màu xanh lá, có số lượng), lọc kiểu VÀ với tab loại; không hiện trong Két sắt/thùng rác.
+- Nút lọc **Đã chia sẻ** trên island (sau nhóm Liên kết/File/Ảnh, tách bằng đường kẻ, màu xanh lá, có số lượng), lọc kiểu VÀ với tab loại; không hiện trong Két sắt/thùng rác.
 - File đang chia sẻ có **icon nhiều người** (không chữ) bên trái bút chì: ở danh sách nằm trong cột hành động sẵn có, ở lưới nổi đè đuôi tên và luôn hiện. Rê chuột thấy tooltip **bên trái** (hạn, số lượt tải); bấm thì mở form cấu hình chia sẻ.
 - Thanh chọn nhiều file có nút **Chia sẻ**: tạo mỗi file một link (không hết hạn) và liệt kê *tên + link* để sao chép từng dòng hoặc **Sao chép tất cả**.
 

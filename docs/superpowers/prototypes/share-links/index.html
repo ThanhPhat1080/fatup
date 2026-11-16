@@ -151,9 +151,9 @@ function island() {
     <div class="chips-left">
       <button class="chip chip--icon chip--important" title="Chỉ file quan trọng">${ICON.star}</button>
       <span class="chips-divider" aria-hidden="true"></span>
-      <button class="chip chip--shared ${S.sharedOnly ? 'chip--on' : ''}" aria-pressed="${S.sharedOnly}" data-sharedonly>${ICON.users(16)} Đã chia sẻ<span class="chip__count">${sharedN}</span></button>
+      <nav class="chips kind-tabs">${tab('link', 'Liên kết', 0)}${tab('file', 'File', count('file'))}${tab('image', 'Ảnh', count('image'))}</nav>
       <span class="chips-divider" aria-hidden="true"></span>
-      <nav class="chips kind-tabs">${tab('image', 'Ảnh', count('image'))}${tab('file', 'File', count('file'))}${tab('link', 'Liên kết', 0)}</nav>
+      <button class="chip chip--shared ${S.sharedOnly ? 'chip--on' : ''}" aria-pressed="${S.sharedOnly}" data-sharedonly>${ICON.users(16)} Đã chia sẻ<span class="chip__count">${sharedN}</span></button>
     </div>
     <div class="chips-row__tools">
       <button class="icon-btn" data-view="${S.view === 'list' ? 'grid' : 'list'}" aria-label="Đổi chế độ xem">${S.view === 'list' ? ICON.grid : ICON.list}</button>
