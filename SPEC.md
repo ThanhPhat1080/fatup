@@ -10,7 +10,7 @@ Chuyển ảnh và file giữa **điện thoại Android** và **máy tính** (m
 >
 > **v4** thêm **liên kết (bookmark)** vào Phase 2: chia sẻ link từ Android/PWA hoặc bấm **Thêm liên kết**, loại file mới `link` ([mục 4.1](#41-liên-kết-bookmark), [9.2c](#92c-liên-kết)), không hết hạn, phân loại theo tên miền, sửa được tiêu đề và URL, xem trước tải khi mở app. Thiết kế chi tiết: `docs/superpowers/specs/2026-11-13-link-bookmarks-design.md`.
 >
-> **v5** (**đề xuất, chờ duyệt prototype, chưa có code**) thêm **chia sẻ file bằng link công khai** ([mục 4.2](#42-chia-sẻ-link-công-khai), [5.3](#53-chia-sẻ-link-và-két-sắtthùng-rác), [9.2d](#92d-chia-sẻ-link)): chỉ đọc, hạn tùy chọn, **hết hiệu lực ngay** khi file vào Két sắt hoặc thùng rác và không bao giờ sống lại. Thiết kế chi tiết: `docs/superpowers/specs/2026-11-16-share-links-design.md`.
+> **v5** (**đã làm trên nhánh `feat/share-links`, chưa phát hành**) thêm **chia sẻ file bằng link công khai** ([mục 4.2](#42-chia-sẻ-link-công-khai), [5.3](#53-chia-sẻ-link-và-két-sắtthùng-rác), [9.2d](#92d-chia-sẻ-link)): chỉ đọc, hạn tùy chọn, **hết hiệu lực ngay** khi file vào Két sắt hoặc thùng rác và không bao giờ sống lại. Thiết kế chi tiết: `docs/superpowers/specs/2026-11-16-share-links-design.md`.
 
 ---
 
@@ -65,7 +65,7 @@ npm workspaces cho `shared`, `worker`, `desktop`, `web`. `android/` là project 
 | Thumbnail ảnh (Android và desktop tạo) | Video thumbnail |
 | File ngoài thùng rác được giữ mãi, không tự hết hạn | Tự xóa file cũ theo hạn |
 | **Thùng rác** 30 ngày, khôi phục, xóa vĩnh viễn | Thư mục, album |
-| **Chia sẻ link công khai** từng ảnh/file (chỉ đọc, hạn 1/7/30 ngày hoặc không hạn, chết ngay khi vào Két sắt/thùng rác) *(đề xuất)* | Link chung cho nhiều file, mật khẩu cho link, nút chia sẻ trên Android |
+| **Chia sẻ link công khai** từng ảnh/file (chỉ đọc, hạn 1/7/30 ngày hoặc không hạn, chết ngay khi vào Két sắt/thùng rác) | Link chung cho nhiều file, mật khẩu cho link, nút chia sẻ trên Android |
 | **Két sắt**: che file sau PIN nhập lại mỗi lần mở | Mã hóa nội dung file (xem [mục 7](#7-bảo-mật)) |
 | Chọn nhiều file, sắp xếp, xóa hàng loạt, **Tải tất cả** | Thư mục, album |
 | **Đổi tên** file (giữ phần mở rộng), **thẻ màu** tối đa 3 màu/file, lọc theo màu | Thẻ tự đặt tên, thư mục |
@@ -108,7 +108,7 @@ ALTER TABLE files ADD COLUMN tags TEXT NOT NULL DEFAULT '';          -- tên mà
 --   previewed_at INTEGER           -- lần cuối server đọc trang để xem trước (kể cả thất bại), NULL = chưa; client không dựa vào cột này
 --   title_set INTEGER NOT NULL DEFAULT 0  -- 1 = tiêu đề do người dùng/share sheet đặt, xem trước không được ghi đè
 
--- 0008_shares.sql (đề xuất): bảng `shares` + trigger thu hồi, không đụng bảng `files`
+-- 0008_shares.sql: bảng `shares` + trigger thu hồi, không đụng bảng `files`
 CREATE TABLE shares (
   token          TEXT PRIMARY KEY,                       -- 24 byte ngẫu nhiên, base64url (32 ký tự)
   file_id        TEXT NOT NULL UNIQUE REFERENCES files(id) ON DELETE CASCADE,  -- tối đa một link mỗi file
@@ -184,7 +184,7 @@ Một link là một row `files` với `kind = 'link'`, `mime = 'text/uri-list'`
 
 ### 4.2 Chia sẻ link công khai
 
-*(Đề xuất, chờ duyệt. Chi tiết và lý do: `docs/superpowers/specs/2026-11-16-share-links-design.md`.)* Chỉ `kind` là `image` hoặc `file`, `status = 'ready'`, không ở thùng rác, không ở két sắt mới có link. Mỗi file tối đa một link.
+*(Chi tiết và lý do: `docs/superpowers/specs/2026-11-16-share-links-design.md`.)* Chỉ `kind` là `image` hoặc `file`, `status = 'ready'`, không ở thùng rác, không ở két sắt mới có link. Mỗi file tối đa một link.
 
 **Cho chủ file** (cần Bearer token như mọi route khác):
 
@@ -238,7 +238,7 @@ Một khu vực để **cất file ra khỏi danh sách chính**, chỉ xem đư
 
 ### 5.3 Chia sẻ link và Két sắt/thùng rác
 
-*(Đề xuất.)* Một file chỉ chia sẻ được khi đang **ở ngoài**. Vào Két sắt hoặc thùng rác là mất link ngay, **chết hẳn**: khôi phục, đưa ra khỏi két, hay bấm **Hoàn tác** đều không làm link cũ sống lại; chia sẻ lại phải tạo link mới. Lý do: file từng bị cất đi là file người dùng muốn giấu, và người nhận cũ vẫn giữ địa chỉ cũ. Thông báo khi chuyển một file đang chia sẻ nói rõ "Link chia sẻ đã hết hiệu lực".
+Một file chỉ chia sẻ được khi đang **ở ngoài**. Vào Két sắt hoặc thùng rác là mất link ngay, **chết hẳn**: khôi phục, đưa ra khỏi két, hay bấm **Hoàn tác** đều không làm link cũ sống lại; chia sẻ lại phải tạo link mới. Lý do: file từng bị cất đi là file người dùng muốn giấu, và người nhận cũ vẫn giữ địa chỉ cũ. Thông báo khi chuyển một file đang chia sẻ nói rõ "Link chia sẻ đã hết hiệu lực".
 
 ---
 
@@ -259,7 +259,7 @@ Một khu vực để **cất file ra khỏi danh sách chính**, chỉ xem đư
 
 File `ready` ngoài thùng rác (kể cả trong két, có nhãn quan trọng, hoặc là link) **không bao giờ bị cron xóa**, dù cũ đến đâu.
 
-*(Đề xuất)* Cron cũng xóa các dòng `shares` đã hết hạn; `purge` xóa tường minh `shares` của file bị xóa.
+Cron cũng xóa các dòng `shares` đã hết hạn; `purge` xóa tường minh `shares` của file bị xóa.
 
 ---
 
@@ -273,7 +273,7 @@ File `ready` ngoài thùng rác (kể cả trong két, có nhãn quan trọng, h
 - **Token trên Android** lưu ở `SharedPreferences` private, loại khỏi backup.
 - **Token trên web (PWA)**: không có keychain, nên token được mã hóa **AES-GCM** bằng khóa dẫn xuất từ PIN (PBKDF2-SHA256, 310.000 vòng) rồi lưu `localStorage`. Mở khóa = giải mã thành công. PIN 4 số chỉ có 10.000 tổ hợp nên chỉ chống người qua đường, **không chống người đọc được dữ liệu trình duyệt**. Không dùng web trên máy dùng chung. Bộ đếm sai PIN của web nằm ở client nên chỉ mang tính nhắc nhở.
 - Presigned URL hết hạn sau 15 phút (upload) hoặc 1 giờ (thumbnail/download).
-- **Link chia sẻ công khai** *(đề xuất)*: token 192 bit không đoán được, ai có link thì xem/tải được (và chuyển tiếp được), thu hồi bằng hạn hoặc Dừng chia sẻ. Đây là bề mặt công khai duy nhất của API ngoài `/health`, giới hạn ở hai route `/s/...` chỉ đọc. Không lộ lý do khi link chết (mọi lý do cùng một `404`). Không phục vụ HTML/SVG inline trên origin của PWA ([mục 4.2](#42-chia-sẻ-link-công-khai)).
+- **Link chia sẻ công khai**: token 192 bit không đoán được, ai có link thì xem/tải được (và chuyển tiếp được), thu hồi bằng hạn hoặc Dừng chia sẻ. Đây là bề mặt công khai duy nhất của API ngoài `/health`, giới hạn ở hai route `/s/...` chỉ đọc. Không lộ lý do khi link chết (mọi lý do cùng một `404`). Không phục vụ HTML/SVG inline trên origin của PWA ([mục 4.2](#42-chia-sẻ-link-công-khai)).
 - Bản web được phục vụ cùng origin với API nên API **không cần CORS**. Riêng R2 thì cần: trình duyệt PUT/GET thẳng tới presigned URL (origin khác), xem [mục 10](#10-bản-web-pwa).
 
 ---
@@ -347,12 +347,12 @@ File `ready` ngoài thùng rác (kể cả trong két, có nhãn quan trọng, h
 
 ### 9.2d Chia sẻ link
 
-*(Đề xuất. Form cấu hình: popover neo vào icon khi bấm icon nhiều người, hộp thoại khi chọn Chia sẻ… từ menu. Prototype: `docs/superpowers/prototypes/share-links/index.html`.)* Có ở desktop và PWA, không có ở Android.
+*(Form cấu hình: popover neo vào icon khi bấm icon nhiều người, hộp thoại khi chọn Chia sẻ… từ menu. Prototype: `docs/superpowers/prototypes/share-links/index.html`.)* Có ở desktop và PWA, không có ở Android.
 
 - Menu `⋮`/chuột phải: **Chia sẻ…** (thành **Quản lý chia sẻ…** khi đang chia sẻ); ẩn với link/text và trong Két sắt, thùng rác.
 - Hộp thoại: chọn hạn (không hết hạn mặc định, 1/7/30 ngày) → **Tạo link và sao chép**. Khi đang chia sẻ: ô link + Sao chép, đổi hạn, số lượt tải, lần mở gần nhất, ghi chú về Két sắt/thùng rác, **Dừng chia sẻ**.
 - Nút lọc **Đã chia sẻ** trên island (sau nhóm Liên kết/File/Ảnh, tách bằng đường kẻ, màu xanh lá, có số lượng), lọc kiểu VÀ với tab loại; không hiện trong Két sắt/thùng rác.
-- File đang chia sẻ có **icon nhiều người** (không chữ) bên trái bút chì: ở danh sách nằm trong cột hành động sẵn có, ở lưới nổi đè đuôi tên và luôn hiện. Rê chuột thấy tooltip **bên trái** (hạn, số lượt tải); bấm thì mở form cấu hình chia sẻ.
+- File đang chia sẻ có **icon nhiều người** (không chữ) bên trái bút chì: ở danh sách nằm trong cột hành động sẵn có, ở lưới nổi đè đuôi tên và luôn hiện. Rê chuột thấy tooltip **bên trái** ("Đang chia sẻ · bấm để quản lý link"); bấm thì mở form cấu hình chia sẻ (hạn và số lượt tải xem trong form).
 - Thanh chọn nhiều file có nút **Chia sẻ**: tạo mỗi file một link (không hết hạn) và liệt kê *tên + link* để sao chép từng dòng hoặc **Sao chép tất cả**.
 
 ### 9.3 Trình xem ảnh (Lightbox)
@@ -490,7 +490,7 @@ Hai màn hình nhập PIN vẽ hoàn toàn bằng **SVG + CSS** (không có file
 | Chọn nhiều file | Xóa | Thêm **Tải tất cả** |
 | Màn hình khóa | Ô nhập PIN tĩnh | Cổng Moria hoạt họa; cổng két sắt với ông phù thủy |
 | Ghi chú tải về | Item đã tải hiện ✓ | Đã bỏ dấu ✓ (vẫn lưu danh sách id đã tải trong config) |
-| Chia sẻ link *(đề xuất)* | Không có | Link công khai chỉ đọc cho từng ảnh/file, hạn tùy chọn, chết ngay khi vào Két sắt/thùng rác (migration `0008`, `/files/:id/share`, `/s/:token`) |
+| Chia sẻ link | Không có | Link công khai chỉ đọc cho từng ảnh/file, hạn tùy chọn, chết ngay khi vào Két sắt/thùng rác (migration `0008`, `/files/:id/share`, `/s/:token`) |
 | Liên kết | Không có | `kind = 'link'`: share từ Android/PWA hoặc "Thêm liên kết", không hết hạn, loại theo tên miền, sửa tiêu đề/URL, xem trước tải khi mở app (migration `0005`, `POST /links`, `POST /links/:id/preview`) |
 
 ## 13. Lộ trình

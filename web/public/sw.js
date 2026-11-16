@@ -1,6 +1,8 @@
 // Caches the app shell so FatUp opens instantly and works offline-ish. API calls and presigned file URLs are never cached.
+// '/s' is the public share page and its downloads: they are not part of the app, must never replace the cached shell, and must
+// never be stored on this device (they are served with no-store).
 const CACHE = 'fatup-shell-v1';
-const API = ['/health', '/me', '/files', '/uploads'];
+const API = ['/health', '/me', '/files', '/uploads', '/s'];
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => {

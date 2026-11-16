@@ -39,6 +39,16 @@ Gửi ảnh và file giữa **điện thoại Android** và **máy tính** (macO
 - **PWA đã cài trước đây:** Android cập nhật mục "Chia sẻ" của PWA chậm (tới khoảng một ngày sau khi bản web mới được deploy), có thể phải gỡ rồi cài lại PWA.
 - Nâng cấp server: `npm run db:migrate:remote` (migration `0005` **dựng lại bảng `files`**, nên sao lưu D1 trước) rồi `npm run deploy`.
 
+### Chia sẻ file bằng link
+
+Gửi một ảnh hoặc file cho người khác bằng một đường link, **không cần cài FatUp hay có token**. Người nhận chỉ **xem và tải về** được.
+
+- **Tạo link:** menu `⋮`/chuột phải → **Chia sẻ…**, chọn hạn (không hết hạn, 1, 7 hoặc 30 ngày) rồi **Tạo link và sao chép**. Chọn nhiều file rồi bấm **Chia sẻ** thì mỗi file một link, kèm nút **Sao chép tất cả**. Chỉ ảnh và file chia sẻ được (liên kết thì không), và chỉ khi file đang ở ngoài danh sách chính.
+- **Quản lý:** file đang chia sẻ có biểu tượng nhiều người cạnh bút chì (rê chuột để xem ghi chú, bấm để mở cài đặt: sao chép link, đổi hạn, lượt tải, lần mở gần nhất, **Dừng chia sẻ**). Nút **Đã chia sẻ** trên thanh công cụ chỉ hiện các file đang chia sẻ.
+- **Hết hiệu lực ngay:** link chết tức thì khi bạn dừng chia sẻ, link hết hạn, hoặc file vào **Két sắt** hoặc **thùng rác** (hoặc bị xóa). Link **không sống lại** khi bạn khôi phục file hay lấy ra khỏi két, kể cả khi bấm Hoàn tác; muốn chia sẻ lại thì tạo link mới.
+- **Lưu ý:** ai có link thì xem và tải được, và có thể chuyển tiếp link đi nơi khác; cách thu hồi là hạn hoặc **Dừng chia sẻ**. Người nhận tải file **qua Worker** (để thu hồi tức thì), nên mỗi lượt tải tốn một request Worker.
+- Nâng cấp server: `npm run db:migrate:remote` (migration `0008`, chỉ thêm bảng và trigger) rồi `npm run deploy:worker`. Cần phát hành app máy tính mới và deploy lại PWA để có giao diện.
+
 ### Thùng rác (Trash)
 
 - **Xóa = chuyển vào thùng rác**, không xóa thật và không hỏi xác nhận. Thông báo hiện nút **Hoàn tác** trong vài giây.
@@ -325,4 +335,5 @@ Sau đó thêm 4 secret vào repo (Settings → Secrets and variables → Action
 - Token trên Android nằm trong storage riêng của app và bị loại khỏi backup.
 - Token trên bản web được mã hóa bằng PIN (AES-GCM, PBKDF2) rồi lưu trong trình duyệt. PIN 4 số chỉ có 10.000 tổ hợp nên chỉ che màn hình, không chống được người đọc được dữ liệu trình duyệt của bạn. Đừng dùng bản web trên máy dùng chung.
 - **Két sắt không mã hóa nội dung file** (xem phần Két sắt ở trên).
+- **Link chia sẻ** là bề mặt công khai duy nhất của API (ngoài `/health`): `/s/<mã>` với mã ngẫu nhiên 192 bit, chỉ đọc, kiểm tra lại ở mỗi lượt truy cập (xem [Chia sẻ file bằng link](#chia-sẻ-file-bằng-link)).
 - Lộ token thì tạo token mới bằng `npm run token:new` và `wrangler secret put API_TOKEN`, rồi kết nối lại các thiết bị.

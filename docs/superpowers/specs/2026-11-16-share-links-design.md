@@ -1,6 +1,6 @@
 # Chia sẻ file bằng link công khai: thiết kế
 
-Trạng thái: **chờ duyệt** (chưa có code). Viết ngày 2026-11-16 sau một buổi hỏi đáp thiết kế; người dùng đã đồng ý các câu Q1 đến Q7 ở mục 3. Các quyết định kỹ thuật ở mục 4 do Claude đề xuất và nằm ở mục 7 để người dùng xem lại. Thay đổi quyết định thì sửa file này trước, code sau; khi làm xong phải cập nhật `SPEC.md` (mục 2, 3, 4.2, 5.1, 5.2, 6, 7, 9.2d, 12).
+Trạng thái: **đã duyệt và đang triển khai** (nhánh `feat/share-links`; chưa phát hành). Viết ngày 2026-11-16 sau một buổi hỏi đáp thiết kế; người dùng đã đồng ý các câu Q1 đến Q7 ở mục 3. Các quyết định kỹ thuật ở mục 4 do Claude đề xuất và nằm ở mục 7 để người dùng xem lại. Thay đổi quyết định thì sửa file này trước, code sau; khi làm xong phải cập nhật `SPEC.md` (mục 2, 3, 4.2, 5.1, 5.2, 6, 7, 9.2d, 12).
 
 Prototype giao diện dashboard: `docs/superpowers/prototypes/share-links/index.html` (bấm đúp để mở; ba biến thể A/B/C cho **form cấu hình chia sẻ**). Đã chỉnh theo góp ý của người dùng: không vẽ trang người nhận trong prototype (người dùng sẽ mở link bằng trình duyệt khác khi làm xong), thêm nút lọc **Đã chia sẻ** vào island, và icon nhiều người cạnh bút chì.
 
@@ -169,7 +169,7 @@ Worker dựng chuỗi HTML trong `worker/src/share-page.ts`: **không JS**, CSS 
 - Thanh chọn nhiều file: nút **Chia sẻ**. Tạo link cho từng file (hạn mặc định không hết hạn), hiện hộp thoại liệt kê *tên + link* với nút sao chép từng dòng và **Sao chép tất cả** (mỗi dòng `tên: link`).
 - **Nút lọc "Đã chia sẻ"** trên island: đặt **ngay sau nhóm Liên kết/File/Ảnh** (cạnh Ảnh, nút cuối của nhóm từ bản 0.4.1), tách khỏi nhóm đó bằng một đường kẻ dọc (`.chips-divider`, cùng loại với đường kẻ sau nút ★). Có icon nhiều người, chữ "Đã chia sẻ" và số lượng; **màu xanh lá** (`--success`) khác các chip còn lại, bật lên thì nền xanh lá nhạt. Bật nút thì chỉ hiện file có `shared = true`; kết hợp kiểu **VÀ** với tab loại (Ảnh/File) và ô tìm kiếm, giống nút ★ "quan trọng". Số lượng và bộ lọc tính ở client từ `FileItem.shared` của danh sách đã tải. Không hiện trong Két sắt và thùng rác.
 - **Icon "đang chia sẻ" trên từng file:** chỉ icon (`Users` của lucide), **không chữ**, màu xanh lá. **Danh sách:** nằm trong cột hành động bên phải sẵn có (`.col-actions`, đã rộng 68px cho hai icon của dòng link), ngay **bên trái bút chì**, nên không đổi bố cục; dòng chưa chia sẻ chỉ có bút chì, canh phải như cũ. **Lưới:** bút chì chỉ hiện khi rê chuột và nổi đè lên đuôi tên, nên icon này cũng nổi đè (không chiếm chỗ của tên), **luôn hiện**, và nhích sang trái nhường chỗ khi bút chì hiện.
-- **Tooltip bên trái:** là phần tử tuyệt đối (`data-tip`, `::after`) mọc về phía **trái** icon (không dùng `title` của trình duyệt vì không chọn được hướng), nên không bao giờ làm tràn mép phải hay đẩy bố cục. Nội dung: "Đang chia sẻ · không hết hạn / hết hạn sau N ngày · N lượt tải". Hiện sau ~0,25 giây rê chuột hoặc khi focus bàn phím.
+- **Tooltip bên trái:** là phần tử tuyệt đối (`data-tip`, `::after`) mọc về phía **trái** icon (không dùng `title` của trình duyệt vì không chọn được hướng), nên không bao giờ làm tràn mép phải hay đẩy bố cục. Nội dung: "Đang chia sẻ · bấm để quản lý link" (hạn và số lượt tải xem trong form, vì danh sách file không mang các số đó). Hiện sau ~0,25 giây rê chuột hoặc khi focus bàn phím.
 - **Bấm icon** mở thẳng form cấu hình chia sẻ của file đó (lối tắt); mục menu "Quản lý chia sẻ…" mở cùng form. File chưa chia sẻ thì dùng menu **Chia sẻ…**.
 - Hộp thoại Chia sẻ (biến thể chọn sau khi xem prototype): trạng thái chưa chia sẻ có chọn hạn và **Tạo link và sao chép**; trạng thái đang chia sẻ có ô link + **Sao chép**, chọn hạn, số lượt tải, lần mở gần nhất, ghi chú về Két sắt/thùng rác, **Dừng chia sẻ**.
 - Khi chuyển một file đang chia sẻ vào Két sắt hoặc thùng rác: toast ghi rõ "Link chia sẻ đã hết hiệu lực". Không hỏi xác nhận. Nút **Hoàn tác** của thùng rác vẫn khôi phục file nhưng **không** khôi phục link.
@@ -224,7 +224,7 @@ Prototype chỉ vẽ **dashboard** (island có nút Đã chia sẻ, danh sách v
 8. Chia sẻ nhiều file tạo link **không hết hạn** mặc định, không hỏi hạn từng file.
 9. Menu Chia sẻ ẩn trong Két sắt và thùng rác; nút lọc **Đã chia sẻ** cũng không hiện ở hai màn hình đó.
 10. Nút lọc **Đã chia sẻ** đặt sau nhóm Liên kết/File/Ảnh (cạnh Ảnh, đúng lời "bên cạnh Photos" khi thứ tự tab là Liên kết → File → Ảnh), lọc kiểu VÀ với tab loại; màu xanh lá; có số lượng.
-11. Tooltip tự dựng bằng CSS để mọc về bên trái, thay cho `title` của trình duyệt; nội dung gồm hạn và số lượt tải.
+11. Tooltip tự dựng bằng CSS để mọc về bên trái, thay cho `title` của trình duyệt; nội dung chỉ "Đang chia sẻ · bấm để quản lý link" (không kèm hạn và lượt tải: danh sách file không mang các số đó, và thêm vào sẽ làm mọi lượt tải đổi payload danh sách).
 12. Ở dạng lưới, icon chia sẻ luôn hiện (khác bút chì chỉ hiện khi rê chuột) vì nó là trạng thái, không phải thao tác.
 13. `shares` có `ON DELETE CASCADE` nhưng `purge` vẫn xóa tường minh, không dựa vào việc D1 bật khóa ngoại.
 
