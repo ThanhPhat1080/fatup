@@ -20,6 +20,7 @@
     "release:worker": "npm run db:migrate && npm run deploy:worker",
     "build:desktop": "npm run build -w @fatup/desktop",
     "dist:mac": "npm run dist:mac -w @fatup/desktop",
-    "e2e": "npm run e2e -w @fatup/desktop"
+    "e2e": "npm run e2e -w @fatup/desktop",
+    "docs:check": "bash scripts/check-docs.sh"
   }
 }
