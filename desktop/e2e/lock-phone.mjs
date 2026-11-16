@@ -9,6 +9,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { TOKEN, startMockServer } from './mock-server.mjs';
+import { appEnv } from './harness.mjs';
 
 const require = createRequire(import.meta.url);
 const { _electron: electron } = require('playwright-core');
@@ -27,7 +28,7 @@ async function launch(lang, viewport) {
   const app = await electron.launch({
     executablePath: process.env.FATUP_EXECUTABLE || require('electron'),
     args: [...(process.env.FATUP_EXECUTABLE ? [] : [join(root, 'out/main/index.js')]), `--lang=${lang}`, '--no-sandbox', '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows'],
-    env: { ...process.env, FATUP_USER_DATA: userData, FATUP_E2E_LOCAL_PREVIEWS: '1' },
+    env: appEnv({ FATUP_USER_DATA: userData, FATUP_E2E_LOCAL_PREVIEWS: '1' }),
   });
   current = app;
   currentProc = app.process();
