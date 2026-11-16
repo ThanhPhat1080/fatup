@@ -108,6 +108,11 @@ try {
   await page.getByText('Hôm qua').first().waitFor();
   await page.waitForTimeout(300);
   await shot(page, '02-all-list-light');
+  // The pencil sits in the right-aligned actions column (like on link rows), not hugging the end of the name.
+  const pencilXs = await page.locator('.list__row:not(.list__row--head) .col-actions .rename-btn').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().right)));
+  assert.ok(pencilXs.length > 1, 'file rows have a pencil in the actions column');
+  assert.equal(new Set(pencilXs).size, 1, `pencils line up on file rows (${pencilXs})`);
+  assert.equal(await page.locator('.list__name .rename-btn').count(), 0, 'no pencil inside the name cell');
 
   log('tabs');
   await kind(page, 'File').click();
