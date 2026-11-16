@@ -17,6 +17,8 @@ Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy
 - **File ngoài thùng rác không còn bị tự xóa sau 30 ngày.** Cron dọn dẹp (03:00 UTC mỗi ngày) trước đây xóa cả file đã tải xong khi file đó quá 30 ngày kể từ lúc tải lên (link thì không), trái với quy tắc dự định: chỉ file **trong thùng rác** mới bị xóa vĩnh viễn sau 30 ngày. Giờ cron chỉ còn xóa (1) file đã nằm trong thùng rác quá 30 ngày và (2) lượt tải lên dở dang quá 24 giờ. File ngoài thùng rác, kể cả trong Két sắt hoặc có nhãn quan trọng, được giữ mãi.
 
 ### Đổi
+- **Nút Tất cả** (tím, có icon) ở đầu island, cạnh nút quan trọng. **Tất cả giờ gồm cả liên kết** (ảnh, file, liên kết xếp phẳng theo ngày, không nhóm theo tên miền); Ảnh / File / Liên kết vẫn chỉ hiện loại của mình.
+- **Tiêu đề phía trên bảng** cho biết đang ở đâu (Tất cả, Ảnh, File, Liên kết, Két sắt, Thùng rác, kèm icon); bộ lọc Quan trọng thêm ngôi sao, bộ lọc Đã chia sẻ thêm nhãn xanh. Ở tab Liên kết, tiêu đề nằm cùng hàng với các nút lọc nền tảng. Vào Két sắt hoặc Thùng rác thì mở ở Tất cả, và island không còn lặp tên hai nơi này.
 - Khôi phục file khỏi thùng rác không còn "tính lại 30 ngày" (không còn hạn nào để tính lại). Cột `retain_from` không còn được ghi; cột vẫn nằm trong bảng nên không cần migration. Hằng `RETENTION_DAYS` bị bỏ khỏi `@fatup/shared`.
 - Thêm hook của Claude Code (`.claude/hooks/block-test-edits.sh`) chặn sửa file test khi tồn tại `.claude/tests-frozen`, dùng khi sửa lỗi theo kiểu viết test thất bại trước.
 

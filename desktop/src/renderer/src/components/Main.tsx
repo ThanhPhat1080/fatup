@@ -664,6 +664,23 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const tabLabel = { all: t.tabAll, image: t.tabImages, file: t.tabFiles, link: t.tabLinks }[tab];
   const TabGlyph = { all: Layers, image: ImageGlyph, file: FileGlyph, link: Link2 }[tab];
   const showShared = sharedOnly && !inTrash && !inVault;
+  const showImportant = importantOnly && !inTrash;
+  /** Small tags beside the title for the filters that are on: the yellow star for Important, green for Shared. */
+  const filterTags = (
+    <>
+      {showImportant && (
+        <span className="view-title__tag view-title__tag--star" title={t.importantOnly}>
+          <ImportantIcon on size={14} />
+        </span>
+      )}
+      {showShared && (
+        <span className="view-title__tag">
+          <Users size={14} />
+          {t.sharedFilter}
+        </span>
+      )}
+    </>
+  );
   const titleContent = inTrash ? (
     <>
       <TrashIcon size={22} />
@@ -675,18 +692,14 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
         <VaultIcon size={22} />
         {t.vault}
         {tab !== 'all' && <span className="view-title__sub">· {tabLabel}</span>}
+        {filterTags}
       </>
     )
   ) : (
     <>
       <TabGlyph size={22} />
       {tabLabel}
-      {showShared && (
-        <span className="view-title__tag">
-          <Users size={14} />
-          {t.sharedFilter}
-        </span>
-      )}
+      {filterTags}
     </>
   );
   // On the links tab the title joins the platform filters on one row (see SiteFilterBar) instead of sitting on its own line.
@@ -816,6 +829,15 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
             ) : (
               <div className="chips-left">
                 {inVault && vaultBackBar}
+                <button
+                  className={`chip chip--site chip--all${tab === 'all' ? ' chip--on' : ''}`}
+                  aria-pressed={tab === 'all'}
+                  title={t.tabAll}
+                  onClick={() => setTab('all')}
+                >
+                  <Layers size={16} /> {t.tabAll}
+                  <span className="chip__count">{source.length}</span>
+                </button>
                 <button
                   className={`chip chip--icon chip--important${importantOnly ? ' chip--on' : ''}`}
                   aria-pressed={importantOnly}

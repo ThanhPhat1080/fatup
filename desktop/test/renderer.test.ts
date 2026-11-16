@@ -186,8 +186,8 @@ describe('links', () => {
     expect(siteCounts(items)).toEqual({ all: 5, facebook: 0, youtube: 2, instagram: 0, threads: 0, x: 1, tiktok: 0, internet: 2 });
   });
 
-  it('keeps links out of the other tabs and everything else out of the link tab', () => {
-    expect(inTab({ kind: 'link' }, 'all')).toBe(false);
+  it('shows links in All and the Links tab only, and everything else out of the Links tab', () => {
+    expect(inTab({ kind: 'link' }, 'all')).toBe(true);
     expect(inTab({ kind: 'link' }, 'file')).toBe(false);
     expect(inTab({ kind: 'link' }, 'link')).toBe(true);
     expect(inTab({ kind: 'image' }, 'all')).toBe(true);

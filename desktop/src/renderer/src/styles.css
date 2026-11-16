@@ -3922,3 +3922,37 @@ body {
   padding: 0 2px 0 12px;
   white-space: nowrap;
 }
+
+/* The All button at the head of the island: purple, apart from the blue kind toggles and the green Shared chip. */
+.chip--all {
+  color: var(--tone-purple);
+  border-color: color-mix(in srgb, var(--tone-purple) 45%, transparent);
+}
+.chip--all:hover {
+  background: color-mix(in srgb, var(--tone-purple) 12%, transparent);
+}
+.chip--all.chip--on,
+.chip--all.chip--on:hover {
+  background: color-mix(in srgb, var(--tone-purple) 22%, var(--panel));
+  color: var(--tone-purple);
+  border-color: transparent;
+  filter: none;
+}
+/* The Important filter's tag beside the title: just the yellow star. */
+.view-title__tag--star {
+  width: 24px;
+  padding: 0;
+  justify-content: center;
+  background: color-mix(in srgb, #f4b400 22%, transparent);
+}
+
+/* A list that mixes links with files: room for [shared][pencil][copy], and an empty slot on non-link rows so the pencils line up. */
+@media (min-width: 721px) {
+  .list--mixed .list__row {
+    grid-template-columns: 24px 32px minmax(0, 1fr) 100px 90px 90px 40px;
+  }
+}
+.col-actions__slot {
+  flex: none;
+  width: 32px;
+}

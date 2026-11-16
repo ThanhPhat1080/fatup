@@ -262,7 +262,7 @@ function KindIcon({ item, size }: { item: Item; size: number }) {
 }
 
 type ItemProps = Pick<ViewProps, 'selected' | 'onToggle' | 'onOpen' | 'onMenu' | 'onEdit' | 'onShare' | 'onCopyLink' | 'onImportant' | 'onDownload'> & { item: Item };
-type RowProps = ItemProps & { siteColumn: boolean; actions: boolean };
+type RowProps = ItemProps & { siteColumn: boolean; actions: boolean; /** The list mixes links with files: non-link rows keep an empty slot where a link's copy button is, so every pencil lines up. */ copySlot?: boolean };
 
 function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, onDownload }: ItemProps) {
   const { t } = useI18n();
@@ -321,7 +321,7 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCop
   );
 }
 
-function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, siteColumn, actions }: RowProps) {
+function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, siteColumn, actions, copySlot }: RowProps) {
   const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
   return (
     <div className={`list__row${selected.has(item.id) ? ' list__row--selected' : ''}`} role="row" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen(item)} {...press}>
@@ -351,6 +351,7 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopy
           <SharedButton item={item} onShare={onShare} />
           {onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
           <CopyLinkButton item={item} onCopy={onCopyLink} />
+          {copySlot && item.kind !== 'link' && <span className="col-actions__slot" aria-hidden />}
         </span>
       )}
       <span role="cell" className="muted col-time">
@@ -415,8 +416,10 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, o
   const { t } = useI18n();
   // The trash has no pencil (onEdit is not given), so it keeps the plain columns.
   const actions = siteColumn || !!onEdit;
+  // All shows photos, files and links together; only then do rows differ in how many buttons they have.
+  const mixed = actions && !siteColumn && groups.some((g) => g.items.some((it) => it.kind === 'link'));
   return (
-    <div className={`list${siteColumn ? ' list--site' : actions ? ' list--actions' : ''}`} role="table">
+    <div className={`list${siteColumn ? ' list--site' : actions ? ' list--actions' : ''}${mixed ? ' list--mixed' : ''}`} role="table">
       <div className="list__row list__row--head" role="row">
         <span role="columnheader">
           <input
@@ -443,7 +446,7 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, o
           <GroupHeading group={g} list collapsed={collapsed} onToggleGroup={onToggleGroup} />
           {!collapsed?.has(g.key) &&
             g.items.map((item) => (
-              <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} onShare={onShare} onCopyLink={onCopyLink} onImportant={onImportant} siteColumn={siteColumn} actions={actions} />
+              <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} onShare={onShare} onCopyLink={onCopyLink} onImportant={onImportant} siteColumn={siteColumn} actions={actions} copySlot={mixed} />
             ))}
         </section>
       ))}
