@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ChevronsDownUp, ChevronsUpDown, Download, LayoutGrid, Link2, List, Plus, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Share2, Trash2, Upload, UploadCloud, Users, X } from 'lucide-react';
+import { ArrowLeft, ChevronsDownUp, ChevronsUpDown, Download, File as FileGlyph, Image as ImageGlyph, Layers, LayoutGrid, Link2, List, Plus, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Share2, Trash2, Upload, UploadCloud, Users, X } from 'lucide-react';
 import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shared-ipc';
 import { DEFAULT_QUOTA_BYTES, isShareable, type TagColor } from '@fatup/shared';
 import { DEFAULT_SORT, groupByDay, groupByDomain, inTab, matchesLink, matchesQuery, matchesSite, matchesTags, singleGroup, siteCounts, sortItems, type SiteFilter, type SortKey, type SortState } from '../lib/format';
@@ -662,6 +662,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
 
   // Where you are, above the table: Trash and Vault by name, otherwise the toggled kind (All when none), plus a tag while the Shared filter is on.
   const tabLabel = { all: t.tabAll, image: t.tabImages, file: t.tabFiles, link: t.tabLinks }[tab];
+  const TabGlyph = { all: Layers, image: ImageGlyph, file: FileGlyph, link: Link2 }[tab];
   const showShared = sharedOnly && !inTrash && !inVault;
   const viewTitle = inTrash ? (
     <h2 className="view-title">
@@ -678,6 +679,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     )
   ) : (
     <h2 className="view-title">
+      <TabGlyph size={22} />
       {tabLabel}
       {showShared && (
         <span className="view-title__tag">
