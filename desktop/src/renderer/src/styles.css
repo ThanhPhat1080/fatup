@@ -1453,11 +1453,6 @@ h2 {
   gap: 8px;
   min-width: 0;
 }
-.trashbar__title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 500;
-}
 .icon-btn.is-active {
   background: var(--primary-container);
   color: var(--on-primary-container);

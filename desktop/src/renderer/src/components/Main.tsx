@@ -692,13 +692,12 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   // On the links tab the title joins the platform filters on one row (see SiteFilterBar) instead of sitting on its own line.
   const viewTitle = !linkTab && titleContent ? <h2 className="view-title">{titleContent}</h2> : null;
 
-  // "← Vault", the same header the Trash has.
+  // The back arrow of the Vault, like the Trash's. The name is the title above the table, not repeated here.
   const vaultBackBar = (
     <div className="trashbar">
       <button className="icon-btn" onClick={toggleVault} title={t.backToFiles} aria-label={t.backToFiles}>
         <ArrowLeft size={20} />
       </button>
-      <h2 className="trashbar__title">{t.vault}</h2>
     </div>
   );
 
@@ -805,7 +804,6 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
                 <button className="icon-btn" onClick={toggleTrash} title={t.backToFiles} aria-label={t.backToFiles}>
                   <ArrowLeft size={20} />
                 </button>
-                <h2 className="trashbar__title">{t.trash}</h2>
                 <InfoPopover label={t.trashInfo} open={trashInfoOpen} onOpenChange={setTrashInfoOpen}>
                   {t.trashNote}
                 </InfoPopover>
