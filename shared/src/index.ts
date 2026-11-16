@@ -123,7 +123,49 @@ export type FileItem = {
   iconUrl?: string | null;
   /** Marked important (the yellow label). Optional for older servers. */
   important?: boolean;
+  /** Has a public share link that is still valid. Optional for older servers. */
+  shared?: boolean;
 };
+
+/** Expiry choices for a share link, in days; `null` means it never expires. */
+export const SHARE_EXPIRY_DAYS = [1, 7, 30] as const;
+export type ShareExpiryDays = (typeof SHARE_EXPIRY_DAYS)[number];
+/** 24 random bytes (192 bits), base64url, so a link cannot be guessed. */
+export const SHARE_TOKEN_BYTES = 24;
+
+/** The public link of one file, as the owner sees it. */
+export type ShareInfo = {
+  token: string;
+  /** Absolute address to give to the recipient: `<origin>/s/<token>`. */
+  url: string;
+  /** Epoch milliseconds, or null when it never expires. */
+  expiresAt: number | null;
+  downloads: number;
+  /** Last time someone opened the page or downloaded, or null when nobody has. */
+  lastAccessAt: number | null;
+  createdAt: number;
+};
+
+export type SetShareRequest = { expiresInDays: ShareExpiryDays | null };
+
+export function isShareExpiry(value: unknown): value is ShareExpiryDays | null {
+  return value === null || (SHARE_EXPIRY_DAYS as readonly unknown[]).includes(value);
+}
+
+/** Stable key for an expiry choice, used for labels: `never`, `1`, `7` or `30`. */
+export function shareExpiryLabelKey(days: ShareExpiryDays | null): 'never' | '1' | '7' | '30' {
+  return days === null ? 'never' : (String(days) as '1' | '7' | '30');
+}
+
+/** A photo or file outside the trash and the Vault can be shared; links, text and hidden files cannot. */
+export function isShareable(item: Pick<FileItem, 'kind' | 'deletedAt' | 'inVault'>): boolean {
+  return (item.kind === 'image' || item.kind === 'file') && item.deletedAt === null && !item.inVault;
+}
+
+/** One `name: link` line per file, for copying several links at once. */
+export function formatShareList(rows: { name: string; url: string }[]): string {
+  return rows.map((r) => `${r.name}: ${r.url}`).join('\n');
+}
 
 /** What `POST /links/:id/preview` returns: the link (its title now filled in) plus the address of its picture. The server never stores or fetches the picture; each client does, and keeps its own copy. */
 /** What `GET /links/:id/frame` returns: whether the web app may show the page in a frame, and the address to frame (after redirects). */
