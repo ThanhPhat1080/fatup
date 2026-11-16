@@ -664,21 +664,21 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const tabLabel = { all: t.tabAll, image: t.tabImages, file: t.tabFiles, link: t.tabLinks }[tab];
   const TabGlyph = { all: Layers, image: ImageGlyph, file: FileGlyph, link: Link2 }[tab];
   const showShared = sharedOnly && !inTrash && !inVault;
-  const viewTitle = inTrash ? (
-    <h2 className="view-title">
+  const titleContent = inTrash ? (
+    <>
       <TrashIcon size={22} />
       {t.trash}
-    </h2>
+    </>
   ) : inVault ? (
     vaultUnlocked && (
-      <h2 className="view-title">
+      <>
         <VaultIcon size={22} />
         {t.vault}
         {tab !== 'all' && <span className="view-title__sub">· {tabLabel}</span>}
-      </h2>
+      </>
     )
   ) : (
-    <h2 className="view-title">
+    <>
       <TabGlyph size={22} />
       {tabLabel}
       {showShared && (
@@ -687,8 +687,10 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           {t.sharedFilter}
         </span>
       )}
-    </h2>
+    </>
   );
+  // On the links tab the title joins the platform filters on one row (see SiteFilterBar) instead of sitting on its own line.
+  const viewTitle = !linkTab && titleContent ? <h2 className="view-title">{titleContent}</h2> : null;
 
   // "← Vault", the same header the Trash has.
   const vaultBackBar = (
@@ -882,7 +884,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           </div>
         )}
 
-        {linkTab && <SiteFilterBar value={siteFilter} onChange={setSiteFilter} counts={counts} />}
+        {linkTab && <SiteFilterBar value={siteFilter} onChange={setSiteFilter} counts={counts} title={titleContent || undefined} />}
 
         {error && (
           <div className="banner" role="alert">

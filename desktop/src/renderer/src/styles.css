@@ -3919,3 +3919,11 @@ body {
 .view-title__tag svg {
   color: inherit;
 }
+
+/* On the links tab the title sits first in the platform filter row, set off by the row's own light divider. */
+.view-title--inline {
+  flex: none;
+  margin: 0;
+  padding: 0 2px 0 12px;
+  white-space: nowrap;
+}
