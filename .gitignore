@@ -25,3 +25,5 @@ worker/public/*
 
 # Present while a failing test is being made to pass: .claude/hooks/block-test-edits.sh then refuses test edits
 .claude/tests-frozen
+
+graphify-out/
