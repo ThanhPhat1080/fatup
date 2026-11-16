@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ChevronsDownUp, ChevronsUpDown, Download, LayoutGrid, Link2, List, Plus, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Trash2, Upload, UploadCloud, X } from 'lucide-react';
+import { ArrowLeft, ChevronsDownUp, ChevronsUpDown, Download, LayoutGrid, Link2, List, Plus, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Share2, Trash2, Upload, UploadCloud, Users, X } from 'lucide-react';
 import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shared-ipc';
-import { DEFAULT_QUOTA_BYTES, type TagColor } from '@fatup/shared';
+import { DEFAULT_QUOTA_BYTES, isShareable, type TagColor } from '@fatup/shared';
 import { DEFAULT_SORT, groupByDay, groupByDomain, inTab, matchesLink, matchesQuery, matchesSite, matchesTags, singleGroup, siteCounts, sortItems, type SiteFilter, type SortKey, type SortState } from '../lib/format';
 import { errorText, useI18n } from '../lib/i18n';
 import { AddLinkDialog } from './AddLinkDialog';
@@ -16,6 +16,7 @@ import { opensDirect } from '../lib/directHosts';
 import { Logo } from './Logo';
 import { ContextMenu, type MenuState } from './Menu';
 import { Settings } from './Settings';
+import { ShareDialog, ShareListDialog, SharePopover } from './ShareForm';
 import { VaultIcon } from './VaultIcon';
 import { TrashIcon } from './TrashIcon';
 import { InfoPopover } from './InfoPopover';
@@ -43,9 +44,14 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const [query, setQuery] = useState('');
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [editing, setEditing] = useState<{ id: string; anchor: DOMRect } | null>(null);
+  /** Share settings: a dialog (from the menu's "Share…") or a popover anchored to the shared icon. */
+  const [sharing, setSharing] = useState<{ id: string; anchor?: DOMRect } | null>(null);
+  /** Links created by a bulk "Share", listed to copy. */
+  const [shareList, setShareList] = useState<{ id: string; name: string; url: string }[] | null>(null);
   const [tagFilter, setTagFilter] = useState<TagColor[]>([]);
   const [siteFilter, setSiteFilter] = useState<SiteFilter>('all');
   const [importantOnly, setImportantOnly] = useState(false);
+  const [sharedOnly, setSharedOnly] = useState(false);
   /** Items that were important when the list was last loaded. They go first in their group; marking one later leaves it in place
    *  until the next load, so nothing jumps under the mouse. */
   const [topIds, setTopIds] = useState<ReadonlySet<string>>(new Set());
@@ -156,10 +162,12 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           (it.kind === 'link' ? matchesLink(it, query) : matchesQuery(it.name, query)) &&
           matchesTags(it.tags, tagFilter) &&
           (inTrash || !importantOnly || !!it.important) &&
+          (inTrash || inVault || !sharedOnly || !!it.shared) &&
           (!linkTab || matchesSite(it, siteFilter)),
       ),
-    [source, inTrash, tab, query, tagFilter, importantOnly, linkTab, siteFilter],
+    [source, inTrash, inVault, tab, query, tagFilter, importantOnly, sharedOnly, linkTab, siteFilter],
   );
+  const sharedCount = useMemo(() => source.filter((it) => it.shared).length, [source]);
   const counts = useMemo(() => siteCounts(source.filter((it) => it.kind === 'link')), [source]);
   const kindCounts = useMemo(
     () => ({ image: source.filter((it) => inTab(it, 'image')).length, file: source.filter((it) => inTab(it, 'file')).length, link: source.filter((it) => inTab(it, 'link')).length }),
@@ -303,7 +311,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     clearSelection();
     const moved = targets.filter((it) => done.has(it.id));
     const fromVault = vaultActive;
-    report(done.size, failed, t.movedToTrash(done.size), {
+    // A share link dies with the move and does not come back on Undo, so the toast says so.
+    const endedShare = moved.some((it) => it.shared);
+    report(done.size, failed, endedShare ? `${t.movedToTrash(done.size)}. ${t.shareLinkEnded}` : t.movedToTrash(done.size), {
       label: t.undo,
       onClick: () => void restoreMany(moved, fromVault),
     });
@@ -319,7 +329,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     if (locked) return;
     setItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
     clearSelection();
-    report(done.size, failed, t.movedToVault(done.size));
+    const endedShare = targets.some((it) => it.shared && done.has(it.id));
+    report(done.size, failed, endedShare ? `${t.movedToVault(done.size)}. ${t.shareLinkEnded}` : t.movedToVault(done.size));
     refresh();
   }
 
@@ -576,6 +587,31 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     }
   }
 
+  const markShared = useCallback((id: string, shared: boolean) => setItems((list) => list?.map((it) => (it.id === id ? { ...it, shared } : it)) ?? null), []);
+  const closeShare = useCallback(() => setSharing(null), []);
+  const shareItem = sharing ? (items ?? []).find((it) => it.id === sharing.id) ?? null : null;
+
+  /** One link per file (an existing link is kept as it is), then a list to copy from. */
+  async function shareMany(targets: Item[]) {
+    const rows: { id: string; name: string; url: string }[] = [];
+    let failed = 0;
+    for (const it of targets.filter(isShareable)) {
+      const have = await window.fatup.getShare(it.id);
+      if (!have.ok && have.error === 'locked') return onLocked();
+      let info = have.ok ? have.value : null;
+      if (!info) {
+        const made = await window.fatup.setShare(it.id, null);
+        info = made.ok ? made.value : null;
+      }
+      if (info) {
+        rows.push({ id: it.id, name: it.name, url: info.url });
+        markShared(it.id, true);
+      } else failed++;
+    }
+    if (rows.length > 0) setShareList(rows);
+    if (failed > 0) toast(t.partialFail(rows.length, failed), true);
+  }
+
   const closeEditor = useCallback(() => setEditing(null), []);
   const editItem = editing ? [...(items ?? []), ...(vaultItems ?? [])].find((it) => it.id === editing.id) ?? null : null;
   const openEditor = (item: Item, anchor: DOMRect) => setEditing((cur) => (cur?.id === item.id ? null : { id: item.id, anchor }));
@@ -709,6 +745,11 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
                 <button className="btn btn--text" onClick={() => void (vaultActive ? removeFromVault(picked) : moveToVault(picked))}>
                   <VaultIcon size={18} /> {vaultActive ? t.removeFromVault : t.moveToVault}
                 </button>
+                {picked.some(isShareable) && (
+                  <button className="btn btn--text" onClick={() => void shareMany(picked)}>
+                    <Share2 size={18} /> {t.sharePicked}
+                  </button>
+                )}
                 {picked.some((it) => it.kind !== 'link') && (
                   <button className="btn btn--outlined" onClick={() => void downloadMany(picked.filter((it) => it.kind !== 'link'))}>
                     <Download size={18} /> {t.downloadAll}
@@ -763,6 +804,20 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
                     </button>
                   ))}
                 </nav>
+                {!inVault && (
+                  <>
+                    <span className="chips-divider" aria-hidden />
+                    <button
+                      className={`chip chip--shared${sharedOnly ? ' chip--on' : ''}`}
+                      aria-pressed={sharedOnly}
+                      title={t.sharedFilterTip}
+                      onClick={() => setSharedOnly((v) => !v)}
+                    >
+                      <Users size={16} /> {t.sharedFilter}
+                      <span className="chip__count">{sharedCount}</span>
+                    </button>
+                  </>
+                )}
               </div>
             )}
             <div className="chips-row__tools">
@@ -807,7 +862,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           {!loaded ? (
             <div className="skeleton" aria-busy />
           ) : visible.length === 0 ? (
-            <EmptyState searching={(query !== '' || tagFilter.length > 0 || (importantOnly && !inTrash) || (linkTab && siteFilter !== 'all')) && source.length > 0} trash={inTrash} vault={vaultActive} links={linkTab} />
+            <EmptyState searching={(query !== '' || tagFilter.length > 0 || (importantOnly && !inTrash) || (sharedOnly && !inTrash && !inVault) || (linkTab && siteFilter !== 'all')) && source.length > 0} trash={inTrash} vault={vaultActive} links={linkTab} />
           ) : view === 'grid' ? (
             <FileGrid
               groups={groups}
@@ -816,6 +871,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               onOpen={open}
               onMenu={openMenu}
               onEdit={inTrash ? undefined : openEditor}
+              onShare={inTrash || vaultActive ? undefined : (it, anchor) => setSharing((cur) => (cur?.id === it.id && cur.anchor ? null : { id: it.id, anchor }))}
               onCopyLink={inTrash ? undefined : (it) => void copyLink(it)}
               onImportant={inTrash ? undefined : (it) => void toggleImportant(it)}
               onDownload={inTrash ? undefined : (it) => void download(it)}
@@ -830,6 +886,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               onOpen={open}
               onMenu={openMenu}
               onEdit={inTrash ? undefined : openEditor}
+              onShare={inTrash || vaultActive ? undefined : (it, anchor) => setSharing((cur) => (cur?.id === it.id && cur.anchor ? null : { id: it.id, anchor }))}
               onCopyLink={inTrash ? undefined : (it) => void copyLink(it)}
               onImportant={inTrash ? undefined : (it) => void toggleImportant(it)}
               collapsed={collapsed}
@@ -857,6 +914,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           onDelete={(it) => void moveToTrash([it])}
           onVault={(it) => void (vaultActive ? removeFromVault([it]) : moveToVault([it]))}
           inVault={vaultActive}
+          onShare={(it) => setSharing({ id: it.id })}
           link={{
             onOpen: open,
             onCopy: (it) => void copyLink(it),
@@ -963,6 +1021,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           onTags={(tags) => void updateFile(editItem, { tags })}
         />
       )}
+      {sharing && shareItem && !sharing.anchor && <ShareDialog key={shareItem.id} item={shareItem} onChanged={markShared} onToast={toast} onClose={closeShare} />}
+      {sharing && shareItem && sharing.anchor && <SharePopover key={shareItem.id} item={shareItem} anchor={sharing.anchor} onChanged={markShared} onToast={toast} onClose={closeShare} />}
+      {shareList && <ShareListDialog rows={shareList} onClose={() => setShareList(null)} onToast={toast} />}
       {addingLink && <AddLinkDialog onClose={() => setAddingLink(false)} onAdd={addLink} />}
       {toastNode}
     </div>

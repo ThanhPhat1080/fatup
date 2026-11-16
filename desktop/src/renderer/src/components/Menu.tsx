@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Copy, Download, ExternalLink, Link2, Pencil, RotateCcw, RefreshCw, Trash2 } from 'lucide-react';
+import { Copy, Download, ExternalLink, Link2, Pencil, RotateCcw, RefreshCw, Share2, Trash2 } from 'lucide-react';
+import { isShareable } from '@fatup/shared';
 import type { Item } from '../../../shared-ipc';
 import { useI18n } from '../lib/i18n';
 import { VaultIcon } from './VaultIcon';
@@ -16,12 +17,14 @@ type Props = {
   /** Move to the Vault, or (when `inVault`) back out of it. */
   onVault?: (item: Item) => void;
   inVault?: boolean;
+  /** Opens the share dialog; the item shows only for photos and files outside the trash and the Vault. */
+  onShare?: (item: Item) => void;
   trash?: { onRestore: (item: Item) => void; onForever: (item: Item) => void };
   /** Extra actions for link items. */
   link?: { onOpen: (item: Item) => void; onCopy: (item: Item) => void; onEdit: (item: Item, x: number, y: number) => void; onReload: (item: Item) => void };
 };
 
-export function ContextMenu({ state, onClose, onDownload, onCopy, onDelete, onVault, inVault, trash, link }: Props) {
+export function ContextMenu({ state, onClose, onDownload, onCopy, onDelete, onVault, inVault, onShare, trash, link }: Props) {
   const { t } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: state.x, top: state.y });
@@ -92,6 +95,11 @@ export function ContextMenu({ state, onClose, onDownload, onCopy, onDelete, onVa
             {state.item.kind === 'image' && (
               <button role="menuitem" onClick={act(onCopy)}>
                 <Copy size={18} /> {t.copyImage}
+              </button>
+            )}
+            {onShare && isShareable(state.item) && (
+              <button role="menuitem" onClick={act(onShare)}>
+                <Share2 size={18} /> {state.item.shared ? t.manageShare : t.share}
               </button>
             )}
             {onVault && (

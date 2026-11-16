@@ -1,5 +1,5 @@
 /** Contract between the preload bridge and the renderer. */
-import type { FileItem, FrameCheck, TagColor, UsageResponse } from '@fatup/shared';
+import type { FileItem, FrameCheck, ShareExpiryDays, ShareInfo, TagColor, UsageResponse } from '@fatup/shared';
 
 export type Lang = 'auto' | 'en' | 'vi';
 export type Theme = 'system' | 'light' | 'dark';
@@ -87,6 +87,12 @@ export type FatupApi = {
   setVault(id: string, inVault: boolean): Promise<Result>;
   /** Changes a file's display name and/or colour tags. Fails with 'not_found' if it is gone or in the trash. */
   updateFile(id: string, patch: { name?: string; tags?: TagColor[]; url?: string; important?: boolean }): Promise<Result<Item>>;
+  /** A photo or file's public share link, or null when it is not shared. */
+  getShare(id: string): Promise<Result<ShareInfo | null>>;
+  /** Creates the share link, or changes its expiry (the link stays the same). `null` = never expires. */
+  setShare(id: string, expiresInDays: ShareExpiryDays | null): Promise<Result<ShareInfo>>;
+  /** Stops sharing: the link stops working at once. */
+  stopShare(id: string): Promise<Result>;
   /** Bookmarks a link. Fails with 'bad_url' for an address that is not http(s). */
   addLink(url: string, title?: string, vault?: boolean): Promise<Result<Item>>;
   /** Web only: a link that arrived through the Android share sheet while the app was locked. Returned once; `url` is empty when the share held no link. */

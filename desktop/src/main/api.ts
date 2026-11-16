@@ -1,4 +1,4 @@
-import type { TagColor, FrameCheck, PreviewResponse, CreateLinkRequest, CreateUploadRequest, CreateUploadResponse, DownloadResponse, EmptyTrashResponse, UsageResponse, FileItem, ListFilesResponse } from '@fatup/shared';
+import type { TagColor, FrameCheck, PreviewResponse, CreateLinkRequest, CreateUploadRequest, CreateUploadResponse, DownloadResponse, EmptyTrashResponse, UsageResponse, FileItem, ListFilesResponse, ShareExpiryDays, ShareInfo } from '@fatup/shared';
 
 export class ApiError extends Error {
   constructor(
@@ -105,6 +105,24 @@ export class ApiClient {
 
   update(id: string, patch: { name?: string; tags?: TagColor[]; url?: string; important?: boolean }): Promise<FileItem> {
     return this.request(`/files/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  }
+
+  /** The file's share link, or null when it is not shared. */
+  async getShare(id: string): Promise<ShareInfo | null> {
+    try {
+      return await this.request(`/files/${encodeURIComponent(id)}/share`);
+    } catch (err) {
+      if (err instanceof ApiError && err.code === 'not_shared') return null;
+      throw err;
+    }
+  }
+
+  setShare(id: string, expiresInDays: ShareExpiryDays | null): Promise<ShareInfo> {
+    return this.request(`/files/${encodeURIComponent(id)}/share`, { method: 'PUT', body: JSON.stringify({ expiresInDays }) });
+  }
+
+  stopShare(id: string): Promise<void> {
+    return this.request(`/files/${encodeURIComponent(id)}/share`, { method: 'DELETE' });
   }
 
   setVault(id: string, inVault: boolean): Promise<FileItem> {

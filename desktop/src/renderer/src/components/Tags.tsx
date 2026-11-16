@@ -18,25 +18,33 @@ type EditProps = {
 };
 
 /** Positions a popover under (or, when there is no room, above) its anchor and closes it when the user clicks, scrolls or resizes away. */
-function usePopover(anchor: DOMRect, onClose: () => void) {
+export function usePopover(anchor: DOMRect, onClose: () => void, width = POPOVER_WIDTH) {
   const [pos, setPos] = useState({ left: anchor.left, top: anchor.bottom + 6 });
   const box = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     const el = box.current;
     if (!el) return;
-    const { height } = el.getBoundingClientRect();
-    const left = Math.max(8, Math.min(anchor.left, window.innerWidth - POPOVER_WIDTH - 8));
-    const below = anchor.bottom + 6;
-    const top = below + height > window.innerHeight - 8 ? Math.max(8, anchor.top - height - 6) : below;
-    setPos({ left, top });
-  }, [anchor]);
+    const place = () => {
+      const { height } = el.getBoundingClientRect();
+      const left = Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8));
+      const below = anchor.bottom + 6;
+      const top = below + height > window.innerHeight - 8 ? Math.max(8, anchor.top - height - 6) : below;
+      setPos({ left, top });
+    };
+    place();
+    // A popover whose content arrives later (the share form loads its link) changes height; keep it inside the window.
+    if (typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(place);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, [anchor, width]);
 
   useEffect(() => {
     const away = (e: Event) => {
       const target = e.target as HTMLElement | null;
       if (box.current?.contains(target)) return;
-      if (e.type === 'pointerdown' && target?.closest('.rename-btn')) return; // the pencil toggles the popover itself
+      if (e.type === 'pointerdown' && target?.closest('.rename-btn, .share-btn')) return; // the pencil and the shared icon toggle their popovers themselves
       onClose();
     };
     document.addEventListener('pointerdown', away, true);

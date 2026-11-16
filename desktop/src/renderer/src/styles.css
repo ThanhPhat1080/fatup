@@ -3716,3 +3716,168 @@ body {
   opacity: 0.4;
   cursor: default;
 }
+
+/* ---------- Sharing ---------- */
+/* The "Shared" filter in the toolbar island: its own tone (green) so it reads apart from the kind toggles beside it. */
+.chip--shared {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  white-space: nowrap;
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+}
+.chip--shared:hover {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+.chip--shared.chip--on,
+.chip--shared.chip--on:hover {
+  background: color-mix(in srgb, var(--success) 20%, var(--panel));
+  color: var(--success);
+  border-color: transparent;
+  filter: none;
+}
+/* The icon on a shared item. Its tooltip is absolutely positioned and grows to the LEFT, so it can never push or clip the layout. */
+.share-btn {
+  flex: none;
+  color: var(--success);
+  position: relative;
+}
+.share-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  right: calc(100% + 4px);
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  background: var(--toast-bg);
+  color: var(--toast-text);
+  font-size: 12px;
+  font-weight: 400;
+  padding: 5px 9px;
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s 0.25s;
+  z-index: 40;
+}
+.share-btn[data-tip]:hover::after,
+.share-btn[data-tip]:focus-visible::after {
+  opacity: 1;
+}
+/* Grid: the pencil is hover-only and floats over the end of the name, so the shared icon floats too, always visible,
+   and slides left to make room when the pencil appears. Nothing here takes space, so names never move. */
+.tile__shared {
+  position: absolute;
+  top: 0;
+  right: 32px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  padding-left: 14px;
+  background: linear-gradient(to right, transparent, var(--surface) 14px);
+  z-index: 1;
+}
+.tile:hover .tile__shared,
+.tile:focus-within .tile__shared {
+  right: 64px;
+  background: linear-gradient(to right, transparent, var(--surface-strong) 14px);
+}
+.tile--selected .tile__shared {
+  background: linear-gradient(to right, transparent, var(--primary-container) 14px);
+}
+/* The share form (dialog and popover). */
+.share__loading {
+  min-height: 120px;
+}
+.share__intro {
+  margin: 0;
+}
+.share__link {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.share__link input {
+  flex: 1;
+  min-width: 0;
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: 13px ui-monospace, SFMono-Regular, Menlo, monospace;
+  user-select: text;
+}
+.share__label {
+  display: block;
+  margin-top: 18px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.share__opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.share__stats {
+  display: flex;
+  gap: 24px;
+  margin-top: 18px;
+  color: var(--text-2);
+  font-size: 13px;
+}
+.share__stats b {
+  display: block;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 500;
+}
+.share__note {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.share__stop {
+  margin-right: auto;
+  color: var(--danger);
+}
+.popover--share {
+  padding: 14px;
+  border-radius: 14px;
+}
+.popover--share .share__link {
+  margin-top: 0;
+}
+.popover--share .share__link .btn {
+  padding: 0 14px;
+}
+.popover--share .share__stats {
+  margin-top: 14px;
+}
+.share__list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  max-height: 320px;
+  overflow: auto;
+}
+.share__list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  border-bottom: 1px solid var(--border);
+}
+.share__list li .ellipsis {
+  flex: 1;
+  min-width: 0;
+}

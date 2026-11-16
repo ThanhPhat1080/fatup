@@ -6,7 +6,7 @@ import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import QRCode from 'qrcode';
-import type { FileItem, TagColor } from '@fatup/shared';
+import type { FileItem, ShareExpiryDays, ShareInfo, TagColor } from '@fatup/shared';
 import { autoUpdater } from 'electron-updater';
 import type { AppState, Item, Prefs, Result, UnlockResult, UpdateCheck, ViewBounds } from '../shared-ipc';
 import { WebPreview } from './webpreview';
@@ -275,6 +275,19 @@ function registerIpc() {
       if (patch.url) await previews.forget([id]); // the old picture belongs to the old address
       return (await previews.decorate([{ ...item, downloaded: config.snapshot.downloaded.includes(id) }]))[0];
     }),
+  );
+
+  ipcMain.handle(
+    'getShare',
+    guarded(async (id: string): Promise<ShareInfo | null> => client().getShare(id)),
+  );
+  ipcMain.handle(
+    'setShare',
+    guarded(async (id: string, days: ShareExpiryDays | null): Promise<ShareInfo> => client().setShare(id, days)),
+  );
+  ipcMain.handle(
+    'stopShare',
+    guarded(async (id: string): Promise<void> => client().stopShare(id)),
   );
 
   ipcMain.handle(

@@ -106,6 +106,9 @@ export function startMockServer(realNow = Date.now()) {
     previewed: true,
   }));
 
+  // Public share links by file id: the same rule as the Worker (a file that goes to the trash loses its link).
+  const shares = new Map();
+
   // A valid 1x1 PNG, served as the preview picture of every link except the last (Shopee), which has none.
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
 
@@ -138,7 +141,7 @@ export function startMockServer(realNow = Date.now()) {
       // Links are only returned when asked for.
       if (url.searchParams.get('kind') === 'link') return send(200, { items: links.map((l) => ({ ...l, thumbUrl: null })), nextCursor: null });
       return send(200, {
-        items: files.map(({ img, ...f }) => ({ ...f, thumbUrl: img >= 0 ? `${base}/thumb/${img}.svg` : null })),
+        items: files.map(({ img, ...f }) => ({ ...f, shared: shares.has(f.id), thumbUrl: img >= 0 ? `${base}/thumb/${img}.svg` : null })),
         nextCursor: null,
       });
     }
@@ -146,6 +149,32 @@ export function startMockServer(realNow = Date.now()) {
       const link = links.find((x) => x.id === m[1]);
       if (!link) return send(404, { error: { code: 'not_found', message: 'nope' } });
       return send(200, { ...link, thumbUrl: null, previewed: true, previewImage: link.url.includes('shopee') ? null : `${base}/pic/${link.id}.png` });
+    }
+    if ((m = /^\/files\/(\w+)\/share$/.exec(url.pathname))) {
+      const id = m[1];
+      const info = () => ({ ...shares.get(id), url: `${base}/s/${shares.get(id).token}` });
+      if (req.method === 'GET') return shares.has(id) ? send(200, info()) : send(404, { error: { code: 'not_shared', message: 'not shared' } });
+      if (req.method === 'DELETE') {
+        shares.delete(id);
+        return send(200, { ok: true });
+      }
+      if (req.method === 'PUT') {
+        let raw = '';
+        req.on('data', (c) => (raw += c));
+        req.on('end', () => {
+          if (!files.some((x) => x.id === id)) return send(404, { error: { code: 'not_found', message: 'nope' } });
+          const days = JSON.parse(raw || '{}').expiresInDays;
+          const expiresAt = days === null ? null : Date.now() + days * day;
+          const had = shares.get(id);
+          if (had) {
+            had.expiresAt = expiresAt;
+            return send(200, info());
+          }
+          shares.set(id, { token: `MockToken${id}`.slice(0, 32).padEnd(32, 'x'), expiresAt, downloads: 0, lastAccessAt: null, createdAt: Date.now() });
+          return send(201, info());
+        });
+        return;
+      }
     }
     if ((m = /^\/files\/(\w+)\/download$/.exec(url.pathname))) return send(200, { url: `${base}/raw/${m[1]}` });
     if ((m = /^\/files\/(\w+)$/.exec(url.pathname)) && req.method === 'PATCH') {
@@ -159,7 +188,7 @@ export function startMockServer(realNow = Date.now()) {
         if (!f) return send(404, { error: { code: 'not_found', message: 'nope' } });
         if (typeof patch.important === 'boolean') f.important = patch.important;
         const { img, ...item } = f;
-        send(200, { ...item, thumbUrl: img >= 0 ? `${base}/thumb/${img}.svg` : null });
+        send(200, { ...item, shared: shares.has(id), thumbUrl: img >= 0 ? `${base}/thumb/${img}.svg` : null });
       });
       return;
     }
@@ -167,6 +196,7 @@ export function startMockServer(realNow = Date.now()) {
       const i = files.findIndex((x) => x.id === m[1]);
       if (i < 0) return send(404, { error: { code: 'not_found', message: 'nope' } });
       files.splice(i, 1);
+      shares.delete(m[1]);
       res.writeHead(204).end();
       return;
     }
