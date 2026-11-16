@@ -4,7 +4,7 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
-## [Chưa phát hành]
+## [0.4.2] — 2026-11-16
 
 ### Thêm
 - **Chia sẻ file bằng link công khai.** Menu `⋮` → **Chia sẻ…** (hoặc chọn nhiều file → **Chia sẻ**) tạo một link `/s/<mã>` cho ảnh hoặc file; người nhận mở bằng bất kỳ trình duyệt nào, không cần token, chỉ **xem và tải về**. Hạn: không hết hạn (mặc định), 1, 7 hoặc 30 ngày; đổi hạn hoặc **Dừng chia sẻ** bất cứ lúc nào; xem số lượt tải và lần mở gần nhất.
