@@ -21,11 +21,15 @@ import {
   type FileItem,
   type FileKind,
   type ListFilesResponse,
+  SHARE_TOKEN_BYTES,
+  isShareExpiry,
+  type ShareInfo,
 } from '@fatup/shared';
 import { purge } from './cleanup';
 import { checkFrame, fetchPreview } from './preview';
 import type { Env } from './env';
 import { createPresigner, fileKey, thumbKey, type Presigner } from './presign';
+import { createShareRoutes } from './share-public';
 import { isUlid, ulid } from './ulid';
 
 type Row = {
@@ -106,7 +110,7 @@ function decodeCursor(cursor: string): { createdAt: number; id: string } | null 
   return m ? { createdAt: Number(m[1]), id: m[2] } : null;
 }
 
-async function toItem(row: Row, presigner: Presigner): Promise<FileItem> {
+async function toItem(row: Row, presigner: Presigner, shared = false): Promise<FileItem> {
   return {
     id: row.id,
     name: row.name,
@@ -124,14 +128,44 @@ async function toItem(row: Row, presigner: Presigner): Promise<FileItem> {
     previewed: row.previewed_at !== null,
     iconUrl: row.kind === 'link' ? (row.icon_url ?? null) : null,
     important: row.important === 1,
+    shared,
   };
+}
+
+const DAY = 24 * 60 * 60 * 1000;
+
+type ShareRow = { token: string; file_id: string; created_at: number; expires_at: number | null; downloads: number; last_access_at: number | null };
+
+/** 24 random bytes as base64url without padding: 32 characters, 192 bits. */
+function newShareToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(SHARE_TOKEN_BYTES));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function toShareInfo(origin: string, r: ShareRow): ShareInfo {
+  return { token: r.token, url: `${origin}/s/${r.token}`, expiresAt: r.expires_at, downloads: r.downloads, lastAccessAt: r.last_access_at, createdAt: r.created_at };
+}
+
+/** Which of these files have a share link that has not expired. */
+async function sharedIds(db: D1Database, ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set();
+  const { results } = await db
+    .prepare(`SELECT file_id FROM shares WHERE file_id IN (${ids.map(() => '?').join(',')}) AND (expires_at IS NULL OR expires_at > ?)`)
+    .bind(...ids, Date.now())
+    .all<{ file_id: string }>();
+  return new Set(results.map((r) => r.file_id));
 }
 
 export function createApp(options: AppOptions = {}) {
   const app = new Hono<AppEnv>();
   const makePresigner = options.presigner ?? createPresigner;
+  /** A file as the API returns it, with its current `shared` state read from the database. */
+  const itemOf = async (c: Context<AppEnv>, row: Row) => toItem(row, c.get('presigner'), (await sharedIds(c.env.DB, [row.id])).has(row.id));
 
   app.get('/health', (c) => c.json({ ok: true }));
+
+  // The only other public routes: what a share link's recipient opens. Registered before the token check on purpose.
+  app.route('/s', createShareRoutes());
 
   app.use('*', async (c, next) => {
     const header = c.req.header('Authorization') ?? '';
@@ -198,7 +232,7 @@ export function createApp(options: AppOptions = {}) {
     if (!isUlid(id)) return fail(c, 404, 'not_found', 'Upload not found');
     const row = await c.env.DB.prepare('SELECT * FROM files WHERE id = ?').bind(id).first<Row>();
     if (!row) return fail(c, 404, 'not_found', 'Upload not found');
-    if (row.status === 'ready') return c.json(await toItem(row, c.get('presigner')));
+    if (row.status === 'ready') return c.json(await itemOf(c, row));
 
     const object = await c.env.BUCKET.head(fileKey(id));
     if (!object) return fail(c, 409, 'not_uploaded', 'File has not been uploaded yet');
@@ -212,7 +246,7 @@ export function createApp(options: AppOptions = {}) {
     await c.env.DB.prepare(`UPDATE files SET status = 'ready', has_thumb = ?, created_at = ? WHERE id = ?`)
       .bind(hasThumb ? 1 : 0, now, id)
       .run();
-    return c.json(await toItem({ ...row, status: 'ready', has_thumb: hasThumb ? 1 : 0, created_at: now }, c.get('presigner')));
+    return c.json(await itemOf(c, { ...row, status: 'ready', has_thumb: hasThumb ? 1 : 0, created_at: now }));
   });
 
   app.post('/links', async (c) => {
@@ -227,7 +261,7 @@ export function createApp(options: AppOptions = {}) {
     if (!url) return fail(c, 400, 'bad_url', `url must be an http(s) address of at most ${MAX_URL_LENGTH} characters`);
 
     const existing = await c.env.DB.prepare(`SELECT * FROM files WHERE kind = 'link' AND url = ? AND deleted_at IS NULL`).bind(url).first<Row>();
-    if (existing) return c.json(await toItem(existing, c.get('presigner')));
+    if (existing) return c.json(await itemOf(c, existing));
 
     const title = typeof body.title === 'string' ? sanitizeTitle(body.title) : '';
     const row: Row = {
@@ -256,7 +290,7 @@ export function createApp(options: AppOptions = {}) {
     )
       .bind(row.id, row.name, row.mime, row.device, row.created_at, url, row.title_set)
       .run();
-    return c.json(await toItem(row, c.get('presigner')), 201);
+    return c.json(await itemOf(c, row), 201);
   });
 
   // Reads the page for its title and the address of its picture. It does not fetch or store the picture and it does not remember
@@ -271,7 +305,7 @@ export function createApp(options: AppOptions = {}) {
     const next: Row = { ...row, previewed_at: Date.now(), icon_url: found.iconUrl ?? row.icon_url ?? null };
     if (found.title && !row.title_set) next.name = found.title;
     await c.env.DB.prepare('UPDATE files SET name = ?, previewed_at = ?, icon_url = ? WHERE id = ?').bind(next.name, next.previewed_at, next.icon_url, id).run();
-    return c.json({ ...(await toItem(next, presigner)), previewImage: found.imageUrl });
+    return c.json({ ...(await itemOf(c, next)), previewImage: found.imageUrl });
   });
 
   // Tells the web app whether a link's page can be shown inside it (the desktop app has a real browser view and never asks).
@@ -318,8 +352,9 @@ export function createApp(options: AppOptions = {}) {
 
     const page = results.slice(0, limit);
     const presigner = c.get('presigner');
+    const shared = await sharedIds(c.env.DB, page.map((r) => r.id));
     const res: ListFilesResponse = {
-      items: await Promise.all(page.map((r) => toItem(r, presigner))),
+      items: await Promise.all(page.map((r) => toItem(r, presigner, shared.has(r.id)))),
       nextCursor: results.length > limit ? encodeCursor(page[page.length - 1][sortCol] ?? 0, page[page.length - 1].id) : null,
     };
     return c.json(res);
@@ -392,7 +427,7 @@ export function createApp(options: AppOptions = {}) {
     await c.env.DB.prepare('UPDATE files SET name = ?, tags = ?, url = ?, has_thumb = ?, previewed_at = ?, title_set = ?, icon_url = ?, important = ? WHERE id = ?')
       .bind(next.name, next.tags, next.url, next.has_thumb, next.previewed_at, next.title_set, next.icon_url, next.important, id)
       .run();
-    return c.json(await toItem(next, c.get('presigner')));
+    return c.json(await itemOf(c, next));
   });
 
   // Moves a file into or out of the Vault.
@@ -408,17 +443,17 @@ export function createApp(options: AppOptions = {}) {
     const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
     if (!row) return fail(c, 404, 'not_found', 'File not found');
     await c.env.DB.prepare('UPDATE files SET in_vault = ? WHERE id = ?').bind(body.inVault ? 1 : 0, id).run();
-    return c.json(await toItem({ ...row, in_vault: body.inVault ? 1 : 0 }, c.get('presigner')));
+    return c.json(await itemOf(c, { ...row, in_vault: body.inVault ? 1 : 0 }));
   });
 
   app.post('/files/:id/restore', async (c) => {
     const id = c.req.param('id');
     const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready'`).bind(id).first<Row>();
     if (!row) return fail(c, 404, 'not_found', 'File not found');
-    if (row.deleted_at === null) return c.json(await toItem(row, c.get('presigner')));
+    if (row.deleted_at === null) return c.json(await itemOf(c, row));
     // Out of the trash a file is kept for good, so there is no clock to restart (retain_from is unused now).
     await c.env.DB.prepare('UPDATE files SET deleted_at = NULL WHERE id = ?').bind(id).run();
-    return c.json(await toItem({ ...row, deleted_at: null }, c.get('presigner')));
+    return c.json(await itemOf(c, { ...row, deleted_at: null }));
   });
 
   app.delete('/files/:id/permanent', async (c) => {
@@ -440,6 +475,47 @@ export function createApp(options: AppOptions = {}) {
     }
     const res: EmptyTrashResponse = { deleted };
     return c.json(res);
+  });
+
+  // ---- Public share links (owner side). The recipient's side is in share-public.ts. ----
+
+  app.get('/files/:id/share', async (c) => {
+    const id = c.req.param('id');
+    const row = await c.env.DB.prepare(`SELECT * FROM shares WHERE file_id = ? AND (expires_at IS NULL OR expires_at > ?)`).bind(id, Date.now()).first<ShareRow>();
+    if (!row) return fail(c, 404, 'not_shared', 'This file is not shared');
+    return c.json(toShareInfo(new URL(c.req.url).origin, row));
+  });
+
+  app.put('/files/:id/share', async (c) => {
+    const id = c.req.param('id');
+    // Only a finished photo or file outside the trash and the Vault can be shared.
+    const file = await c.env.DB.prepare(`SELECT id, kind FROM files WHERE id = ? AND status = 'ready' AND deleted_at IS NULL AND in_vault = 0`).bind(id).first<Pick<Row, 'id' | 'kind'>>();
+    if (!file) return fail(c, 404, 'not_found', 'File not found');
+    if (file.kind !== 'image' && file.kind !== 'file') return fail(c, 400, 'not_shareable', 'Only photos and files can be shared');
+    const body = (await c.req.json().catch(() => null)) as { expiresInDays?: unknown } | null;
+    if (!body || !('expiresInDays' in body) || !isShareExpiry(body.expiresInDays)) {
+      return fail(c, 400, 'bad_expiry', 'expiresInDays must be 1, 7, 30 or null');
+    }
+    const now = Date.now();
+    const expiresAt = body.expiresInDays === null ? null : now + body.expiresInDays * DAY;
+    const origin = new URL(c.req.url).origin;
+
+    const existing = await c.env.DB.prepare('SELECT * FROM shares WHERE file_id = ?').bind(id).first<ShareRow>();
+    if (existing && (existing.expires_at === null || existing.expires_at > now)) {
+      // Changing the expiry keeps the link (and its counters); the new time counts from now.
+      await c.env.DB.prepare('UPDATE shares SET expires_at = ? WHERE file_id = ?').bind(expiresAt, id).run();
+      return c.json(toShareInfo(origin, { ...existing, expires_at: expiresAt }));
+    }
+    // A link that expired is gone for good: sharing again makes a new one.
+    if (existing) await c.env.DB.prepare('DELETE FROM shares WHERE file_id = ?').bind(id).run();
+    const row: ShareRow = { token: newShareToken(), file_id: id, created_at: now, expires_at: expiresAt, downloads: 0, last_access_at: null };
+    await c.env.DB.prepare('INSERT INTO shares (token, file_id, created_at, expires_at) VALUES (?, ?, ?, ?)').bind(row.token, id, now, expiresAt).run();
+    return c.json(toShareInfo(origin, row), 201);
+  });
+
+  app.delete('/files/:id/share', async (c) => {
+    await c.env.DB.prepare('DELETE FROM shares WHERE file_id = ?').bind(c.req.param('id')).run();
+    return c.json({ ok: true });
   });
 
   app.notFound((c) => fail(c, 404, 'not_found', 'Route not found'));
