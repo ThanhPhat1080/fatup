@@ -353,6 +353,9 @@ function registerIpc() {
   const text = (v: unknown) => (typeof v === 'string' ? v : '');
   ipcMain.handle('vaultStatus', () => vault.vaultStatus());
   ipcMain.handle('vaultSetup', async (_e, pin: unknown) => afterOpen(await vault.vaultSetup(text(pin))));
+  // Two steps so that nothing reaches the server before the user has confirmed the recovery key; only a successful commit opens the Vault.
+  ipcMain.handle('vaultSetupPrepare', (_e, pin: unknown) => vault.vaultSetupPrepare(text(pin)));
+  ipcMain.handle('vaultSetupCommit', async () => afterOpen(await vault.vaultSetupCommit()));
   ipcMain.handle('vaultUnlock', async (_e, pin: unknown) => afterOpen(await vault.vaultUnlock(text(pin))));
   ipcMain.handle('vaultRecover', async (_e, recoveryKey: unknown, newPin: unknown) => afterOpen(await vault.vaultRecover(text(recoveryKey), text(newPin))));
   ipcMain.handle('vaultChangePin', (_e, oldPin: unknown, newPin: unknown) => vault.vaultChangePin(text(oldPin), text(newPin)));

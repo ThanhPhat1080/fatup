@@ -122,6 +122,8 @@ export function createWebVault(deps: WebVaultDeps) {
   return {
     vaultStatus: core.vaultStatus,
     vaultSetup: async (pin: string) => afterOpen(await core.vaultSetup(pin)),
+    vaultSetupPrepare: core.vaultSetupPrepare,
+    vaultSetupCommit: async () => afterOpen(await core.vaultSetupCommit()),
     vaultUnlock: async (pin: string) => afterOpen(await core.vaultUnlock(pin)),
     vaultRecover: async (recoveryKey: string, newPin: string) => afterOpen(await core.vaultRecover(recoveryKey, newPin)),
     vaultChangePin: core.vaultChangePin,

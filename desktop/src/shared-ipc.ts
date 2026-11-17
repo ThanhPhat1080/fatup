@@ -52,6 +52,9 @@ export type VaultPinRefusal = { ok: false; error: 'weak_pin' | 'matches_app_pin'
 /** Answer of `vaultSetup`: the recovery key is shown once, here. */
 export type VaultSetupResult = { ok: true; recoveryKey: string } | { ok: false; error: string };
 
+/** Answer of `vaultSetupCommit`. `error` is `no_prepared_setup`, `closed` (the Vault was closed meanwhile), `vault_exists` or an API error code. */
+export type VaultSetupCommitResult = { ok: true } | { ok: false; error: string };
+
 /** Answer of `vaultRecover`. `error` is `bad_recovery_key`, `weak_pin`, `matches_app_pin` or an API error code. */
 export type VaultRecoverResult = { ok: true } | { ok: false; error: string };
 
@@ -106,8 +109,12 @@ export type FatupApi = {
   usage(): Promise<Result<Usage>>;
   /** Whether the encrypted Vault is set up (`none`, `ready`, `wiped`) and the PIN attempts left. Needs no unlocked Vault. */
   vaultStatus(): Promise<Result<VaultStatus>>;
-  /** First-time setup with the Vault PIN (6 digits). Opens the Vault and returns the recovery key, once. */
+  /** First-time setup with the Vault PIN (6 digits) in one step. Opens the Vault and returns the recovery key, once. The renderer uses the two steps below. */
   vaultSetup(pin: string): Promise<VaultSetupResult>;
+  /** First step: checks the PIN, makes the keys and returns the recovery key. Nothing reaches the server and the Vault stays closed. A new call replaces the last. */
+  vaultSetupPrepare(pin: string): Promise<VaultSetupResult>;
+  /** Second step, after the recovery key was confirmed: sets the Vault up on the server, opens it and starts converting old files. Closing the Vault discards a prepared setup. */
+  vaultSetupCommit(): Promise<VaultSetupCommitResult>;
   /** Opens the Vault with the Vault PIN. The server counts wrong attempts, not this app. */
   vaultUnlock(pin: string): Promise<VaultUnlockResult>;
   /** Sets a new Vault PIN with the recovery key and opens the Vault. No file is re-encrypted. */

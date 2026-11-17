@@ -297,6 +297,8 @@ export function installBrowserApi(): void {
     // The encrypted Vault. All of the logic is in vault-web.ts; Vault items are never handed to `previews` (Cache Storage).
     vaultStatus: () => webVault.vaultStatus(),
     vaultSetup: (pin) => webVault.vaultSetup(pin),
+    vaultSetupPrepare: (pin) => webVault.vaultSetupPrepare(pin),
+    vaultSetupCommit: () => webVault.vaultSetupCommit(),
     vaultUnlock: (pin) => webVault.vaultUnlock(pin),
     vaultRecover: (recoveryKey, newPin) => webVault.vaultRecover(recoveryKey, newPin),
     vaultChangePin: (oldPin, newPin) => webVault.vaultChangePin(oldPin, newPin),

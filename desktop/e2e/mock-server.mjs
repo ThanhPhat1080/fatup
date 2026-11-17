@@ -499,6 +499,9 @@ export function startMockServer(realNow = Date.now(), options = {}) {
       if (existing) return { status: 200, body: vaultJson(existing, base) }; // a retry after the move went through
       const f = files.find((x) => x.id === id);
       if (!f) return fail(404, 'not_found', 'File not found');
+      // Like the Worker: a file must say which bytes it encrypted (the ETag of its PUT), quoted or not.
+      const etag = typeof b.etag === 'string' && b.etag.length <= 200 ? b.etag.replace(/^"(.*)"$/, '$1') : '';
+      if (etag === '') return badRequest('etag (the ETag of the uploaded encrypted file, at most 200 characters) is required');
       const key = `vault/${id}`;
       const obj = blobs.get(key);
       if (!obj) return fail(409, 'not_uploaded', 'The encrypted file has not been uploaded yet');
@@ -506,6 +509,8 @@ export function startMockServer(realNow = Date.now(), options = {}) {
         blobs.delete(key);
         return fail(409, 'size_mismatch', 'Uploaded size does not match');
       }
+      // Another PUT replaced the object since this client's own: nothing changes, the client starts over.
+      if (obj.etag.replace(/^"(.*)"$/, '$1') !== etag) return fail(409, 'item_changed', 'The item changed while moving it; try again');
       const hasThumb = b.hasThumb === true && blobs.has(`${key}.thumb`);
       files.splice(files.indexOf(f), 1);
       blobs.delete(`files/${id}`);
@@ -591,8 +596,11 @@ export function startMockServer(realNow = Date.now(), options = {}) {
     }
     // Presigned object storage, like R2's URLs: no token. PUT stores the bytes as sent; GET serves them back.
     if ((m = /^\/put\/(.+)$/.exec(url.pathname)) && req.method === 'PUT') {
-      blobs.set(m[1], { bytes: raw, type: req.headers['content-type'] ?? 'application/octet-stream' });
-      return send(200, '', 'text/plain');
+      // R2 answers a PUT with the ETag (quoted) of what it stored; a move in has to send it back to `vault/in/complete`.
+      const etag = `"${createHash('md5').update(raw).digest('hex')}"`;
+      blobs.set(m[1], { bytes: raw, type: req.headers['content-type'] ?? 'application/octet-stream', etag });
+      res.writeHead(200, { 'Content-Type': 'text/plain', ETag: etag });
+      return res.end('');
     }
     if ((m = /^\/obj\/(.+)$/.exec(url.pathname))) {
       const blob = blobs.get(m[1]);

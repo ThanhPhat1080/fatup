@@ -23,7 +23,7 @@ import {
   type VaultStatus,
 } from '@fatup/shared';
 import { ApiError, type ApiClient } from './main/api';
-import type { VaultPinRefusal, VaultRecoverResult, VaultSetupResult, VaultUnlockResult } from './shared-ipc';
+import type { VaultPinRefusal, VaultRecoverResult, VaultSetupCommitResult, VaultSetupResult, VaultUnlockResult } from './shared-ipc';
 
 export type { VaultRecoverResult, VaultSetupResult };
 
@@ -77,8 +77,18 @@ function unlockFailure(err: unknown): VaultUnlockResult {
   return { ok: false, reason: 'error', error: err.code };
 }
 
+/** What `newSetup` made and `commitSetup` has yet to post. Holds a non-extractable master key. */
+type PreparedSetup = { request: Awaited<ReturnType<typeof newSetup>>['request']; mk: CryptoKey };
+
+/** What an opening call answers when `close()` ran while it was waiting. */
+const CLOSED = 'closed';
+
 export class VaultSession {
   #mk: CryptoKey | null = null;
+  /** The first-time setup made by `prepareSetup`, waiting for `commitSetup`. Single-use; dropped by `close()`. */
+  #prepared: PreparedSetup | null = null;
+  /** Counts the calls of `close()`. An opening call that finds it changed after an await must not keep the key it derived. */
+  #generation = 0;
   readonly #deps: VaultSessionDeps;
 
   constructor(deps: VaultSessionDeps) {
@@ -93,9 +103,11 @@ export class VaultSession {
     return this.#mk !== null;
   }
 
-  /** Forgets the master key. */
+  /** Forgets the master key and any prepared setup, and makes every opening call that is still waiting give up. */
   close(): void {
+    this.#generation++;
     this.#mk = null;
+    this.#prepared = null;
   }
 
   /** Why `pin` cannot be a Vault PIN, or null. Both ends are always checked against the app PIN. */
@@ -111,21 +123,58 @@ export class VaultSession {
     return this.#mk;
   }
 
-  /** First-time setup. The request carries only what the PIN and the recovery key derive; the recovery key is returned once. */
-  async setup(pin: string): Promise<VaultSetupResult> {
+  /**
+   * First step of the first-time setup: checks the PIN, makes the keys and the recovery key, and returns the recovery key.
+   * Nothing reaches the server and the Vault stays closed until `commitSetup`, so the key can be shown and confirmed first.
+   * A second call replaces the first.
+   */
+  async prepareSetup(pin: string): Promise<VaultSetupResult> {
+    this.#prepared = null;
+    const generation = this.#generation;
     const refused = await this.#refusePin(pin);
     if (refused) return refused;
     try {
       const { request, recoveryKey, mk } = await newSetup(pin, { iterations: this.#deps.iterations ?? VAULT_KDF_ITERATIONS });
-      await this.#deps.client().vaultSetup(request);
-      this.#mk = mk;
+      if (generation !== this.#generation) return { ok: false, error: CLOSED };
+      this.#prepared = { request, mk };
       return { ok: true, recoveryKey };
     } catch (err) {
       return { ok: false, error: errorCode(err) };
     }
   }
 
+  /**
+   * Second step: posts the prepared request and opens the Vault. Answers `no_prepared_setup` when nothing is prepared (also after
+   * `close()`), `closed` when `close()` ran while the request was in flight. The prepared request is single-use once the server took it
+   * (or answered that the Vault exists); after any other failure it stays, so the same step can be tried again.
+   */
+  async commitSetup(): Promise<VaultSetupCommitResult> {
+    const prepared = this.#prepared;
+    if (!prepared) return { ok: false, error: 'no_prepared_setup' };
+    const generation = this.#generation;
+    try {
+      await this.#deps.client().vaultSetup(prepared.request);
+    } catch (err) {
+      const code = errorCode(err);
+      if (code === 'vault_exists' && this.#prepared === prepared) this.#prepared = null;
+      return { ok: false, error: code };
+    }
+    if (generation !== this.#generation) return { ok: false, error: CLOSED };
+    this.#prepared = null;
+    this.#mk = prepared.mk;
+    return { ok: true };
+  }
+
+  /** First-time setup in one call: `prepareSetup` then `commitSetup`. The request carries only what the PIN and the recovery key derive; the recovery key is returned once. */
+  async setup(pin: string): Promise<VaultSetupResult> {
+    const prepared = await this.prepareSetup(pin);
+    if (!prepared.ok) return prepared;
+    const committed = await this.commitSetup();
+    return committed.ok ? prepared : committed;
+  }
+
   async unlock(pin: string): Promise<VaultUnlockResult> {
+    const generation = this.#generation;
     try {
       const client = this.#deps.client();
       const status = await client.vaultStatus();
@@ -133,7 +182,9 @@ export class VaultSession {
       if (status.state === 'wiped') return { ok: false, reason: 'wiped' };
       const { authKey, wrapBase } = await derivePinKeys(pin, status.kdf.salt, status.kdf.iterations);
       const { serverSecret, wrappedMkPin } = await client.vaultUnlock({ authKey });
-      this.#mk = await unwrapMasterKey(wrappedMkPin, await kekFrom(wrapBase, serverSecret));
+      const mk = await unwrapMasterKey(wrappedMkPin, await kekFrom(wrapBase, serverSecret));
+      if (generation !== this.#generation) return { ok: false, reason: 'error', error: CLOSED };
+      this.#mk = mk;
       return { ok: true };
     } catch (err) {
       return unlockFailure(err);
@@ -145,6 +196,7 @@ export class VaultSession {
     const refused = await this.#refusePin(newPin);
     if (refused) return refused;
     if (!parseRecoveryKey(recoveryKey)) return { ok: false, error: 'bad_recovery_key' };
+    const generation = this.#generation;
     try {
       const client = this.#deps.client();
       const { rkAuth, rkKek } = await recoveryKeys(recoveryKey);
@@ -159,7 +211,9 @@ export class VaultSession {
       const transient = await unwrapMasterKey(wrappedMkRecovery, rkKek, { extractable: true });
       const next = await this.#wrapForPin(transient, newPin);
       await client.vaultSetPin({ proof: { rkAuth }, ...next.request });
-      this.#mk = await unwrapMasterKey(next.request.wrappedMkPin, next.kek);
+      const mk = await unwrapMasterKey(next.request.wrappedMkPin, next.kek);
+      if (generation !== this.#generation) return { ok: false, error: CLOSED };
+      this.#mk = mk;
       return { ok: true };
     } catch (err) {
       return { ok: false, error: errorCode(err) };
@@ -168,6 +222,7 @@ export class VaultSession {
 
   /** Sets a new PIN, proving with the old one. The master key is unchanged, so no file is touched. */
   async changePin(oldPin: string, newPin: string): Promise<VaultChangePinResult> {
+    const generation = this.#generation;
     const refused = await this.#refusePin(newPin);
     if (refused) return refused;
     try {
@@ -181,7 +236,9 @@ export class VaultSession {
       const transient = await unwrapMasterKey(wrappedMkPin, await kekFrom(wrapBase, serverSecret), { extractable: true });
       const next = await this.#wrapForPin(transient, newPin);
       await client.vaultSetPin({ proof: { authKey }, ...next.request });
-      this.#mk = await unwrapMasterKey(next.request.wrappedMkPin, next.kek);
+      const mk = await unwrapMasterKey(next.request.wrappedMkPin, next.kek);
+      if (generation !== this.#generation) return { ok: false, reason: 'error', error: CLOSED };
+      this.#mk = mk;
       return { ok: true };
     } catch (err) {
       return unlockFailure(err);

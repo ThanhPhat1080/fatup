@@ -3,7 +3,7 @@
 // `encMeta` or `encKey`. What differs between the two hosts is passed in: where a download goes (`saveDownload`) and what kind of
 // address a picture or a file gets (`views`: `fatup-vault://` on the desktop, `blob:` URLs on the web).
 import { LINK_MIME, decryptBytes, encryptBytes, normalizeUrl, vaultCiphertextSize, type FileItem, type TagColor, type VaultMeta, type VaultStatus } from '@fatup/shared';
-import type { Item, Result, VaultUnlockResult } from './shared-ipc';
+import type { Item, Result, VaultSetupCommitResult, VaultUnlockResult } from './shared-ipc';
 import type { VaultChangePinResult, VaultRecoverResult, VaultSession, VaultSetupResult } from './vault-session';
 import { ApiError, type ApiClient } from './main/api';
 
@@ -91,6 +91,8 @@ export function createVaultCore(deps: VaultCoreDeps) {
   const entries = new Map<string, Entry>();
   /** Ids ever seen as encrypted. Kept after the Vault closes so a request for one answers `vault_locked` instead of falling through to the plain paths. Opaque ids only. */
   const known = new Set<string>();
+  /** Counts the closes of the Vault: a call that awaited across one must not record what it learnt. */
+  let epoch = 0;
   const isDownloaded = (id: string) => deps.isDownloaded?.(id) ?? false;
 
   /** GETs a presigned URL and decrypts it with the item's file key. Throws ApiError / VaultCryptoError / VaultLockedError. */
@@ -125,16 +127,23 @@ export function createVaultCore(deps: VaultCoreDeps) {
     }
   }
 
-  /** Remembers the encrypted rows, decrypts them and gives their thumbnails the host's kind of address. */
+  /**
+   * Decrypts the encrypted rows and gives their thumbnails the host's kind of address; remembers the rows once everything is done.
+   * Throws `vault_locked` (and remembers nothing) when the Vault was closed while a step was awaited: the close already cleared what
+   * it knew, so a row kept after it would outlive the key it was read with.
+   */
   async function present(rows: FileItem[]): Promise<Item[]> {
+    const at = epoch;
+    const closed = () => new ApiError('vault_locked', 'The Vault is locked');
     const shown = await session.decryptList(rows);
+    if (at !== epoch) throw closed();
     const byId = new Map(rows.map((r) => [r.id, r]));
-    return pool(shown, THUMB_CONCURRENCY, async (it): Promise<Item> => {
+    const staged = new Map<string, Entry>();
+    const items = await pool(shown, THUMB_CONCURRENCY, async (it): Promise<Item> => {
       const row = byId.get(it.id);
       if (!row?.encrypted || !row.encMeta || !row.encKey) return { ...it, downloaded: isDownloaded(it.id) };
-      entries.set(it.id, { raw: row, name: it.name, mime: it.mime });
-      known.add(it.id);
-      const entry = entries.get(it.id)!;
+      const entry: Entry = { raw: row, name: it.name, mime: it.mime };
+      staged.set(it.id, entry);
       let thumbUrl: string | null = null;
       if (it.thumbUrl && row.thumbUrl) {
         const source = row.thumbUrl;
@@ -142,6 +151,12 @@ export function createVaultCore(deps: VaultCoreDeps) {
       }
       return { ...it, thumbUrl, downloaded: isDownloaded(it.id) };
     });
+    if (at !== epoch) throw closed();
+    for (const [id, entry] of staged) {
+      entries.set(id, entry);
+      known.add(id);
+    }
+    return items;
   }
 
   /** Answers one just-returned encrypted row as the page sees it. */
@@ -165,6 +180,18 @@ export function createVaultCore(deps: VaultCoreDeps) {
       return session.setup(pin);
     },
 
+    /** First step of the setup: makes the keys and returns the recovery key. Reaches no server; the Vault stays closed until `vaultSetupCommit`. */
+    async vaultSetupPrepare(pin: string): Promise<VaultSetupResult> {
+      if (!deps.isUnlocked()) return { ok: false, error: 'locked' };
+      return session.prepareSetup(pin);
+    },
+
+    /** Second step of the setup, after the user confirmed the recovery key: sets the Vault up on the server and opens it. */
+    async vaultSetupCommit(): Promise<VaultSetupCommitResult> {
+      if (!deps.isUnlocked()) return { ok: false, error: 'locked' };
+      return session.commitSetup();
+    },
+
     async vaultUnlock(pin: string): Promise<VaultUnlockResult> {
       if (!deps.isUnlocked()) return { ok: false, reason: 'error', error: 'locked' };
       return session.unlock(pin);
@@ -182,6 +209,7 @@ export function createVaultCore(deps: VaultCoreDeps) {
 
     /** Forgets the master key, what was learnt about the items and every address made for them. Never refused, not even while the app is locked. Synchronous on purpose. */
     vaultClose(): void {
+      epoch++;
       session.close();
       entries.clear();
       views.closeAll();

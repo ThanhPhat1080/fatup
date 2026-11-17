@@ -3,6 +3,9 @@
 // so they fit in memory. A failure of one item (network, tampered data, closed Vault) lands in `failed` and never stops the rest.
 // The Worker only ever sees ciphertext and opaque ids: the real name, type and address travel inside `encMeta`.
 // Interrupted runs are safe to repeat: PUT overwrites the target object and the Worker's complete calls are idempotent.
+// Two safeguards on the Worker's side need the client's help: a move in sends the ETag of the ciphertext it stored (two devices moving the
+// same file in at once would otherwise mix one device's key with the other's ciphertext), and a move out that fails after the plain copy
+// was written asks the Worker to sweep that copy again.
 import { LINK_MIME, decryptBytes, encryptBytes, type FileItem, type VaultMeta } from '@fatup/shared';
 import type { VaultProgress } from '../shared-ipc';
 import type { VaultSession } from '../vault-session';
@@ -60,7 +63,8 @@ export function createVaultMover(deps: VaultMoverDeps) {
     return bytes;
   }
 
-  async function put(url: string, bytes: Uint8Array, contentType: string): Promise<void> {
+  /** PUTs to a presigned address; resolves to the `ETag` header of the answer (verbatim), or null when it has none. */
+  async function put(url: string, bytes: Uint8Array, contentType: string): Promise<string | null> {
     let res: Response;
     try {
       res = await fetchImpl(url, {
@@ -73,6 +77,7 @@ export function createVaultMover(deps: VaultMoverDeps) {
       throw new ApiError('network', (err as Error).message);
     }
     if (!res.ok) throw new ApiError('upload_failed', `HTTP ${res.status}`, res.status);
+    return res.headers.get('ETag');
   }
 
   /** Runs `step` over `items` in order, counting every item (failed ones too) in the progress. */
@@ -90,7 +95,8 @@ export function createVaultMover(deps: VaultMoverDeps) {
     return result;
   }
 
-  async function moveInOne(item: FileItem): Promise<void> {
+  /** One attempt at moving an item in. Throws ApiError `item_changed` (409) when another device stored a different ciphertext meanwhile. */
+  async function moveInAttempt(item: FileItem): Promise<void> {
     const link = item.kind === 'link';
     if (link && !item.url) throw new ApiError('bad_item', 'A link without an address');
     const meta: VaultMeta = link
@@ -112,9 +118,31 @@ export function createVaultMover(deps: VaultMoverDeps) {
       if (thumb) thumbCipher = await encryptBytes(thumb, dek);
     }
 
-    if (cipher) await put(urls.uploadUrl, cipher, 'application/octet-stream');
+    // The ETag of the file (never of the thumbnail) proves to the Worker that the object it finds is the one written here.
+    let etag: string | undefined;
+    if (cipher) {
+      const stored = await put(urls.uploadUrl, cipher, 'application/octet-stream');
+      if (!stored) throw new ApiError('no_etag', 'The storage answered the upload without an ETag');
+      etag = stored;
+    }
     if (thumbCipher && urls.thumbUploadUrl) await put(urls.thumbUploadUrl, thumbCipher, 'application/octet-stream');
-    await deps.client().moveInComplete(item.id, { encMeta, encKey, size: cipher ? cipher.length : 0, hasThumb: thumbCipher !== null });
+    await deps.client().moveInComplete(item.id, {
+      encMeta,
+      encKey,
+      size: cipher ? cipher.length : 0,
+      hasThumb: thumbCipher !== null,
+      ...(etag !== undefined ? { etag } : {}),
+    });
+  }
+
+  /** Moves an item in; when the Worker says it changed meanwhile (409 `item_changed`), starts over once with a new file key. */
+  async function moveInOne(item: FileItem): Promise<void> {
+    try {
+      await moveInAttempt(item);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.code === 'item_changed')) throw err;
+      await moveInAttempt(item);
+    }
   }
 
   async function moveOutOne(item: FileItem): Promise<void> {
@@ -140,8 +168,19 @@ export function createVaultMover(deps: VaultMoverDeps) {
     }
 
     await put(urls.uploadUrl, plain, shown.mime);
-    if (thumb && urls.thumbUploadUrl) await put(urls.thumbUploadUrl, thumb, 'image/jpeg');
-    await deps.client().moveOutComplete(item.id, { name: shown.name, mime: shown.mime, size: plain.length, hasThumb: thumb !== null });
+    // From here on the plain copy exists in storage (readable with the API token) while the row is still encrypted.
+    // Whatever fails next, ask the Worker's idempotent move-in branch (same metadata, no etag) to sweep the plain copies.
+    try {
+      if (thumb && urls.thumbUploadUrl) await put(urls.thumbUploadUrl, thumb, 'image/jpeg');
+      await deps.client().moveOutComplete(item.id, { name: shown.name, mime: shown.mime, size: plain.length, hasThumb: thumb !== null });
+    } catch (err) {
+      try {
+        await deps.client().moveInComplete(item.id, { encMeta: item.encMeta, encKey: item.encKey, size: item.size, hasThumb: Boolean(item.thumbUrl) });
+      } catch {
+        // Best effort: the Worker's cron sweeps what is left.
+      }
+      throw err;
+    }
   }
 
   const mover = {
