@@ -9,7 +9,7 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import QRCode from 'qrcode';
 import type { FileItem, ShareExpiryDays, ShareInfo, TagColor } from '@fatup/shared';
 import { autoUpdater } from 'electron-updater';
-import type { AppState, Item, Prefs, Result, UnlockResult, UpdateCheck, ViewBounds, VaultMoveResult } from '../shared-ipc';
+import type { AppState, Item, Prefs, Result, UnlockResult, UpdateCheck, ViewBounds, VaultMoveResult, VaultProgress } from '../shared-ipc';
 import { WebPreview } from './webpreview';
 import { ApiClient, ApiError, normalizeServerUrl } from './api';
 import { ConfigStore } from './config';
@@ -20,6 +20,7 @@ import { FilePreviewStore, PREVIEW_SCHEME } from './previews';
 import { UploadManager } from './uploader';
 import { VaultSession } from '../vault-session';
 import { VAULT_SCHEME, createVaultHandlers, type VaultHandlers } from './vault-ipc';
+import { createVaultMover, type MoveProgress, type VaultMover } from './vault-mover';
 import { fetchLatestRelease, isNewer, type ReleaseInfo } from './updater';
 
 if (process.env.FATUP_USER_DATA) app.setPath('userData', process.env.FATUP_USER_DATA);
@@ -51,6 +52,10 @@ const vaultSession = new VaultSession({
 });
 /** Vault IPC logic (no Electron imports); created once the app is ready because it needs the downloads folder. */
 let vault: VaultHandlers;
+/** Moves files in and out of the encrypted Vault and encrypts old Vault files; created next to `vault`. */
+let mover: VaultMover;
+/** The conversion of old Vault files that is running now, so that two unlocks in a row do not run two. */
+let migration: Promise<void> | null = null;
 let mainWindow: BrowserWindow | null = null;
 const itemCache = new Map<string, FileItem>();
 let pendingRelease: ReleaseInfo | null = null;
@@ -131,6 +136,31 @@ async function fetchBytes(url: string): Promise<Buffer> {
   const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
   if (!res.ok) throw new ApiError('download_failed', `HTTP ${res.status}`, res.status);
   return Buffer.from(await res.arrayBuffer());
+}
+
+/** Tells the renderer how far a batch of moves or the conversion of old Vault files is. `rows` names the item in progress when it is known. */
+function sendVaultProgress(p: MoveProgress, rows: FileItem[]) {
+  const name = rows.find((r) => r.id === p.current)?.name;
+  const progress: VaultProgress = { done: p.done, total: p.total, current: name };
+  mainWindow?.webContents.send('vaultProgress', progress);
+}
+
+/** Encrypts, in the background, the files put in the Vault before it was encrypted. Interrupted runs are picked up by the next unlock. */
+function startMigration() {
+  if (migration || !vaultSession.isOpen()) return;
+  migration = mover
+    .migrateLegacy((p) => sendVaultProgress(p, []))
+    .then(() => undefined)
+    .catch(() => undefined) // a failed listing or a closed Vault: the next unlock tries again
+    .finally(() => {
+      migration = null;
+    });
+}
+
+/** After a call that opens the Vault (setup, unlock, recovery): convert the old files, without making the caller wait for it. */
+function afterOpen<T extends { ok: boolean }>(res: T): T {
+  if (res.ok) startMigration();
+  return res;
 }
 
 function registerIpc() {
@@ -287,14 +317,15 @@ function registerIpc() {
     guarded(async (): Promise<Item[]> => previews.decorate((await client().listEverything({ trash: true })).map((it) => ({ ...it, downloaded: false })))),
   );
 
-  ipcMain.handle(
-    'updateFile',
-    guarded(async (id: string, patch: { name?: string; tags?: TagColor[]; url?: string; important?: boolean }): Promise<Item> => {
-      const item = await client().update(id, patch);
-      itemCache.set(id, item);
-      if (patch.url) await previews.forget([id]); // the old picture belongs to the old address
-      return (await previews.decorate([{ ...item, downloaded: config.snapshot.downloaded.includes(id) }]))[0];
-    }),
+  const plainUpdateFile = guarded(async (id: string, patch: { name?: string; tags?: TagColor[]; url?: string; important?: boolean }): Promise<Item> => {
+    const item = await client().update(id, patch);
+    itemCache.set(id, item);
+    if (patch.url) await previews.forget([id]); // the old picture belongs to the old address
+    return (await previews.decorate([{ ...item, downloaded: config.snapshot.downloaded.includes(id) }]))[0];
+  });
+  // An encrypted item is renamed through a new encMeta (vault-ipc.ts); its plain name or address never reaches the server.
+  ipcMain.handle('updateFile', (e, id: string, patch: { name?: string; tags?: TagColor[]; url?: string; important?: boolean }) =>
+    vault.owns(id) ? vault.updateFile(id, patch) : plainUpdateFile(e, id, patch),
   );
 
   ipcMain.handle(
@@ -310,14 +341,14 @@ function registerIpc() {
     guarded(async (id: string): Promise<void> => client().stopShare(id)),
   );
 
-  ipcMain.handle(
-    'addLink',
-    guarded(async (url: string, title: string | undefined, intoVault: boolean | undefined): Promise<Item> => {
-      let item = await client().addLink({ url, title, device: DEVICE_NAME ?? undefined });
-      if (intoVault) item = await client().setVault(item.id, true);
-      itemCache.set(item.id, item);
-      return (await previews.decorate([{ ...item, downloaded: false }]))[0];
-    }),
+  const plainAddLink = guarded(async (url: string, title: string | undefined): Promise<Item> => {
+    const item = await client().addLink({ url, title, device: DEVICE_NAME ?? undefined });
+    itemCache.set(item.id, item);
+    return (await previews.decorate([{ ...item, downloaded: false }]))[0];
+  });
+  // A link for the Vault is encrypted here and uploaded as a Vault item; it is never created as a plain link first.
+  ipcMain.handle('addLink', (e, url: string, title: string | undefined, intoVault: boolean | undefined) =>
+    intoVault ? vault.addLink(url, title) : plainAddLink(e, url, title),
   );
 
   ipcMain.handle(
@@ -337,15 +368,92 @@ function registerIpc() {
   // The encrypted Vault. All of the logic is in vault-ipc.ts; these lines only route (and check the shape of what the renderer sends).
   const text = (v: unknown) => (typeof v === 'string' ? v : '');
   ipcMain.handle('vaultStatus', () => vault.vaultStatus());
-  ipcMain.handle('vaultSetup', (_e, pin: unknown) => vault.vaultSetup(text(pin)));
-  ipcMain.handle('vaultUnlock', (_e, pin: unknown) => vault.vaultUnlock(text(pin)));
-  ipcMain.handle('vaultRecover', (_e, recoveryKey: unknown, newPin: unknown) => vault.vaultRecover(text(recoveryKey), text(newPin)));
+  ipcMain.handle('vaultSetup', async (_e, pin: unknown) => afterOpen(await vault.vaultSetup(text(pin))));
+  ipcMain.handle('vaultUnlock', async (_e, pin: unknown) => afterOpen(await vault.vaultUnlock(text(pin))));
+  ipcMain.handle('vaultRecover', async (_e, recoveryKey: unknown, newPin: unknown) => afterOpen(await vault.vaultRecover(text(recoveryKey), text(newPin))));
   ipcMain.handle('vaultChangePin', (_e, oldPin: unknown, newPin: unknown) => vault.vaultChangePin(text(oldPin), text(newPin)));
   ipcMain.handle('vaultClose', () => vault.vaultClose());
   ipcMain.handle('listVault', (_e, opts?: { trash?: boolean }) => vault.listVault({ trash: opts?.trash === true }));
-  // Task 9 (vault-mover.ts) implements moving files in and out; the legacy PUT /files/:id/vault is refused (426) once the Vault is set up.
-  ipcMain.handle('vaultMoveIn', async (): Promise<Result<VaultMoveResult>> => ({ ok: false, error: 'not_supported' }));
-  ipcMain.handle('vaultMoveOut', async (): Promise<Result<VaultMoveResult>> => ({ ok: false, error: 'not_supported' }));
+
+  const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((id): id is string => typeof id === 'string' && id !== '') : []);
+  const summary = (res: { done: string[]; failed: string[] }): Result<VaultMoveResult> => ({ ok: true, value: { done: res.done.length, failed: res.failed } });
+  // Putting files in the Vault: encrypted here once the Vault is open. Before the encrypted Vault is set up the server still takes the
+  // old plain move (and refuses it afterwards), so that is the only case where the legacy request is made.
+  ipcMain.handle('vaultMoveIn', async (_e, raw: unknown): Promise<Result<VaultMoveResult>> => {
+    if (!unlocked) return { ok: false, error: 'locked' };
+    const wanted = ids(raw);
+    try {
+      const rows = wanted.map((id) => itemCache.get(id)).filter((it): it is FileItem => it !== undefined && !it.encrypted);
+      const unknown = wanted.filter((id) => !rows.some((r) => r.id === id));
+      let res: { done: string[]; failed: string[] };
+      if (vaultSession.isOpen()) {
+        res = await mover.moveIn(rows, (p) => sendVaultProgress(p, rows));
+      } else if ((await vaultSession.status()).state === 'none') {
+        res = { done: [], failed: [] };
+        for (const row of rows) {
+          try {
+            await client().setVault(row.id, true);
+            res.done.push(row.id);
+          } catch {
+            res.failed.push(row.id);
+          }
+        }
+      } else {
+        return { ok: false, error: 'vault_locked' };
+      }
+      // The Vault leaves no pictures of its links on this device.
+      await previews.forget(res.done);
+      for (const id of res.done) itemCache.delete(id);
+      return summary({ done: res.done, failed: [...res.failed, ...unknown] });
+    } catch (err) {
+      return fail(err);
+    }
+  });
+  // Taking files out reveals them, so it always needs the Vault open. Items that were put in before the Vault was encrypted (still plain
+  // here, so with no key to read) are encrypted first: the legacy request is refused once the encrypted Vault exists.
+  ipcMain.handle('vaultMoveOut', async (_e, raw: unknown): Promise<Result<VaultMoveResult>> => {
+    if (!unlocked) return { ok: false, error: 'locked' };
+    if (!vaultSession.isOpen()) return { ok: false, error: 'vault_locked' };
+    const wanted = ids(raw);
+    try {
+      const rows = new Map<string, FileItem>();
+      for (const id of wanted) {
+        const row = vault.rawItem(id);
+        if (row) rows.set(id, row);
+      }
+      const failed = new Set<string>();
+      if (rows.size < wanted.length) {
+        // Not listed through `listVault` yet in this session (or still plain): ask the server for the Vault's rows.
+        const listed = new Map((await client().listEverything({ vault: true })).map((it) => [it.id, it]));
+        const plain: FileItem[] = [];
+        for (const id of wanted) {
+          if (rows.has(id)) continue;
+          const row = listed.get(id);
+          if (!row) failed.add(id);
+          else if (row.encrypted) rows.set(id, row);
+          else plain.push(row);
+        }
+        if (plain.length) {
+          const moved = await mover.moveIn(plain);
+          for (const id of moved.failed) failed.add(id);
+          if (moved.done.length) {
+            const fresh = new Map((await client().listEverything({ vault: true })).map((it) => [it.id, it]));
+            for (const id of moved.done) {
+              const row = fresh.get(id);
+              if (row?.encrypted) rows.set(id, row);
+              else failed.add(id);
+            }
+          }
+        }
+      }
+      const todo = wanted.map((id) => rows.get(id)).filter((r): r is FileItem => r !== undefined);
+      const res = await mover.moveOut(todo, (p) => sendVaultProgress(p, []));
+      vault.forget(res.done); // plain again: the plain download, preview and rename paths apply
+      return summary({ done: res.done, failed: [...failed, ...res.failed] });
+    } catch (err) {
+      return fail(err);
+    }
+  });
 
   ipcMain.handle(
     'usage',
@@ -534,7 +642,9 @@ app.whenReady().then(() => {
     fileExists: (path) => existsSync(path) || existsSync(`${path}.part`),
     isDownloaded: (id) => config.snapshot.downloaded.includes(id),
     markDownloaded: (id) => config.markDownloaded(id),
+    device: DEVICE_NAME,
   });
+  mover = createVaultMover({ session: vaultSession, client: () => client() });
   // Decrypted Vault pictures live only in memory: never cached by Chromium (no-store) and never written to the previews folder.
   protocol.handle(VAULT_SCHEME, async (req) => {
     const res = await vault.vaultProtocol(req.url);

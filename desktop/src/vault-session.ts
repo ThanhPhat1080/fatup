@@ -41,6 +41,9 @@ export type VaultSessionDeps = {
   iterations?: number;
 };
 
+/** An item as `decryptList` shows it. `unreadable` is set only on an item whose metadata could not be opened. */
+export type ListedItem = FileItem & { unreadable?: boolean };
+
 export type VaultChangePinResult = VaultUnlockResult | VaultPinRefusal;
 
 /** Thrown by everything that needs the master key while the Vault is closed. */
@@ -212,24 +215,48 @@ export class VaultSession {
   }
 
   /**
-   * Shows encrypted items with their real name, type, kind and link; `encMeta` and `encKey` are dropped and the thumbnail
-   * points at the `fatup-vault://` scheme. Items that are not encrypted yet pass through untouched.
+   * New `encMeta` for an item whose name and/or link address changed: the old metadata is opened, patched and sealed again under the
+   * Vault key. The file key (`encKey`) and the item stay as they are, so nothing but `encMeta` goes to the server. Renaming a link sets
+   * its title, because that is the name shown for it. Rejects when the old metadata cannot be opened.
    */
-  async decryptList(items: FileItem[]): Promise<FileItem[]> {
+  async reencryptMeta(item: Pick<FileItem, 'encMeta'>, patch: { name?: string; url?: string }): Promise<string> {
+    const mk = this.#requireKey();
+    if (!item.encMeta) throw new Error('not_encrypted');
+    const meta = await decryptMeta(item.encMeta, mk);
+    const next: VaultMeta = { ...meta };
+    if (patch.name !== undefined) {
+      next.name = patch.name;
+      if (meta.kind === 'link' || meta.title) next.title = patch.name;
+    }
+    if (patch.url !== undefined) next.url = patch.url;
+    return encryptMeta(next, mk);
+  }
+
+  /**
+   * Shows encrypted items with their real name, type, kind and link; `encMeta` and `encKey` are dropped and the thumbnail
+   * points at the `fatup-vault://` scheme. Items that are not encrypted yet pass through untouched. An item whose metadata cannot
+   * be opened (damaged, or sealed under another key) is shown with an empty name and `unreadable: true`; it never hides the others.
+   */
+  async decryptList(items: FileItem[]): Promise<ListedItem[]> {
     const mk = this.#requireKey();
     return Promise.all(
-      items.map(async (item) => {
-        if (!item.encrypted || !item.encMeta) return item;
-        const meta = await decryptMeta(item.encMeta, mk);
-        const { encMeta: _meta, encKey: _key, ...rest } = item;
-        return {
-          ...rest,
-          name: meta.title || meta.name,
-          mime: meta.mime,
-          kind: meta.kind,
-          url: meta.url ?? null,
-          thumbUrl: item.thumbUrl ? `${THUMB_SCHEME}${item.id}` : null,
-        };
+      items.map(async (item): Promise<ListedItem> => {
+        if (!item.encrypted) return item;
+        const { encMeta, encKey: _key, ...rest } = item;
+        try {
+          if (!encMeta) throw new Error('no_metadata');
+          const meta = await decryptMeta(encMeta, mk);
+          return {
+            ...rest,
+            name: meta.title || meta.name,
+            mime: meta.mime,
+            kind: meta.kind,
+            url: meta.url ?? null,
+            thumbUrl: item.thumbUrl ? `${THUMB_SCHEME}${item.id}` : null,
+          };
+        } catch {
+          return { ...rest, name: '', url: null, thumbUrl: null, unreadable: true };
+        }
       }),
     );
   }

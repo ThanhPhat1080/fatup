@@ -3,7 +3,7 @@
 // Everything is decrypted here: the renderer gets names, types and decrypted bytes, never a key (MK, DEK, S), `encMeta` or `encKey`.
 // Nothing decrypted is written to disk except by `download`, which is the user's explicit request.
 import { join } from 'node:path';
-import { decryptBytes, type FileItem, type VaultStatus } from '@fatup/shared';
+import { LINK_MIME, decryptBytes, encryptBytes, normalizeUrl, vaultCiphertextSize, type FileItem, type TagColor, type VaultMeta, type VaultStatus } from '@fatup/shared';
 import type { Item, Result, VaultUnlockResult } from '../shared-ipc';
 import type { VaultChangePinResult, VaultRecoverResult, VaultSession, VaultSetupResult } from '../vault-session';
 import { ApiError, type ApiClient } from './api';
@@ -16,7 +16,8 @@ export type VaultHandlerDeps = {
   /** The one session of the main process. */
   session: VaultSession;
   /** Throws `ApiError('not_configured')` when there is no server. */
-  client(): Pick<ApiClient, 'listEverything' | 'downloadUrl'>;
+  // `addLink` is listed only so that tests can prove the plain `/links` route is never used for the Vault.
+  client(): Pick<ApiClient, 'listEverything' | 'downloadUrl' | 'update' | 'createUpload' | 'complete' | 'addLink'>;
   /** The app (PIN) lock; false = every handler refuses. */
   isUnlocked(): boolean;
   /** Where `download` saves. */
@@ -26,7 +27,9 @@ export type VaultHandlerDeps = {
   fileExists(path: string): boolean;
   isDownloaded(id: string): boolean;
   markDownloaded(id: string): void;
-  /** Presigned GETs. Default: the global `fetch`. */
+  /** Shown as the sender of items added here (a link added straight into the Vault). */
+  device?: string | null;
+  /** Presigned GETs and PUTs. Default: the global `fetch`. */
   fetchImpl?: typeof fetch;
 };
 
@@ -84,6 +87,14 @@ export function createVaultHandlers(deps: VaultHandlerDeps) {
     } catch (err) {
       return failure(err);
     }
+  }
+
+  /** Remembers an encrypted row just returned by the server and answers it as the renderer sees it. */
+  async function show(row: FileItem): Promise<Item> {
+    const [shown] = await session.decryptList([row]);
+    entries.set(row.id, { raw: row, name: shown.name, mime: shown.mime });
+    known.add(row.id);
+    return { ...shown, downloaded: deps.isDownloaded(row.id) };
   }
 
   return {
@@ -146,6 +157,81 @@ export function createVaultHandlers(deps: VaultHandlerDeps) {
     /** True for an encrypted item that `listVault` returned (even after the Vault closed). Anything else (legacy items included) is `index.ts`'s to handle. */
     owns(id: string): boolean {
       return known.has(id);
+    },
+
+    /** The raw (still encrypted) row of an item that `listVault` or this module returned, for the mover. Never answers to the renderer. */
+    rawItem(id: string): FileItem | undefined {
+      return entries.get(id)?.raw;
+    },
+
+    /** Stops treating these ids as encrypted Vault items (they were moved out and are plain again, so the plain paths apply). */
+    forget(ids: string[]): void {
+      for (const id of ids) {
+        entries.delete(id);
+        known.delete(id);
+      }
+    },
+
+    /**
+     * Renames an encrypted item or changes the address of an encrypted link: the new name/address is sealed into a new `encMeta`
+     * (the plain value is never sent). `tags` and `important` stay plain by design and travel next to it.
+     */
+    async updateFile(id: string, patch: { name?: string; url?: string; tags?: TagColor[]; important?: boolean }): Promise<Result<Item>> {
+      const found = resolve(id);
+      if (!found.ok) return found;
+      try {
+        const send: { encMeta?: string; tags?: TagColor[]; important?: boolean } = {};
+        if (patch.name !== undefined || patch.url !== undefined) send.encMeta = await session.reencryptMeta(found.entry.raw, { name: patch.name, url: patch.url });
+        if (patch.tags !== undefined) send.tags = patch.tags;
+        if (patch.important !== undefined) send.important = patch.important;
+        if (Object.keys(send).length === 0) return { ok: true, value: await show(found.entry.raw) };
+        const row = await deps.client().update(id, send);
+        // A row from an older server may lack the key; the one we already hold still opens the file.
+        return { ok: true, value: await show({ ...row, encMeta: row.encMeta ?? send.encMeta ?? found.entry.raw.encMeta, encKey: row.encKey ?? found.entry.raw.encKey }) };
+      } catch (err) {
+        return failure(err);
+      }
+    },
+
+    /**
+     * Adds a link straight into the Vault, never as a plain link first: an upload whose metadata is `{ kind: 'link', url, title }`
+     * and whose content is the ciphertext of 0 bytes. The server cannot read, preview or de-duplicate it.
+     */
+    async addLink(rawUrl: string, title?: string): Promise<Result<Item>> {
+      if (!deps.isUnlocked()) return { ok: false, error: 'locked' };
+      if (!session.isOpen()) return { ok: false, error: 'vault_locked' };
+      try {
+        const url = normalizeUrl(rawUrl);
+        if (!url) return { ok: false, error: 'bad_url' };
+        const label = title?.trim().slice(0, 200) ?? '';
+        const meta: VaultMeta = { kind: 'link', url, title: label || null, name: label || new URL(url).hostname, mime: LINK_MIME };
+        const { encMeta, encKey, dek } = await session.encryptMetaFor(meta);
+        const body = await encryptBytes(new Uint8Array(), dek);
+        const ticket = await deps.client().createUpload({
+          name: '',
+          mime: 'application/octet-stream',
+          size: vaultCiphertextSize(0),
+          hasThumb: false,
+          device: deps.device ?? undefined,
+          vault: { encMeta, encKey },
+        });
+        let res: Response;
+        try {
+          res = await fetchImpl(ticket.uploadUrl, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(body.length) },
+            body,
+            signal: AbortSignal.timeout(60_000),
+          });
+        } catch (err) {
+          throw new ApiError('network', (err as Error).message);
+        }
+        if (!res.ok) throw new ApiError('upload_failed', `HTTP ${res.status}`, res.status);
+        const row = await deps.client().complete(ticket.id);
+        return { ok: true, value: await show({ ...row, encMeta: row.encMeta ?? encMeta, encKey: row.encKey ?? encKey }) };
+      } catch (err) {
+        return failure(err);
+      }
     },
 
     fileBytes: plainBytes,

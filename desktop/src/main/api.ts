@@ -131,7 +131,8 @@ export class ApiClient {
     return this.request(`/uploads/${encodeURIComponent(id)}/complete`, { method: 'POST' });
   }
 
-  update(id: string, patch: { name?: string; tags?: TagColor[]; url?: string; important?: boolean }): Promise<FileItem> {
+  /** `encMeta` is the only way to rename or re-address an encrypted item; its plain `name` / `url` are refused. */
+  update(id: string, patch: { name?: string; tags?: TagColor[]; url?: string; important?: boolean; encMeta?: string }): Promise<FileItem> {
     return this.request(`/files/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
 

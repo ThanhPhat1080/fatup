@@ -27,7 +27,8 @@ export type AppState = {
 
 export type Usage = UsageResponse;
 
-export type Item = FileItem & { downloaded: boolean };
+/** `unreadable`: a Vault item whose metadata could not be decrypted (shown with an empty name; see `VaultSession.decryptList`). */
+export type Item = FileItem & { downloaded: boolean; unreadable?: boolean };
 
 export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string; detail?: string };
 
