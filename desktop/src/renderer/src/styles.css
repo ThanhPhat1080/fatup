@@ -3075,8 +3075,32 @@ body {
   .list__name {
     gap: 8px;
   }
-  .vault-state,
-  .vault-state svg {
+  /* On a phone the Vault's state icon sits on the corner of the thumbnail (like a sync badge) instead of taking width from the name. */
+  .list__name {
+    position: relative;
+  }
+  .list__name .vault-state {
+    position: absolute;
+    left: 14px;
+    bottom: -4px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--panel);
+  }
+  .list__name .vault-state svg {
+    width: 14px;
+    height: 14px;
+  }
+  /* The dimmed look belongs to the cloud only, so the badge background stays solid. */
+  .list__name .vault-state--pending {
+    opacity: 1;
+  }
+  .list__name .vault-state--pending svg {
+    opacity: 0.6;
+  }
+  .tile__head .vault-state,
+  .tile__head .vault-state svg {
     width: 16px;
     height: 16px;
   }
