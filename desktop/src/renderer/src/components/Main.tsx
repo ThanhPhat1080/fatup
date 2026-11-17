@@ -752,7 +752,10 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       <>
         <VaultIcon size={22} />
         {t.vault}
-        <span className="vault-label">{t.vaultEncryptedBadge}</span>
+        {/* The string starts with the lock icon and one space: the icon gets its own gap, so it never runs into the label. */}
+        <span className="vault-label">
+          <span className="vault-label__icon">{t.vaultEncryptedBadge.split(' ')[0]}</span> {t.vaultEncryptedBadge.slice(t.vaultEncryptedBadge.indexOf(' ') + 1)}
+        </span>
         {tab !== 'all' && <span className="view-title__sub">· {tabLabel}</span>}
         {filterTags}
       </>

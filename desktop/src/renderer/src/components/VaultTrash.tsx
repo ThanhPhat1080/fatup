@@ -111,7 +111,7 @@ export function VaultTrash({ onClose, onChanged, onLocked }: Props) {
         </header>
 
         <div className="vault-trash__bar">
-          <span className="muted">{items === null ? '' : `${count}`}</span>
+          <span className="muted">{items === null ? '' : t.vaultTrashCount({ n: count })}</span>
           <button className="btn btn--text btn--danger-text" disabled={busy || count === 0} onClick={() => setConfirmEmpty(true)}>
             <Trash2 size={18} /> {t.vaultTrashEmpty}
           </button>
@@ -151,14 +151,17 @@ export function VaultTrash({ onClose, onChanged, onLocked }: Props) {
       </aside>
 
       {confirmEmpty && (
-        <ConfirmDialog
-          title={t.vaultTrashEmptyAll}
-          body={t.vaultTrashEmptyBody}
-          confirmLabel={t.vaultTrashConfirmEmpty}
-          danger
-          onCancel={() => setConfirmEmpty(false)}
-          onConfirm={emptyAll}
-        />
+        // The wrapper lets the CSS lift this dialog above the sidebar (see `.vault-trash-confirm` in styles.css).
+        <div className="vault-trash-confirm">
+          <ConfirmDialog
+            title={t.vaultTrashEmptyAll}
+            body={t.vaultTrashEmptyBody}
+            confirmLabel={t.vaultTrashConfirmEmpty}
+            danger
+            onCancel={() => setConfirmEmpty(false)}
+            onConfirm={emptyAll}
+          />
+        </div>
       )}
     </>
   );

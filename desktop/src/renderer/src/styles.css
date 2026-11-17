@@ -4015,8 +4015,12 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 18px;
   letter-spacing: 0.06em;
-  word-break: break-all;
+  text-align: center;
   user-select: text;
+}
+.vault-key__group {
+  display: inline-block;
+  white-space: nowrap;
 }
 .vault-confirm {
   display: flex;
@@ -4075,6 +4079,9 @@ body {
   font-weight: 600;
   white-space: nowrap;
 }
+.vault-label__icon {
+  margin-right: 4px;
+}
 .vault-badge {
   display: inline-flex;
   align-items: center;
@@ -4095,12 +4102,16 @@ body {
   background: var(--hover);
 }
 
+/* Stacking: the upload panel is z 30, so the trash sits above it (scrim 31, sidebar 32). The Empty confirmation opened from the sidebar sits above that (33). */
 /* The dimmed backdrop behind the sidebar: a click outside closes it. Hidden on phones, where the trash is a full page. */
 .vault-trash-scrim {
   position: fixed;
   inset: 0;
-  z-index: 19;
+  z-index: 31;
   background: var(--scrim);
+}
+.vault-trash-confirm .scrim {
+  z-index: 33;
 }
 @media (max-width: 720px) {
   .vault-trash-scrim {
@@ -4112,7 +4123,7 @@ body {
   position: fixed;
   inset: 0 0 0 auto;
   width: 70%;
-  z-index: 20;
+  z-index: 32;
   display: flex;
   flex-direction: column;
   min-height: 0;

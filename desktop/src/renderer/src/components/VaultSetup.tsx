@@ -105,7 +105,13 @@ export function VaultSetup({ onDone, onBack }: Props) {
       <VaultFrame title={t.vaultRecoveryTitle}>
         <p className="vault-card__text">{t.vaultRecoveryWarn}</p>
         <code className="vault-key" aria-label={t.vaultRecoveryTitle}>
-          {state.recoveryKey}
+          {/* Each group keeps its dash, and a group never splits: the key wraps only between groups. The text is still the exact key. */}
+          {(state.recoveryKey ?? '').split('-').map((group, i, all) => (
+            <span className="vault-key__group" key={i}>
+              {group}
+              {i < all.length - 1 ? '-' : ''}
+            </span>
+          ))}
         </code>
         <button className="btn btn--outlined" onClick={copyKey}>
           <Copy size={16} /> {copied ? t.vaultRecoveryCopied : t.vaultRecoveryCopy}
