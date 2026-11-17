@@ -7,9 +7,11 @@ type Props = {
   errorKey?: number;
   label: string;
   autoFocus?: boolean;
+  /** Number of digits; the app PIN is 4, the Vault PIN 6. */
+  length?: number;
 };
 
-export function PinInput({ onComplete, disabled, errorKey = 0, label, autoFocus = true }: Props) {
+export function PinInput({ onComplete, disabled, errorKey = 0, label, autoFocus = true, length = 4 }: Props) {
   const [value, setValue] = useState('');
   const ref = useRef<HTMLInputElement>(null);
 
@@ -19,9 +21,9 @@ export function PinInput({ onComplete, disabled, errorKey = 0, label, autoFocus 
   }, [errorKey, disabled]);
 
   return (
-    <div className="pin" onClick={() => ref.current?.focus()}>
+    <div className={`pin${length > 4 ? ' pin--long' : ''}`} onClick={() => ref.current?.focus()}>
       <div key={errorKey} className={`pin__cells ${errorKey ? 'pin--shake' : ''}`}>
-        {[0, 1, 2, 3].map((i) => (
+        {Array.from({ length }, (_, i) => (
           <span key={i} className={`pin__cell ${i < value.length ? 'pin__cell--filled' : ''} ${i === value.length ? 'pin__cell--active' : ''}`} />
         ))}
       </div>
@@ -34,10 +36,10 @@ export function PinInput({ onComplete, disabled, errorKey = 0, label, autoFocus 
         autoFocus={autoFocus}
         disabled={disabled}
         value={value}
-        maxLength={4}
+        maxLength={length}
         onChange={(e) => {
-          const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
-          if (digits.length === 4) {
+          const digits = e.target.value.replace(/\D/g, '').slice(0, length);
+          if (digits.length === length) {
             setValue('');
             onComplete(digits);
           } else {

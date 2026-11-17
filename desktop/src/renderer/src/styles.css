@@ -366,6 +366,14 @@ h2 {
   border-radius: 50%;
   background: var(--text);
 }
+/* Six digits: narrower cells so the row fits a phone. */
+.pin--long .pin__cells {
+  gap: 10px;
+}
+.pin--long .pin__cell {
+  width: 44px;
+  height: 52px;
+}
 .pin__input {
   position: absolute;
   inset: 0;
@@ -3955,4 +3963,86 @@ body {
 .col-actions__slot {
   flex: none;
   width: 32px;
+}
+
+/* ---------- Vault setup, recovery and PIN change (dark frame, like the gate) ---------- */
+.vault-card {
+  width: min(420px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+  color: #eceef3;
+}
+.vault-card__title {
+  font-size: 22px;
+  font-weight: 500;
+  margin: 0;
+  color: #f4f5f8;
+}
+.vault-card__text {
+  margin: 0;
+  line-height: 1.5;
+  color: #c9ccd4;
+}
+.vault-card__action {
+  align-self: center;
+  min-height: 44px;
+  padding: 0 24px;
+}
+.vault-card__back {
+  align-self: center;
+  min-height: 40px;
+}
+/* The recovery key is shown once, selectable, in a monospace block. */
+.vault-key {
+  display: block;
+  padding: 14px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  word-break: break-all;
+  user-select: text;
+}
+.vault-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+}
+.vault-confirm__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  font-size: 14px;
+  color: #c9ccd4;
+}
+.vault-confirm__input {
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f4f5f8;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase;
+}
+.vault-progress {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+.vault-progress span {
+  display: block;
+  height: 100%;
+  background: #a8c7fa;
+  transition: width 0.2s;
 }

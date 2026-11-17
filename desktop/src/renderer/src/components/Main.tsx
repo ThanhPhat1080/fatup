@@ -21,6 +21,8 @@ import { VaultIcon } from './VaultIcon';
 import { TrashIcon } from './TrashIcon';
 import { InfoPopover } from './InfoPopover';
 import { VaultGate } from './VaultGate';
+import { VaultSetup } from './VaultSetup';
+import { VaultRecover } from './VaultRecover';
 import { StorageMeter } from './StorageMeter';
 import { SiteFilterBar } from './SiteFilterBar';
 import { EditPopover, LinkEditPopover, TagFilter } from './Tags';
@@ -67,6 +69,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const [inVault, setInVault] = useState(false);
   const [vaultUnlocked, setVaultUnlocked] = useState(false);
   const [vaultItems, setVaultItems] = useState<Item[] | null>(null);
+  const [vaultFlow, setVaultFlow] = useState<'setup' | 'recover' | null>(null); // the Vault's setup or recovery screen, over the list
   const [shiver, setShiver] = useState(0);
   const [trashKick, setTrashKick] = useState(0); // bumped when the trash opens, to replay its lid animation
   const [trashInfoOpen, setTrashInfoOpen] = useState(false);
@@ -263,12 +266,31 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const toggleVault = () => {
     setShiver((n) => n + 1);
     if (inVault) leaveVault();
-    else {
-      setInTrash(false);
-      setInVault(true);
-      setTab('all'); // the Vault opens on everything in it, whatever kind was toggled outside
-    }
+    else void openVault();
     clearSelection();
+  };
+  /** Opens the Vault's gate when it is ready; the setup or recovery screen when it is not set up yet, or was wiped. */
+  async function openVault() {
+    const status = await window.fatup.vaultStatus();
+    if (!status.ok) return setError(errorText(t, status.error));
+    if (status.value.state === 'none') return setVaultFlow('setup');
+    if (status.value.state === 'wiped') return setVaultFlow('recover');
+    setInTrash(false);
+    setInVault(true);
+    setTab('all'); // the Vault opens on everything in it, whatever kind was toggled outside
+  }
+  /** Setup or recovery is done: the Vault is open already, so the list shows it straight away. */
+  const vaultFlowDone = () => {
+    setVaultFlow(null);
+    setInTrash(false);
+    setInVault(true);
+    setVaultUnlocked(true);
+    setTab('all');
+  };
+  /** Turns from the gate or Settings to the recovery screen: the Vault closes first. */
+  const recoverVault = () => {
+    leaveVault();
+    setVaultFlow('recover');
   };
 
   /** Runs `fn` over the targets four at a time; returns the ids that succeeded. "Already gone" counts as success. */
@@ -637,7 +659,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) && (e.target as HTMLInputElement).type !== 'checkbox';
-      const overlay = lightboxId || linkPreviewId || pdfId || settingsOpen || menu || confirm || (inVault && !vaultUnlocked);
+      const overlay = lightboxId || linkPreviewId || pdfId || settingsOpen || menu || confirm || vaultFlow || (inVault && !vaultUnlocked);
       if (typing || overlay) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault();
@@ -651,7 +673,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lightboxId, linkPreviewId, pdfId, settingsOpen, menu, confirm, picked, inTrash, inVault, vaultUnlocked, selectAll, clearSelection]);
+  }, [lightboxId, linkPreviewId, pdfId, settingsOpen, menu, confirm, picked, inTrash, inVault, vaultUnlocked, vaultFlow, selectAll, clearSelection]);
 
   // Trashed files can't be opened; restore them first.
   // Links open in the in-app preview; Ctrl/⌘ + click, or a site the person chose to always open directly, goes straight outside.
@@ -771,8 +793,12 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       </header>
 
       <main className="panel">
-        {inVault && !vaultUnlocked ? (
-          <VaultGate onUnlocked={() => setVaultUnlocked(true)} onBack={leaveVault} />
+        {vaultFlow === 'setup' ? (
+          <VaultSetup onDone={vaultFlowDone} onBack={() => setVaultFlow(null)} />
+        ) : vaultFlow === 'recover' ? (
+          <VaultRecover onDone={vaultFlowDone} onBack={() => setVaultFlow(null)} />
+        ) : inVault && !vaultUnlocked ? (
+          <VaultGate onUnlocked={() => setVaultUnlocked(true)} onBack={leaveVault} onRecover={recoverVault} />
         ) : (
           <>
         {picked.length > 0 ? (
@@ -1056,6 +1082,10 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           onSignOut={async () => {
             await window.fatup.reset();
             onLocked();
+          }}
+          onVaultRecover={() => {
+            setSettingsOpen(false);
+            recoverVault();
           }}
         />
       )}
