@@ -831,7 +831,7 @@ describe('web Vault: moving in and out', () => {
     w.addPlain('A', { name: 'Hợp đồng.pdf', mime: 'application/pdf', kind: 'file' }, PDF);
     expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
 
-    const put = w.puts.find((p) => p.url === `${R2}/put/vault/A`)!;
+    const put = w.puts.find((p) => p.url === `${R2}/put/vault/A.${w.attempt('A')}`)!;
     expect(dec(put.body.subarray(0, 4))).toBe('FUV1');
     expect(put.body.length).toBe(vaultCiphertextSize(PDF.length));
     const [{ req }] = w.completesIn;

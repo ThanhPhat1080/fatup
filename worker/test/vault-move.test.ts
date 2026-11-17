@@ -496,7 +496,8 @@ describe('POST /files/:id/vault/in/complete', () => {
     const abandoned = await stage(id, { thumb: true });
     const attempt = await stage(id);
     expect((await completeIn(id, inBody({ attempt }))).status).toBe(200);
-    expect((await vaultObjects()).sort()).toEqual([`vault/${id}.${abandoned}`, `vault/${id}.${abandoned}.thumb`, `vault/${id}.${attempt}`]);
+    // Attempt names are random, so compare both sides sorted.
+    expect((await vaultObjects()).sort()).toEqual([`vault/${id}.${abandoned}`, `vault/${id}.${abandoned}.thumb`, `vault/${id}.${attempt}`].sort());
   });
 
   it('kills the share link of the file', async () => {
