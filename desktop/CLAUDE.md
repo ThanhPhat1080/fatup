@@ -25,7 +25,7 @@ Spec: `docs/spec/desktop-ui.md` (màn hình, liên kết, chia sẻ, lightbox, u
 | `src/renderer/src/lib/i18n.ts` | từ điển `en` và `vi` |
 | `e2e/smoke.mjs` | runner E2E: chạy các vùng trong `e2e/areas/`, mỗi vùng một mock server + profile riêng |
 | `e2e/harness.mjs` | phần dùng chung: `createHarness`, `launch`, `launchReady` (setup nhanh, PIN 1234), `log` (watchdog), `shot`, `kind`, `showAll`, `typePin` |
-| `e2e/areas/*.mjs` | các vùng E2E: `setup` (lần đầu + màn khóa), `files`, `share`, `links`, `settings` |
+| `e2e/areas/*.mjs` | các vùng E2E: `setup` (lần đầu + màn khóa), `files`, `share`, `links`, `settings`, `vault` (két sắt: thiết lập + recovery key, upload, thùng rác của két, khóa sai PIN) |
 | `e2e/lock-phone.mjs`, `e2e/mock-server.mjs` | màn khóa trên khung điện thoại; API giả dùng chung |
 
 ## Test
@@ -33,7 +33,7 @@ Spec: `docs/spec/desktop-ui.md` (màn hình, liên kết, chia sẻ, lightbox, u
 - Unit: `npm test -w @fatup/desktop` (vitest, `test/*.test.ts`). Logic giao diện được test qua hàm thuần trong `lib/` — đặt logic mới ở đó, không đặt trong component, để test được. `test/uploader.test.ts` chạy một HTTP server giả.
 - E2E: `npm run e2e` chạy mọi vùng; `npm run e2e -- links share` (hoặc `E2E_ONLY=links,share`) chỉ chạy các vùng đó; đã build rồi thì `node e2e/smoke.mjs links` (trong `desktop/`) để bỏ bước build. `npm run e2e:lock -w @fatup/desktop` cho màn khóa trên điện thoại. Cần màn hình (CI bọc bằng `xvfb-run`). `SCREENSHOT_DIR=…` lưu ảnh chụp (lỗi thì có `failure-<vùng>.png`); `E2E_VERBOSE=1` in từng bước.
   - Mỗi vùng bắt đầu từ trạng thái sạch (mock server, profile, thư mục tải về riêng), nên không phụ thuộc thứ tự. Thêm vùng mới: tạo `e2e/areas/<tên>.mjs` export `run(h)`, rồi thêm vào `AREAS` trong `smoke.mjs`.
-  - Thêm kiểm tra cho một tính năng: đặt vào vùng của tính năng đó, bắt đầu bằng `h.launchReady()`. API giả là `e2e/mock-server.mjs` — thêm route/dữ liệu vào đó khi cần (`test/e2e-mock.test.ts` kiểm tra dữ liệu giả).
+  - Thêm kiểm tra cho một tính năng: đặt vào vùng của tính năng đó, bắt đầu bằng `h.launchReady()`. API giả là `e2e/mock-server.mjs` — thêm route/dữ liệu vào đó khi cần (`test/e2e-mock.test.ts` kiểm tra dữ liệu giả và các route két). Két sắt trong API giả giữ bản mã như client gửi, không giải mã; thời gian khóa rút ngắn bằng `E2E_VAULT_LOCK_SCALE` (mặc định 1).
 - Chưa có test render component. Với thay đổi về hình ảnh/tương tác, kiểm tra bằng agent `e2e-verifier` hoặc bằng tay, và nói rõ đã dùng cách nào.
 - Khi cần verify lại code khi fix bug, implement feature, chỉ cần chạy E2E những khu vực liên quan (`npm run e2e -- <vùng>`), không chạy lại toàn bộ. Chỉ chạy lại toàn bộ trước khi tạo PR.
 
