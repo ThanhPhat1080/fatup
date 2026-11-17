@@ -1,6 +1,8 @@
 import type { Context, Hono } from 'hono';
 import {
+  VAULT_HEADER,
   VAULT_LOCK_RULES,
+  VAULT_PROTOCOL_VERSION,
   VAULT_WIPE_AT,
   type VaultPinRequest,
   type VaultRecoverRequest,
@@ -68,6 +70,21 @@ async function readBody(c: Ctx): Promise<Record<string, unknown> | null> {
     return null;
   }
 }
+
+export type VaultState = 'none' | 'ready' | 'wiped';
+
+/** `none` before setup, `wiped` once the PIN hash is gone (too many wrong PINs), otherwise `ready`. */
+export async function vaultState(db: D1Database): Promise<VaultState> {
+  const row = await db.prepare('SELECT auth_hash FROM vault_keys WHERE id = 1').first<{ auth_hash: string | null }>();
+  if (!row) return 'none';
+  return row.auth_hash === null ? 'wiped' : 'ready';
+}
+
+/** Whether the client announced that it knows the encrypted Vault (apps that predate it never send the header). */
+export const speaksVault = (c: Context) => c.req.header(VAULT_HEADER) === VAULT_PROTOCOL_VERSION;
+
+/** What a client that predates the encrypted Vault gets once a Vault exists. */
+export const appOutdated = (c: Context) => fail(c, 426, 'app_outdated', 'Update the app to use the Vault');
 
 const readRow = (c: Ctx) => c.env.DB.prepare('SELECT * FROM vault_keys WHERE id = 1').first<VaultRow>();
 

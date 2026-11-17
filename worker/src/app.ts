@@ -11,6 +11,7 @@ import {
   type UsageResponse,
   kindFromMime,
   LINK_MIME,
+  vaultCiphertextSize,
   MAX_URL_LENGTH,
   normalizeUrl,
   siteOf,
@@ -28,10 +29,10 @@ import {
 import { purge } from './cleanup';
 import { checkFrame, fetchPreview } from './preview';
 import type { Env } from './env';
-import { createPresigner, fileKey, thumbKey, vaultThumbKey, type Presigner } from './presign';
+import { createPresigner, fileKey, objectKeys, thumbKey, vaultFileKey, vaultThumbKey, type Presigner } from './presign';
 import { createShareRoutes } from './share-public';
 import { isUlid, ulid } from './ulid';
-import { registerVaultRoutes } from './vault';
+import { appOutdated, registerVaultRoutes, speaksVault, vaultState } from './vault';
 
 type Row = {
   id: string;
@@ -72,7 +73,7 @@ export type AppOptions = {
   fetch?: typeof fetch;
 };
 
-export function fail(c: Context, status: 400 | 401 | 403 | 404 | 409 | 410 | 413, code: string, message: string) {
+export function fail(c: Context, status: 400 | 401 | 403 | 404 | 409 | 410 | 413 | 426, code: string, message: string) {
   return c.json({ error: { code, message } }, status);
 }
 
@@ -143,6 +144,8 @@ async function toItem(row: Row, presigner: Presigner, shared = false): Promise<F
     encKey: row.encrypted === 1 ? row.enc_key : null,
   };
 }
+
+const isEncText = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -217,13 +220,40 @@ export function createApp(options: AppOptions = {}) {
       return fail(c, 400, 'bad_request', 'name, mime and size are required');
     }
     if (!Number.isInteger(size) || size < 0) return fail(c, 400, 'bad_request', 'Invalid size');
-    if (size > MAX_FILE_SIZE) return fail(c, 413, 'too_large', `Files are limited to ${MAX_FILE_SIZE} bytes`);
+
+    // An upload straight into the encrypted Vault: `size` is the ciphertext size, and the name, type and thumbnail kind stay in encMeta.
+    const vault = body.vault ?? null;
+    if (vault !== null && !(isEncText((vault as { encMeta?: unknown }).encMeta) && isEncText((vault as { encKey?: unknown }).encKey))) {
+      return fail(c, 400, 'bad_request', 'vault.encMeta and vault.encKey must be non-empty strings');
+    }
+    if (vault && (await vaultState(c.env.DB)) !== 'ready') return fail(c, 409, 'vault_not_ready', 'The Vault is not ready');
+    const maxSize = vault ? vaultCiphertextSize(MAX_FILE_SIZE) : MAX_FILE_SIZE;
+    if (size > maxSize) return fail(c, 413, 'too_large', `Files are limited to ${maxSize} bytes`);
+
+    const id = ulid();
+    const now = Date.now();
+    const presigner = c.get('presigner');
+
+    if (vault) {
+      const withThumb = hasThumb === true;
+      // No plaintext metadata is stored for an encrypted row, not even the device name.
+      await c.env.DB.prepare(
+        `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, device, created_at, in_vault, encrypted, enc_meta, enc_key)
+         VALUES (?, '', 'application/octet-stream', ?, 'file', ?, 'pending', NULL, ?, 1, 1, ?, ?)`,
+      )
+        .bind(id, size, withThumb ? 1 : 0, now, vault.encMeta, vault.encKey)
+        .run();
+      const res: CreateUploadResponse = {
+        id,
+        uploadUrl: await presigner.put(vaultFileKey(id)),
+        thumbUploadUrl: withThumb ? await presigner.put(vaultThumbKey(id)) : null,
+      };
+      return c.json(res, 201);
+    }
 
     const cleanMime = /^[\w.+-]+\/[\w.+-]+$/.test(mime) ? mime.toLowerCase() : 'application/octet-stream';
     const kind = kindFromMime(cleanMime);
     const withThumb = hasThumb === true && kind === 'image';
-    const id = ulid();
-    const now = Date.now();
 
     await c.env.DB.prepare(
       `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, device, created_at)
@@ -232,7 +262,6 @@ export function createApp(options: AppOptions = {}) {
       .bind(id, sanitizeName(name), cleanMime, size, kind, withThumb ? 1 : 0, typeof device === 'string' ? device.slice(0, 64) : null, now)
       .run();
 
-    const presigner = c.get('presigner');
     const res: CreateUploadResponse = {
       id,
       uploadUrl: await presigner.put(fileKey(id)),
@@ -248,14 +277,15 @@ export function createApp(options: AppOptions = {}) {
     if (!row) return fail(c, 404, 'not_found', 'Upload not found');
     if (row.status === 'ready') return c.json(await itemOf(c, row));
 
-    const object = await c.env.BUCKET.head(fileKey(id));
+    const [objectKey, thumbObjectKey] = objectKeys(row);
+    const object = await c.env.BUCKET.head(objectKey);
     if (!object) return fail(c, 409, 'not_uploaded', 'File has not been uploaded yet');
     if (object.size !== row.size) {
-      await c.env.BUCKET.delete([fileKey(id), thumbKey(id)]);
+      await c.env.BUCKET.delete([objectKey, thumbObjectKey]);
       await c.env.DB.prepare('DELETE FROM files WHERE id = ?').bind(id).run();
       return fail(c, 409, 'size_mismatch', 'Uploaded size does not match');
     }
-    const hasThumb = row.has_thumb ? (await c.env.BUCKET.head(thumbKey(id))) !== null : false;
+    const hasThumb = row.has_thumb ? (await c.env.BUCKET.head(thumbObjectKey)) !== null : false;
     const now = Date.now();
     await c.env.DB.prepare(`UPDATE files SET status = 'ready', has_thumb = ?, created_at = ? WHERE id = ?`)
       .bind(hasThumb ? 1 : 0, now, id)
@@ -314,9 +344,10 @@ export function createApp(options: AppOptions = {}) {
   // having tried: each client keeps its own copy of the picture and asks again only when it has none.
   app.post('/links/:id/preview', async (c) => {
     const id = c.req.param('id');
-    const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND kind = 'link' AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
-    if (!row || !row.url) return fail(c, 404, 'not_found', 'Link not found');
-    const presigner = c.get('presigner');
+    const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
+    // An encrypted row keeps its address inside enc_meta: the server has nothing to fetch, and must not be tricked into guessing.
+    if (row?.encrypted === 1) return fail(c, 409, 'encrypted', 'Encrypted items have no server-side preview');
+    if (!row || row.kind !== 'link' || !row.url) return fail(c, 404, 'not_found', 'Link not found');
 
     const found = await fetchPreview(row.url, options.fetch);
     const next: Row = { ...row, previewed_at: Date.now(), icon_url: found.iconUrl ?? row.icon_url ?? null };
@@ -341,11 +372,13 @@ export function createApp(options: AppOptions = {}) {
     const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? Math.floor(limitRaw) : DEFAULT_PAGE_SIZE, 1), MAX_PAGE_SIZE);
 
     const trash = c.req.query('trash') === '1';
+    const vault = c.req.query('vault') === '1';
+    // Once a Vault exists, an app that does not send the version header would list it without being able to open it.
+    if (vault && !speaksVault(c) && (await vaultState(c.env.DB)) !== 'none') return appOutdated(c);
     // The trash is ordered by when files were deleted, the normal list by when they were uploaded.
     const sortCol = trash ? 'deleted_at' : 'created_at';
-    // The Vault is a separate list; trashed files are shown together because deleting a file takes it out of the Vault.
-    const vault = c.req.query('vault') === '1';
-    const where = [`status = 'ready'`, trash ? 'deleted_at IS NOT NULL' : `deleted_at IS NULL AND in_vault = ${vault ? 1 : 0}`];
+    // The Vault is a separate list with its own trash: deleting a Vault item keeps it in the Vault.
+    const where = [`status = 'ready'`, `${trash ? 'deleted_at IS NOT NULL' : 'deleted_at IS NULL'} AND in_vault = ${vault ? 1 : 0}`];
     const params: unknown[] = [];
     // Links are only returned when asked for (or in the trash), so clients that predate them never see one.
     if (kind === 'all') {
@@ -382,7 +415,8 @@ export function createApp(options: AppOptions = {}) {
     const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
     if (!row) return fail(c, 404, 'not_found', 'File not found');
     if (row.kind === 'link') return fail(c, 400, 'not_a_file', 'Links have nothing to download');
-    const url = await c.get('presigner').get(fileKey(id), { filename: row.name, contentType: row.mime });
+    // An encrypted row has no readable name or type; the client decrypts and names the file itself.
+    const url = row.encrypted === 1 ? await c.get('presigner').get(vaultFileKey(id)) : await c.get('presigner').get(fileKey(id), { filename: row.name, contentType: row.mime });
     return c.json({ url });
   });
 
@@ -394,7 +428,7 @@ export function createApp(options: AppOptions = {}) {
     if (row.status === 'pending') {
       await purge(c.env, [id]);
     } else {
-      await c.env.DB.prepare('UPDATE files SET deleted_at = ?, in_vault = 0 WHERE id = ? AND deleted_at IS NULL').bind(Date.now(), id).run();
+      await c.env.DB.prepare('UPDATE files SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL').bind(Date.now(), id).run();
     }
     return c.body(null, 204);
   });
@@ -402,15 +436,16 @@ export function createApp(options: AppOptions = {}) {
   // Updates a file's display name, colour tags and/or important marker, and for links also the address. The R2 objects are keyed by id, so a rename never touches them.
   app.patch('/files/:id', async (c) => {
     const id = c.req.param('id');
-    let body: { name?: unknown; tags?: unknown; url?: unknown; important?: unknown };
+    let body: { name?: unknown; tags?: unknown; url?: unknown; important?: unknown; encMeta?: unknown };
     try {
       body = await c.req.json();
     } catch {
       return fail(c, 400, 'bad_request', 'Body must be JSON');
     }
-    if (body.name === undefined && body.tags === undefined && body.url === undefined && body.important === undefined) {
-      return fail(c, 400, 'bad_request', 'Provide name, tags, url and/or important');
+    if (body.name === undefined && body.tags === undefined && body.url === undefined && body.important === undefined && body.encMeta === undefined) {
+      return fail(c, 400, 'bad_request', 'Provide name, tags, url, important and/or encMeta');
     }
+    if (body.encMeta !== undefined && !isEncText(body.encMeta)) return fail(c, 400, 'bad_request', 'encMeta must be a non-empty string');
     if (body.important !== undefined && typeof body.important !== 'boolean') return fail(c, 400, 'bad_request', 'important must be true or false');
     if (body.name !== undefined) {
       if (typeof body.name !== 'string' || body.name.trim() === '') return fail(c, 400, 'bad_request', 'name must be a non-empty string');
@@ -419,8 +454,12 @@ export function createApp(options: AppOptions = {}) {
     if (body.tags !== undefined && !isTagList(body.tags)) return fail(c, 400, 'bad_request', `tags must be at most ${MAX_TAGS} distinct colours`);
     const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
     if (!row) return fail(c, 404, 'not_found', 'File not found');
+    // The name and address of an encrypted item live in enc_meta, which only the client can rewrite.
+    if (row.encrypted === 1 && (body.name !== undefined || body.url !== undefined)) return fail(c, 409, 'encrypted', 'Send encMeta instead of a plain name or url');
+    if (row.encrypted !== 1 && body.encMeta !== undefined) return fail(c, 400, 'bad_request', 'Only encrypted items have encMeta');
 
     let next: Row = { ...row };
+    if (typeof body.encMeta === 'string') next.enc_meta = body.encMeta;
     if (typeof body.name === 'string') {
       next.name = row.kind === 'link' ? sanitizeTitle(body.name) || row.name : sanitizeName(body.name);
       if (row.kind === 'link') next.title_set = 1;
@@ -441,14 +480,16 @@ export function createApp(options: AppOptions = {}) {
         if (!next.title_set) next.name = hostOf(url);
       }
     }
-    await c.env.DB.prepare('UPDATE files SET name = ?, tags = ?, url = ?, has_thumb = ?, previewed_at = ?, title_set = ?, icon_url = ?, important = ? WHERE id = ?')
-      .bind(next.name, next.tags, next.url, next.has_thumb, next.previewed_at, next.title_set, next.icon_url, next.important, id)
+    await c.env.DB.prepare('UPDATE files SET name = ?, tags = ?, url = ?, has_thumb = ?, previewed_at = ?, title_set = ?, icon_url = ?, important = ?, enc_meta = ? WHERE id = ?')
+      .bind(next.name, next.tags, next.url, next.has_thumb, next.previewed_at, next.title_set, next.icon_url, next.important, next.enc_meta, id)
       .run();
     return c.json(await itemOf(c, next));
   });
 
   // Moves a file into or out of the Vault.
+  // Once a Vault exists, the move goes through the encrypting endpoints, so an app that still sends this one is told to update.
   app.put('/files/:id/vault', async (c) => {
+    if ((await vaultState(c.env.DB)) !== 'none') return appOutdated(c);
     const id = c.req.param('id');
     let body: { inVault?: unknown };
     try {
