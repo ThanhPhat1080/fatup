@@ -161,7 +161,7 @@ Review độc lập tìm ra các lỗi sau; cách sửa dưới đây là một 
 - **Đóng két trong lúc đang mở (I3):** `VaultSession` có bộ đếm thế hệ; `close()` tăng nó, và các thao tác mở chỉ giữ khóa nếu thế hệ không đổi.
 - **Chuỗi lỗi (I4):** mọi mã lỗi mới có chuỗi `en`/`vi` riêng.
 
-### 4.7c Sửa sau review lần hai (2026-11-17)
+### 4.7c (ĐÃ BỊ THAY bởi 4.7d) Sửa sau review lần hai (2026-11-17)
 
 Presigned URL ghi lên R2 không thu hồi được và sống 15 phút, nên chỉ so ETag lúc `complete` (4.7b) không đủ: máy B vẫn ghi đè `vault/<id>` **sau khi** máy A đã `complete`, làm khóa trong D1 lệch với bản mã. Cách sửa là để **mỗi lúc chỉ một máy được xin URL ghi** cho một mục:
 
@@ -174,6 +174,21 @@ Presigned URL ghi lên R2 không thu hồi được và sống 15 phút, nên ch
 - Không sửa lần này (ghi Nợ kỹ thuật): thumbnail không có ETag (N2), lệch thứ tự hai lần `prepareSetup` chồng nhau (N6, giao diện đã chặn), reset D1 local sau khi `0009` đổi (N8), `vault_exists` lặp ở màn khởi đầu (N10).
 
 Rủi ro còn lại (ghi nhận, không sửa): một PUT cực chậm (dưới ~15 KB/s với file 100 MB) có thể vượt cả hạn giữ chỗ 2 giờ; cách triệt để là mỗi claim một key `vault/<id>.<claim>` (Nợ kỹ thuật). Khe nhỏ của cron (M1): giữa lúc cron nhả dấu lấy-ra và lúc xóa object, một lần lấy ra hợp lệ hoàn tất ngay trong vài giây thì bản rõ mới có thể bị cron xóa; chỉ xảy ra lúc 03:00 UTC.
+
+### 4.7d Thay thế 4.7c: mỗi lần mã hóa một object riêng (2026-11-17, theo yêu cầu của người dùng)
+
+Cơ chế giữ chỗ ở 4.7c quá phức tạp (claim, ETag, hạn 2 giờ, rút hạn 16 phút, `item_busy`) và còn tự chặn chính máy bị bỏ dở. **4.7c bị thay hoàn toàn**; phần ETag của 4.7b cũng bỏ. Gốc của vấn đề là hai máy ghi cùng một tên `vault/<id>` với hai khóa khác nhau. Giải pháp: không cho chúng ghi cùng một tên.
+
+- **Tên object theo lần thử.** `vault/in` sinh `attempt` (16 byte ngẫu nhiên, base64url) và cấp URL ghi cho `vault/<id>.<attempt>` (và `vault/<id>.<attempt>.thumb`). Không có trạng thái nào được ghi vào D1 ở bước này, nên không có giữ chỗ và không có `item_busy`.
+- **`vault/in/complete`** nhận `attempt` (bắt buộc với hàng chưa mã hóa). Server `head()` đúng key của lần thử đó, so kích thước, rồi ghi D1 bằng một câu `UPDATE ... WHERE id = ? AND encrypted = 0 ...` đặt `encrypted = 1` và **`enc_object = attempt`** cùng khóa/metadata của lần thử đó. Khóa trong D1 luôn khớp đúng object nó mã hóa.
+  - Máy thua cuộc (hàng đã `encrypted = 1` do máy khác): trả 200 như bình thường (idempotent), xóa object của chính lần thử của nó nếu `attempt` khác `enc_object`, và không đụng `enc_key`/`enc_meta`. Không có lỗi, không mất dữ liệu: file đã mã hóa bằng khóa của máy thắng.
+  - Lần thử bị bỏ dở (mất mạng, tắt app) không chặn gì: lần sau chỉ là một `attempt` mới.
+- **Key của mục đã mã hóa** = `vault/<id>.<enc_object>` (thumb `.thumb` kèm theo); `enc_object` NULL nghĩa là key cố định `vault/<id>` (upload thẳng vào két qua `POST /uploads`). Mọi chỗ lấy key (tải về, `vault/out`, thumbnail danh sách, `purge`) đi qua `objectKeys(row)`.
+- **Dọn rác.** Cron hằng ngày liệt kê `vault/`: xóa object có tuổi > 1 giờ mà (a) hàng không còn, hoặc (b) tên có `attempt` khác `enc_object` của hàng. Object mới hơn 1 giờ được giữ (lần thử còn đang chạy). `purge` xóa key hiện tại của hàng; phần rác còn lại để cron.
+- **Vào két ngay khi bắt đầu.** `vault/in` đặt `in_vault = 1` ngay (hàng rời danh sách chính, link chia sẻ chết ngay nhờ trigger), vẫn `encrypted = 0`. Giao diện hiện mục này trong Két sắt với **biểu tượng đám mây mờ** (chưa mã hóa xong) và đổi thành **dấu tick xanh** khi `encrypted = 1`. Lần thử bị bỏ dở để mục ở trạng thái "đám mây" và được mã hóa tiếp ở lần mở két sau (`migrateLegacy`). Các thiết bị khác thấy thay đổi qua cơ chế làm mới sẵn có (polling và khi lấy lại focus), không thêm hạ tầng thông báo.
+- **Bỏ:** cột `in_claim`, `in_claim_until`, trường `claim`/`etag`, mã lỗi `item_busy`, hằng `CLAIM_MS`/`KEPT_MS`, logic thử lại của mover sau `item_changed`. Mover coi mọi lỗi của một mục là "thất bại" và để lần sau làm lại. `out_started_at` và dọn bản rõ sót sau lấy ra giữ nguyên.
+- **Cất vào két khi két chưa thiết lập:** desktop và web đều mở trình thiết lập két trước (`vaultMoveInPlan('none', _)` → `'setup'`), rồi tiếp tục cất. Bỏ nhánh `setVault` kiểu cũ ở desktop.
+- **Rủi ro còn lại:** trong lúc "đám mây" (chưa mã hóa xong), bản rõ vẫn nằm trên R2 và người có token đọc được, như mọi mục chưa mã hóa (giống file két cũ). Đã ghi ở §4.8.
 
 ### 4.8 Giới hạn bảo mật còn lại
 
