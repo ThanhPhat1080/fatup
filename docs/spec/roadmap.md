@@ -51,3 +51,4 @@ Các mục liên quan đến két sắt mã hóa (từ bản 0.5.0):
 - **Đóng két ngay sau cất từ danh sách chính** có thể cắt việc mã hóa nền; lần mở két sau tự chạy tiếp.
 - **Chưa có ảnh chụp dòng "Đang tạo két sắt…"** trong bộ ảnh e2e.
 - **E2E `vault` đôi khi timeout ở bước `.vault-key`** khi chạy cạnh việc khác. Chập chờn, chưa điều tra.
+- **E2E `share` đôi khi hỏng ở bước `tooltip shows on hover`** (`desktop/e2e/areas/share.mjs`): bước rê chuột rồi chờ cố định 600 ms trước khi đọc độ mờ của tooltip. Quan sát 1 lần hỏng trong 4 lần chạy lại (3 lần pass), cả khi chạy toàn bộ lẫn khi chạy riêng. Chưa kiểm trên `main`, nên chưa biết lỗi có từ trước hay không. Nên chờ theo điều kiện (poll độ mờ) thay vì chờ cố định.
