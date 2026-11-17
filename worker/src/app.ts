@@ -31,6 +31,7 @@ import type { Env } from './env';
 import { createPresigner, fileKey, thumbKey, vaultThumbKey, type Presigner } from './presign';
 import { createShareRoutes } from './share-public';
 import { isUlid, ulid } from './ulid';
+import { registerVaultRoutes } from './vault';
 
 type Row = {
   id: string;
@@ -62,7 +63,7 @@ type Row = {
   enc_key: string | null;
 };
 
-type AppEnv = { Bindings: Env; Variables: { presigner: Presigner } };
+export type AppEnv = { Bindings: Env; Variables: { presigner: Presigner } };
 
 export type AppOptions = {
   /** Lets tests swap in a presigner that does not need real R2 credentials. */
@@ -71,7 +72,7 @@ export type AppOptions = {
   fetch?: typeof fetch;
 };
 
-function fail(c: Context, status: 400 | 401 | 404 | 409 | 413, code: string, message: string) {
+export function fail(c: Context, status: 400 | 401 | 403 | 404 | 409 | 410 | 413, code: string, message: string) {
   return c.json({ error: { code, message } }, status);
 }
 
@@ -190,6 +191,8 @@ export function createApp(options: AppOptions = {}) {
 
   // Authenticated health check, used by clients to verify their setup.
   app.get('/me', (c) => c.json({ ok: true }));
+
+  registerVaultRoutes(app);
 
   // Storage in use, summed from the database (no extra R2 API credentials needed). Preview thumbnails are tiny and not counted.
   app.get('/usage', async (c) => {
