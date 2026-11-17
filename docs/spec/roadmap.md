@@ -27,3 +27,9 @@ Mục tiêu: bản web đủ dùng để **thay thế việc cài app** trên An
 - Android xem lại file đã gửi, có thùng rác/két sắt.
 - Ký số macOS/Windows để cập nhật tự động trên mọi nền tảng.
 - Test E2E cho giao diện mới; cập nhật lại ảnh chụp màn hình trong README.
+
+### Nợ kỹ thuật
+
+- **Android chưa mở được Két sắt mã hóa.** Phase mã hóa Két sắt (E2EE, PIN 6 số + server đếm số lần sai) chỉ làm cho desktop và web. Android không thấy và không mở được két; muốn làm sau thì Android phải cài lại lõi mã hóa (giải mã theo khối AES-256-GCM, dẫn xuất khóa từ PIN, gọi endpoint mở két) theo đúng định dạng đã chốt cho desktop/web.
+- **Endpoint két kiểu cũ `PUT /files/:id/vault` còn giữ lại tạm thời.** Trước khi két được thiết lập mã hóa, nó chạy như cũ để app bản cũ không hỏng; sau đó nó luôn trả lỗi "Cần cập nhật app". Khi mọi máy đã lên bản có mã hóa thì xóa hẳn endpoint này (và nhánh xử lý `GET /files?vault=1` cho app cũ).
+- **Chưa có "Tắt két sắt trên thiết bị này".** Máy bị soi HTTPS (ví dụ máy công ty có Zscaler) chỉ an toàn cho két nếu **không bao giờ mở két trên máy đó**, và hiện chỉ dựa vào việc người dùng tự nhớ. Hướng đã bàn: công tắc trong Cài đặt, lưu cục bộ (không đồng bộ), khi bật thì ẩn két và không gọi API két; bật lại cần PIN app (kiểm tra cục bộ, không qua server); trình thiết lập két hỏi "máy công ty/dùng chung?" để tắt sẵn.
