@@ -22,10 +22,14 @@
  * 10. undoVaultDelete(ids: string[]): { op: 'restore'; id: string }[]. One restore per id; no move call.
  * 11. canMoveOut(item): boolean. False for an unreadable item and for an item still encrypting; true for other Vault items.
  * 12. i18n for the Vault mode and Vault trash (en + vi, see the last describe block).
+ * 13. Two-step setup (spec 4.7b I1): nextSetupState gains steps 'committing' and the event
+ *      { type: 'commitResult', result: { ok: true } | { ok: false, error } } (answer of vaultSetupCommit).
+ * 14. vaultMoveInPlan(status: 'none' | 'ready' | 'wiped', open: boolean): 'move' | 'unlock' | 'recover' (spec 4.7b I2).
+ * 15. Vault error strings (spec 4.7b I4): `err_<code>` in en and vi, read by errorText(dict, code).
  */
 import { describe, expect, it } from 'vitest';
 import type { Item } from '../src/shared-ipc';
-import { dictionaries } from '../src/renderer/src/lib/i18n';
+import { dictionaries, errorText } from '../src/renderer/src/lib/i18n';
 
 const lib = () => import('../src/renderer/src/lib/vault');
 
@@ -200,6 +204,191 @@ describe('nextSetupState', () => {
     s = await step(s, { type: 'pin', pin: '135792' });
     expect(s.step).toBe('pinAgain');
     expect(s.error).toBeUndefined();
+  });
+});
+
+/**
+ * Two-step setup (spec 4.7b I1). Contract of the wizard:
+ * - A repeated PIN that matches keeps the step at 'pinAgain' with no error. The reducer never calls the server:
+ *   the renderer then calls vaultSetupPrepare(pin) and feeds its answer back as setupResult.
+ * - setupResult ok → 'recovery' (recoveryKey, picks). saved → 'confirm'.
+ * - confirmGroups with the right groups → 'committing': the renderer calls vaultSetupCommit. The recovery key and picks
+ *   are kept there, so a failed commit can be retried. Wrong groups → stay on 'confirm' with error 'confirm_wrong'.
+ * - commitResult ok → 'migrating', no recovery key.
+ *   commitResult closed | no_prepared_setup | vault_exists → 'intro', recovery key dropped, error set to that code.
+ *   commitResult with any other error (e.g. 'network') → 'confirm' with that error, recovery key KEPT.
+ * - The recovery key is absent from the state in 'intro', 'migrating' and 'done'.
+ */
+describe('nextSetupState: two-step setup (spec 4.7b I1)', () => {
+  it('walks intro → pin → pinAgain → recovery → confirm → committing → migrating → done', async () => {
+    const random = () => 0;
+    let s = await step({ step: 'intro' }, { type: 'start' });
+    s = await step(s, { type: 'pin', pin: '135792' });
+    s = await step(s, { type: 'pinAgain', pin: '135792' });
+    expect(s.step, 'a matching repeat does not reach the server, so the step stays pinAgain').toBe('pinAgain');
+    s = await step(s, { type: 'setupResult', result: { ok: true, recoveryKey: RK }, random });
+    expect(s.step).toBe('recovery');
+    s = await step(s, { type: 'saved' });
+    expect(s.step).toBe('confirm');
+    const picks = s.picks as [number, number];
+    const groups = RK.split('-');
+    s = await step(s, { type: 'confirmGroups', typed: [groups[picks[0]], groups[picks[1]]] });
+    expect(s.step).toBe('committing');
+    expect(s.recoveryKey).toBe(RK);
+    s = await step(s, { type: 'commitResult', result: { ok: true } });
+    expect(s.step).toBe('migrating');
+    expect(s.recoveryKey).toBeUndefined();
+    s = await step(s, { type: 'migrationDone' });
+    expect(s.step).toBe('done');
+    expect(s.recoveryKey).toBeUndefined();
+  });
+
+  it('stays on confirm with confirm_wrong when the typed groups are wrong, and keeps the key', async () => {
+    const s = await step({ step: 'confirm', recoveryKey: RK, picks: [1, 4] }, { type: 'confirmGroups', typed: ['0000', '0000'] });
+    expect(s.step).toBe('confirm');
+    expect(s.error).toBe('confirm_wrong');
+    expect(s.recoveryKey).toBe(RK);
+  });
+
+  it('moves to committing when the typed groups are right, keeping the key and picks for a retry', async () => {
+    const s = await step({ step: 'confirm', recoveryKey: RK, picks: [1, 4] }, { type: 'confirmGroups', typed: ['3MWA', '8VBD'] });
+    expect(s.step).toBe('committing');
+    expect(s.recoveryKey).toBe(RK);
+    expect(s.picks).toEqual([1, 4]);
+    expect(s.error).toBeUndefined();
+  });
+
+  it('moves from committing to migrating on a committed setup, and drops the recovery key', async () => {
+    const s = await step({ step: 'committing', recoveryKey: RK, picks: [1, 4] }, { type: 'commitResult', result: { ok: true } });
+    expect(s.step).toBe('migrating');
+    expect(s.recoveryKey).toBeUndefined();
+    expect(s.picks).toBeUndefined();
+    expect(s.error).toBeUndefined();
+  });
+
+  for (const error of ['closed', 'no_prepared_setup', 'vault_exists']) {
+    it(`goes back to intro with ${error}, drops the recovery key and shows the error`, async () => {
+      const s = await step({ step: 'committing', recoveryKey: RK, picks: [1, 4] }, { type: 'commitResult', result: { ok: false, error } });
+      expect(s.step).toBe('intro');
+      expect(s.error).toBe(error);
+      expect(s.recoveryKey).toBeUndefined();
+    });
+  }
+
+  it('keeps the recovery key on confirm for any other commit error, so the user can retry', async () => {
+    const s = await step({ step: 'committing', recoveryKey: RK, picks: [1, 4] }, { type: 'commitResult', result: { ok: false, error: 'network' } });
+    expect(s.step).toBe('confirm');
+    expect(s.error).toBe('network');
+    expect(s.recoveryKey).toBe(RK);
+    expect(s.picks).toEqual([1, 4]);
+  });
+});
+
+/**
+ * Moving a file into the Vault from the main list (spec 4.7b I2). Contract of vaultMoveInPlan(status, open):
+ * - 'move' when the Vault is open, whatever its status; or when status is 'none' (legacy path, nothing to unlock).
+ * - 'unlock' when status is 'ready' and the Vault is closed: the 6-digit gate comes first.
+ * - 'recover' when status is 'wiped' and the Vault is closed: the recovery screen comes first.
+ */
+describe('vaultMoveInPlan: moving into the Vault from the main list (spec 4.7b I2)', () => {
+  it('moves at once when the Vault is open, whatever its status', async () => {
+    const { vaultMoveInPlan } = await lib();
+    for (const status of ['none', 'ready', 'wiped'] as const) {
+      expect(vaultMoveInPlan(status, true), `status ${status}, open`).toBe('move');
+    }
+  });
+
+  it('moves without a gate when no Vault is set up (legacy path, nothing to unlock)', async () => {
+    const { vaultMoveInPlan } = await lib();
+    expect(vaultMoveInPlan('none', false)).toBe('move');
+  });
+
+  it('asks for the PIN gate first when the Vault is ready and closed', async () => {
+    const { vaultMoveInPlan } = await lib();
+    expect(vaultMoveInPlan('ready', false)).toBe('unlock');
+  });
+
+  it('sends a wiped and closed Vault to the recovery screen first', async () => {
+    const { vaultMoveInPlan } = await lib();
+    expect(vaultMoveInPlan('wiped', false)).toBe('recover');
+  });
+});
+
+/**
+ * Vault error strings (spec 4.7b I4). Contract: each new error code has its own text in both languages under the key
+ * `err_<code>`, which `errorText(dict, code)` reads. A code without a text of its own falls back to `err_generic`.
+ */
+describe('vault error strings (spec 4.7b I4)', () => {
+  const NEW_KEYS = [
+    'err_vault_locked',
+    'err_vault_busy',
+    'err_item_changed',
+    'err_app_outdated',
+    'err_vault_not_ready',
+    'err_encrypted',
+    'err_unreadable',
+    'err_no_etag',
+    'err_closed',
+    'err_no_prepared_setup',
+    'err_vault_wiped',
+    'vaultUnlockToMove',
+  ];
+  const CODES = [
+    'vault_locked',
+    'vault_busy',
+    'item_changed',
+    'app_outdated',
+    'vault_not_ready',
+    'encrypted',
+    'unreadable',
+    'no_etag',
+    'closed',
+    'no_prepared_setup',
+    'vault_wiped',
+  ];
+  const en = dictionaries.en as Record<string, unknown>;
+  const vi = dictionaries.vi as Record<string, unknown>;
+
+  it('has every new key, non-empty, in both English and Vietnamese', () => {
+    for (const key of NEW_KEYS) {
+      for (const [lang, dict] of [
+        ['en', en],
+        ['vi', vi],
+      ] as const) {
+        const value = dict[key];
+        expect(typeof value === 'string' && value.trim().length > 0, `${lang}.${key} is a non-empty string`).toBe(true);
+      }
+    }
+  });
+
+  it('shows the matching text for each new code, not the generic one, in both languages', () => {
+    for (const code of CODES) {
+      for (const [lang, dict] of [
+        ['en', dictionaries.en],
+        ['vi', dictionaries.vi],
+      ] as const) {
+        const own = (dict as Record<string, unknown>)[`err_${code}`];
+        expect(typeof own, `${lang}.err_${code} exists`).toBe('string');
+        const text = errorText(dict, code);
+        expect(text, `${lang} errorText(${code})`).toBe(own);
+        expect(text, `${lang} err_${code} is not the generic text`).not.toBe(dict.err_generic);
+      }
+    }
+  });
+
+  it('falls back to the generic text for a code without a text of its own', () => {
+    expect(errorText(dictionaries.en, 'no_such_code_for_vault')).toBe(dictionaries.en.err_generic);
+    expect(errorText(dictionaries.vi, 'no_such_code_for_vault')).toBe(dictionaries.vi.err_generic);
+  });
+
+  it('tells the user to update the app for app_outdated, in both languages', () => {
+    expect(errorText(dictionaries.en, 'app_outdated')).toMatch(/update/i);
+    expect(errorText(dictionaries.vi, 'app_outdated')).toMatch(/cập nhật/i);
+  });
+
+  it('names the Vault PIN in the move-into-Vault hint, in both languages', () => {
+    expect(String(en.vaultUnlockToMove)).toMatch(/PIN/);
+    expect(String(vi.vaultUnlockToMove)).toMatch(/PIN/);
   });
 });
 
