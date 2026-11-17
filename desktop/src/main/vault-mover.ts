@@ -24,6 +24,8 @@ const TRANSFER_TIMEOUT_MS = 10 * 60_000;
 
 export function createVaultMover(deps: VaultMoverDeps) {
   const { session } = deps;
+  /** The conversion of legacy items that is running now, so that two unlocks in a row do not run two. */
+  let migration: Promise<void> | null = null;
   const fetchImpl = deps.fetchImpl ?? ((input: string | URL | Request, init?: RequestInit) => fetch(input, init));
 
   /** GETs a presigned address; null when the object does not exist (404). */
@@ -51,7 +53,7 @@ export function createVaultMover(deps: VaultMoverDeps) {
       res = await fetchImpl(url, {
         method: 'PUT',
         headers: { 'Content-Type': contentType, 'Content-Length': String(bytes.length) },
-        body: bytes,
+        body: bytes as BodyInit,
         signal: AbortSignal.timeout(TRANSFER_TIMEOUT_MS),
       });
     } catch (err) {
@@ -129,7 +131,7 @@ export function createVaultMover(deps: VaultMoverDeps) {
     await deps.client().moveOutComplete(item.id, { name: shown.name, mime: shown.mime, size: plain.length, hasThumb: thumb !== null });
   }
 
-  return {
+  const mover = {
     /** Encrypts plain items here and moves them into the Vault. */
     moveIn: (items: FileItem[], onProgress?: ProgressCallback): Promise<MoveResult> => each(items, moveInOne, onProgress),
 
@@ -148,7 +150,60 @@ export function createVaultMover(deps: VaultMoverDeps) {
       });
       return each(legacy, moveInOne, onProgress);
     },
+
+    /** Runs `migrateLegacy` in the background, once at a time, and only while the Vault is open. Errors are swallowed: the next unlock tries again. */
+    startMigration(onProgress?: ProgressCallback): void {
+      if (migration || !session.isOpen()) return;
+      migration = mover.migrateLegacy(onProgress)
+        .then(() => undefined)
+        .catch(() => undefined)
+        .finally(() => {
+          migration = null;
+        });
+    },
+
+    /**
+     * Moves Vault items out by id. `known` answers the encrypted rows the caller already holds; the others are looked up in the Vault's list.
+     * Items put in the Vault before it was encrypted (still plain, so with no key to read) are encrypted first, because the legacy plain
+     * move is refused once the encrypted Vault exists. Ids that are not in the Vault are reported as failed.
+     */
+    async moveOutIds(ids: string[], known: (id: string) => FileItem | undefined, onProgress?: ProgressCallback): Promise<MoveResult> {
+      const client = deps.client();
+      const rows = new Map<string, FileItem>();
+      for (const id of ids) {
+        const row = known(id);
+        if (row) rows.set(id, row);
+      }
+      const failed = new Set<string>();
+      if (rows.size < ids.length) {
+        const listed = new Map((await client.listEverything({ vault: true })).map((it) => [it.id, it]));
+        const plain: FileItem[] = [];
+        for (const id of ids) {
+          if (rows.has(id)) continue;
+          const row = listed.get(id);
+          if (!row) failed.add(id);
+          else if (row.encrypted) rows.set(id, row);
+          else plain.push(row);
+        }
+        if (plain.length) {
+          const moved = await each(plain, moveInOne);
+          for (const id of moved.failed) failed.add(id);
+          if (moved.done.length) {
+            const fresh = new Map((await client.listEverything({ vault: true })).map((it) => [it.id, it]));
+            for (const id of moved.done) {
+              const row = fresh.get(id);
+              if (row?.encrypted) rows.set(id, row);
+              else failed.add(id);
+            }
+          }
+        }
+      }
+      const todo = ids.map((id) => rows.get(id)).filter((r): r is FileItem => r !== undefined);
+      const res = await each(todo, moveOutOne, onProgress);
+      return { done: res.done, failed: [...failed, ...res.failed] };
+    },
   };
+  return mover;
 }
 
 export type VaultMover = ReturnType<typeof createVaultMover>;

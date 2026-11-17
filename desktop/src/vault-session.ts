@@ -35,8 +35,8 @@ export type VaultClient = Pick<ApiClient, 'vaultStatus' | 'vaultSetup' | 'vaultU
 
 export type VaultSessionDeps = {
   client(): VaultClient;
-  /** True when `pin4` is the app PIN. Must not count against the lock screen's attempt limit. */
-  appPinMatches(pin4: string): boolean;
+  /** True when `pin4` is the app PIN. Must not count against the lock screen's attempt limit. Async on the web (PBKDF2 over the sealed token). */
+  appPinMatches(pin4: string): boolean | Promise<boolean>;
   /** PBKDF2 rounds for a new PIN. Production uses the default; tests pass a small number. */
   iterations?: number;
 };
@@ -99,10 +99,9 @@ export class VaultSession {
   }
 
   /** Why `pin` cannot be a Vault PIN, or null. Both ends are always checked against the app PIN. */
-  #refusePin(pin: string): VaultPinRefusal | null {
+  async #refusePin(pin: string): Promise<VaultPinRefusal | null> {
     if (isWeakVaultPin(pin)) return { ok: false, error: 'weak_pin' };
-    const first = this.#deps.appPinMatches(pin.slice(0, 4));
-    const last = this.#deps.appPinMatches(pin.slice(2));
+    const [first, last] = await Promise.all([this.#deps.appPinMatches(pin.slice(0, 4)), this.#deps.appPinMatches(pin.slice(2))]);
     if (first || last) return { ok: false, error: 'matches_app_pin' };
     return null;
   }
@@ -114,7 +113,7 @@ export class VaultSession {
 
   /** First-time setup. The request carries only what the PIN and the recovery key derive; the recovery key is returned once. */
   async setup(pin: string): Promise<VaultSetupResult> {
-    const refused = this.#refusePin(pin);
+    const refused = await this.#refusePin(pin);
     if (refused) return refused;
     try {
       const { request, recoveryKey, mk } = await newSetup(pin, { iterations: this.#deps.iterations ?? VAULT_KDF_ITERATIONS });
@@ -143,7 +142,7 @@ export class VaultSession {
 
   /** Sets a new PIN with the recovery key (also when the server has wiped its keys), then opens the Vault. No file is re-encrypted. */
   async recover(recoveryKey: string, newPin: string): Promise<VaultRecoverResult> {
-    const refused = this.#refusePin(newPin);
+    const refused = await this.#refusePin(newPin);
     if (refused) return refused;
     if (!parseRecoveryKey(recoveryKey)) return { ok: false, error: 'bad_recovery_key' };
     try {
@@ -169,7 +168,7 @@ export class VaultSession {
 
   /** Sets a new PIN, proving with the old one. The master key is unchanged, so no file is touched. */
   async changePin(oldPin: string, newPin: string): Promise<VaultChangePinResult> {
-    const refused = this.#refusePin(newPin);
+    const refused = await this.#refusePin(newPin);
     if (refused) return refused;
     try {
       const client = this.#deps.client();

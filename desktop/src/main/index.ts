@@ -54,8 +54,6 @@ const vaultSession = new VaultSession({
 let vault: VaultHandlers;
 /** Moves files in and out of the encrypted Vault and encrypts old Vault files; created next to `vault`. */
 let mover: VaultMover;
-/** The conversion of old Vault files that is running now, so that two unlocks in a row do not run two. */
-let migration: Promise<void> | null = null;
 let mainWindow: BrowserWindow | null = null;
 const itemCache = new Map<string, FileItem>();
 let pendingRelease: ReleaseInfo | null = null;
@@ -145,21 +143,9 @@ function sendVaultProgress(p: MoveProgress, rows: FileItem[]) {
   mainWindow?.webContents.send('vaultProgress', progress);
 }
 
-/** Encrypts, in the background, the files put in the Vault before it was encrypted. Interrupted runs are picked up by the next unlock. */
-function startMigration() {
-  if (migration || !vaultSession.isOpen()) return;
-  migration = mover
-    .migrateLegacy((p) => sendVaultProgress(p, []))
-    .then(() => undefined)
-    .catch(() => undefined) // a failed listing or a closed Vault: the next unlock tries again
-    .finally(() => {
-      migration = null;
-    });
-}
-
 /** After a call that opens the Vault (setup, unlock, recovery): convert the old files, without making the caller wait for it. */
 function afterOpen<T extends { ok: boolean }>(res: T): T {
-  if (res.ok) startMigration();
+  if (res.ok) mover.startMigration((p) => sendVaultProgress(p, []));
   return res;
 }
 
@@ -416,40 +402,9 @@ function registerIpc() {
     if (!vaultSession.isOpen()) return { ok: false, error: 'vault_locked' };
     const wanted = ids(raw);
     try {
-      const rows = new Map<string, FileItem>();
-      for (const id of wanted) {
-        const row = vault.rawItem(id);
-        if (row) rows.set(id, row);
-      }
-      const failed = new Set<string>();
-      if (rows.size < wanted.length) {
-        // Not listed through `listVault` yet in this session (or still plain): ask the server for the Vault's rows.
-        const listed = new Map((await client().listEverything({ vault: true })).map((it) => [it.id, it]));
-        const plain: FileItem[] = [];
-        for (const id of wanted) {
-          if (rows.has(id)) continue;
-          const row = listed.get(id);
-          if (!row) failed.add(id);
-          else if (row.encrypted) rows.set(id, row);
-          else plain.push(row);
-        }
-        if (plain.length) {
-          const moved = await mover.moveIn(plain);
-          for (const id of moved.failed) failed.add(id);
-          if (moved.done.length) {
-            const fresh = new Map((await client().listEverything({ vault: true })).map((it) => [it.id, it]));
-            for (const id of moved.done) {
-              const row = fresh.get(id);
-              if (row?.encrypted) rows.set(id, row);
-              else failed.add(id);
-            }
-          }
-        }
-      }
-      const todo = wanted.map((id) => rows.get(id)).filter((r): r is FileItem => r !== undefined);
-      const res = await mover.moveOut(todo, (p) => sendVaultProgress(p, []));
+      const res = await mover.moveOutIds(wanted, (id) => vault.rawItem(id), (p) => sendVaultProgress(p, []));
       vault.forget(res.done); // plain again: the plain download, preview and rename paths apply
-      return summary({ done: res.done, failed: [...failed, ...res.failed] });
+      return summary(res);
     } catch (err) {
       return fail(err);
     }
