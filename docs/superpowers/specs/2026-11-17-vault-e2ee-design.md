@@ -145,6 +145,22 @@ Cron xóa vĩnh viễn và `DELETE /files/:id?permanent` xóa đúng R2 key theo
 2. Ngay sau đó, và mỗi lần mở két khi còn mục `in_vault = 1 AND encrypted = 0`: chạy `vault/in` cho từng mục, có thanh tiến trình; mục chưa xong hiện dấu "đang mã hóa".
 3. Mục trong thùng rác thường (`in_vault = 0`) thì không động tới. Mục chưa mã hóa nằm trong **thùng rác của két** (`in_vault = 1`, `deleted_at` có giá trị: bị xóa trong két sau khi deploy Worker mới nhưng trước khi thiết lập) **cũng được mã hóa**, và vẫn ở thùng rác của két. `vault/in` và `vault/in/complete` nhận các mục này; `vault/out` thì không (phải khôi phục trước).
 
+### 4.7b Sửa sau review (2026-11-17)
+
+Review độc lập tìm ra các lỗi sau; cách sửa dưới đây là một phần của thiết kế.
+
+- **Hai máy cùng cất một file vào két (C1).** `vault/in/complete` nhận thêm `etag` (ETag mà R2 trả về khi client PUT `vault/<id>`). Server so với `head(vault/<id>).etag`; khác thì trả 409 `item_changed` và **không** ghi D1, không xóa bản rõ. Client gặp 409 thì làm lại từ đầu. Như vậy `enc_key` trong D1 luôn khớp đúng bản mã trên R2.
+- **Dọn sạch thùng rác thường (C2).** `DELETE /trash` chỉ xóa mục có `in_vault = 0`. Thùng rác của két chỉ dọn từng mục.
+- **Bản rõ sót lại khi lấy ra bị ngắt (C3).**
+  - `vault/out` ghi `out_started_at = now` vào hàng; `vault/out/complete` xóa nó.
+  - Client: lỗi sau khi đã PUT bản rõ thì gọi lại `vault/in/complete` với `encMeta`/`encKey` cũ để server dọn `files/<id>` và `thumbs/<id>.jpg`.
+  - Server: `purge` xóa cả bốn key (`files/`, `thumbs/`, `vault/`, `vault/….thumb`) bất kể cột `encrypted`. Cron hằng ngày dọn bản rõ của mọi hàng `encrypted = 1` có `out_started_at` cũ hơn 1 giờ, rồi xóa `out_started_at`.
+  - Cột mới nằm trong `0009_vault_e2ee.sql` (migration này chưa được áp dụng ở đâu, nên được sửa).
+- **Thiết lập chỉ ghi lên server sau khi xác nhận recovery key (I1),** đúng thứ tự ở 4.7 bước 1. `VaultSession.prepareSetup(pin)` tính mọi thứ trên máy và trả recovery key; `commitSetup()` mới `POST /vault/setup`, mở két và bắt đầu chuyển file cũ. Thoát giữa chừng thì không có gì lên server.
+- **Cất vào két từ danh sách chính (I2):** két đang đóng thì hiện cổng 6 số trước, mở được rồi mới cất.
+- **Đóng két trong lúc đang mở (I3):** `VaultSession` có bộ đếm thế hệ; `close()` tăng nó, và các thao tác mở chỉ giữ khóa nếu thế hệ không đổi.
+- **Chuỗi lỗi (I4):** mọi mã lỗi mới có chuỗi `en`/`vi` riêng.
+
 ### 4.8 Giới hạn bảo mật còn lại
 
 - **Mở két trên máy bị soi** thì admin bắt được `S` và `wrapped_mk_pin`, sau đó thử 1 triệu PIN offline trong vài phút. Quy tắc: không mở két trên máy công ty (chưa có công tắc chặn, xem Nợ kỹ thuật).
