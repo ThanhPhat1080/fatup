@@ -1,10 +1,37 @@
-import type { TagColor, FrameCheck, PreviewResponse, CreateLinkRequest, CreateUploadRequest, CreateUploadResponse, DownloadResponse, EmptyTrashResponse, UsageResponse, FileItem, ListFilesResponse, ShareExpiryDays, ShareInfo } from '@fatup/shared';
+import { VAULT_HEADER, VAULT_PROTOCOL_VERSION } from '@fatup/shared';
+import type {
+  TagColor,
+  FrameCheck,
+  PreviewResponse,
+  CreateLinkRequest,
+  CreateUploadRequest,
+  CreateUploadResponse,
+  DownloadResponse,
+  EmptyTrashResponse,
+  UsageResponse,
+  FileItem,
+  ListFilesResponse,
+  ShareExpiryDays,
+  ShareInfo,
+  VaultStatus,
+  VaultSetupRequest,
+  VaultUnlockRequest,
+  VaultUnlockResponse,
+  VaultRecoverRequest,
+  VaultRecoverResponse,
+  VaultPinRequest,
+  VaultMoveUrls,
+  VaultMoveInComplete,
+  VaultMoveOutComplete,
+} from '@fatup/shared';
 
 export class ApiError extends Error {
   constructor(
     public readonly code: string,
     message: string,
     public readonly status = 0,
+    /** The parsed JSON body of the failed response, or null. The Vault's 403/423 answers carry `remaining` and `lockedUntil` here. */
+    public readonly body: unknown = null,
   ) {
     super(message);
   }
@@ -39,7 +66,7 @@ export class ApiClient {
     if (res.status === 204) return undefined as T;
     const body = (await res.json().catch(() => null)) as { error?: { code: string; message: string } } | null;
     if (!res.ok) {
-      throw new ApiError(body?.error?.code ?? (res.status === 401 ? 'unauthorized' : 'http'), body?.error?.message ?? res.statusText, res.status);
+      throw new ApiError(body?.error?.code ?? (res.status === 401 ? 'unauthorized' : 'http'), body?.error?.message ?? res.statusText, res.status, body);
     }
     return body as T;
   }
@@ -62,7 +89,8 @@ export class ApiClient {
       if (opts.vault) qs.set('vault', '1');
       if (opts.kind && opts.kind !== 'all') qs.set('kind', opts.kind);
       if (cursor) qs.set('cursor', cursor);
-      const res: ListFilesResponse = await this.request(`/files?${qs}`);
+      const headers = opts.vault ? { [VAULT_HEADER]: VAULT_PROTOCOL_VERSION } : undefined;
+      const res: ListFilesResponse = await this.request(`/files?${qs}`, { headers });
       items.push(...res.items);
       cursor = res.nextCursor;
       if (!cursor) break;
@@ -127,6 +155,44 @@ export class ApiClient {
 
   setVault(id: string, inVault: boolean): Promise<FileItem> {
     return this.request(`/files/${encodeURIComponent(id)}/vault`, { method: 'PUT', body: JSON.stringify({ inVault }) });
+  }
+
+  vaultStatus(): Promise<VaultStatus> {
+    return this.request('/vault');
+  }
+
+  async vaultSetup(req: VaultSetupRequest): Promise<void> {
+    await this.request('/vault/setup', { method: 'POST', body: JSON.stringify(req) });
+  }
+
+  /** Wrong PIN answers 403, locked 423 (both with `{ remaining, lockedUntil }` in `ApiError.body`), wiped 410. */
+  vaultUnlock(req: VaultUnlockRequest): Promise<VaultUnlockResponse> {
+    return this.request('/vault/unlock', { method: 'POST', body: JSON.stringify(req) });
+  }
+
+  vaultRecover(req: VaultRecoverRequest): Promise<VaultRecoverResponse> {
+    return this.request('/vault/recover', { method: 'POST', body: JSON.stringify(req) });
+  }
+
+  async vaultSetPin(req: VaultPinRequest): Promise<void> {
+    await this.request('/vault/pin', { method: 'PUT', body: JSON.stringify(req) });
+  }
+
+  /** Step 1 of moving a plain file into the Vault: presigned addresses for the plain source and the ciphertext target. */
+  moveIn(id: string): Promise<VaultMoveUrls> {
+    return this.request(`/files/${encodeURIComponent(id)}/vault/in`, { method: 'POST' });
+  }
+
+  moveInComplete(id: string, req: VaultMoveInComplete): Promise<FileItem> {
+    return this.request(`/files/${encodeURIComponent(id)}/vault/in/complete`, { method: 'POST', body: JSON.stringify(req) });
+  }
+
+  moveOut(id: string): Promise<VaultMoveUrls> {
+    return this.request(`/files/${encodeURIComponent(id)}/vault/out`, { method: 'POST' });
+  }
+
+  moveOutComplete(id: string, req: VaultMoveOutComplete): Promise<FileItem> {
+    return this.request(`/files/${encodeURIComponent(id)}/vault/out/complete`, { method: 'POST', body: JSON.stringify(req) });
   }
 
   /** Moves a file to the trash. */

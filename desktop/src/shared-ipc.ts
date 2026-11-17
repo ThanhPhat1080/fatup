@@ -36,6 +36,18 @@ export type UnlockResult =
   | { ok: false; reason: 'wrong'; attemptsLeft: number }
   | { ok: false; reason: 'locked'; lockedUntil: number };
 
+/** Answer of the Vault's PIN checks (open, change PIN). `error` is an API error code such as `network`. */
+export type VaultUnlockResult =
+  | { ok: true }
+  | { ok: false; reason: 'wrong'; remaining: number }
+  | { ok: false; reason: 'locked'; lockedUntil: number }
+  | { ok: false; reason: 'wiped' }
+  | { ok: false; reason: 'not_ready' }
+  | { ok: false; reason: 'error'; error: string };
+
+/** A new Vault PIN is refused before any request: too easy to guess, or too close to the app PIN. */
+export type VaultPinRefusal = { ok: false; error: 'weak_pin' | 'matches_app_pin' };
+
 export type UpdateCheck =
   | { status: 'latest'; current: string }
   | { status: 'available'; current: string; version: string; auto: boolean }
