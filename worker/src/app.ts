@@ -145,7 +145,10 @@ async function toItem(row: Row, presigner: Presigner, shared = false): Promise<F
   };
 }
 
-const isEncText = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+/** A non-empty string of at most `max` characters; the caps keep encrypted metadata from bloating D1 rows. */
+const isEncText = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
+const MAX_ENC_META = 8192;
+const MAX_ENC_KEY = 512;
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -223,8 +226,8 @@ export function createApp(options: AppOptions = {}) {
 
     // An upload straight into the encrypted Vault: `size` is the ciphertext size, and the name, type and thumbnail kind stay in encMeta.
     const vault = body.vault ?? null;
-    if (vault !== null && !(isEncText((vault as { encMeta?: unknown }).encMeta) && isEncText((vault as { encKey?: unknown }).encKey))) {
-      return fail(c, 400, 'bad_request', 'vault.encMeta and vault.encKey must be non-empty strings');
+    if (vault !== null && !(isEncText((vault as { encMeta?: unknown }).encMeta, MAX_ENC_META) && isEncText((vault as { encKey?: unknown }).encKey, MAX_ENC_KEY))) {
+      return fail(c, 400, 'bad_request', `vault.encMeta (at most ${MAX_ENC_META} characters) and vault.encKey (at most ${MAX_ENC_KEY}) must be non-empty strings`);
     }
     if (vault && (await vaultState(c.env.DB)) !== 'ready') return fail(c, 409, 'vault_not_ready', 'The Vault is not ready');
     const maxSize = vault ? vaultCiphertextSize(MAX_FILE_SIZE) : MAX_FILE_SIZE;
@@ -236,12 +239,12 @@ export function createApp(options: AppOptions = {}) {
 
     if (vault) {
       const withThumb = hasThumb === true;
-      // No plaintext metadata is stored for an encrypted row, not even the device name.
+      // The sender device stays plaintext (spec Q3), exactly as for plain uploads.
       await c.env.DB.prepare(
         `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, device, created_at, in_vault, encrypted, enc_meta, enc_key)
-         VALUES (?, '', 'application/octet-stream', ?, 'file', ?, 'pending', NULL, ?, 1, 1, ?, ?)`,
+         VALUES (?, '', 'application/octet-stream', ?, 'file', ?, 'pending', ?, ?, 1, 1, ?, ?)`,
       )
-        .bind(id, size, withThumb ? 1 : 0, now, vault.encMeta, vault.encKey)
+        .bind(id, size, withThumb ? 1 : 0, typeof device === 'string' ? device.slice(0, 64) : null, now, vault.encMeta, vault.encKey)
         .run();
       const res: CreateUploadResponse = {
         id,
@@ -445,7 +448,7 @@ export function createApp(options: AppOptions = {}) {
     if (body.name === undefined && body.tags === undefined && body.url === undefined && body.important === undefined && body.encMeta === undefined) {
       return fail(c, 400, 'bad_request', 'Provide name, tags, url, important and/or encMeta');
     }
-    if (body.encMeta !== undefined && !isEncText(body.encMeta)) return fail(c, 400, 'bad_request', 'encMeta must be a non-empty string');
+    if (body.encMeta !== undefined && !isEncText(body.encMeta, MAX_ENC_META)) return fail(c, 400, 'bad_request', `encMeta must be a non-empty string of at most ${MAX_ENC_META} characters`);
     if (body.important !== undefined && typeof body.important !== 'boolean') return fail(c, 400, 'bad_request', 'important must be true or false');
     if (body.name !== undefined) {
       if (typeof body.name !== 'string' || body.name.trim() === '') return fail(c, 400, 'bad_request', 'name must be a non-empty string');
