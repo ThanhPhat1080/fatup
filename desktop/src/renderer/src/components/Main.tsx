@@ -289,6 +289,13 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     return { done, failed: targets.length - done.size, locked };
   }
 
+  /** One item into or out of the Vault; a move the main process reports as failed (`failed` non-empty) counts as an error. */
+  const moveVault = async (id: string, into: boolean): Promise<{ ok: boolean; error?: string }> => {
+    const res = await (into ? window.fatup.vaultMoveIn([id]) : window.fatup.vaultMoveOut([id]));
+    if (!res.ok) return res;
+    return res.value.failed.length > 0 ? { ok: false, error: 'move_failed' } : { ok: true };
+  };
+
   const report = (ok: number, failed: number, success: string, action?: { label: string; onClick: () => void }) =>
     failed === 0 ? toast(success, false, action) : toast(t.partialFail(ok, failed), true);
 
@@ -296,7 +303,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     const { done, failed, locked } = await batch(targets, (id) => window.fatup.restore(id));
     if (locked) return;
     // Deleting takes a file out of the Vault, so an "Undo" has to put it back.
-    if (backToVault) await batch(targets.filter((it) => done.has(it.id)), (id) => window.fatup.setVault(id, true));
+    if (backToVault) await batch(targets.filter((it) => done.has(it.id)), (id) => moveVault(id, true));
     setTrashItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
     clearSelection();
     report(done.size, failed, t.restored(done.size));
@@ -330,7 +337,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     setLightboxId(null);
     setLinkPreviewId(null);
     setPdfId(null);
-    const { done, failed, locked } = await batch(targets, (id) => window.fatup.setVault(id, true));
+    const { done, failed, locked } = await batch(targets, (id) => moveVault(id, true));
     if (locked) return;
     setItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
     clearSelection();
@@ -344,7 +351,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     setLightboxId(null);
     setLinkPreviewId(null);
     setPdfId(null);
-    const { done, failed, locked } = await batch(targets, (id) => window.fatup.setVault(id, false));
+    const { done, failed, locked } = await batch(targets, (id) => moveVault(id, false));
     if (locked) return;
     setVaultItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
     clearSelection();

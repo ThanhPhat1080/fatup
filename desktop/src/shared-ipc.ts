@@ -1,5 +1,5 @@
 /** Contract between the preload bridge and the renderer. */
-import type { FileItem, FrameCheck, ShareExpiryDays, ShareInfo, TagColor, UsageResponse } from '@fatup/shared';
+import type { FileItem, FrameCheck, ShareExpiryDays, ShareInfo, TagColor, UsageResponse, VaultStatus } from '@fatup/shared';
 
 export type Lang = 'auto' | 'en' | 'vi';
 export type Theme = 'system' | 'light' | 'dark';
@@ -48,6 +48,18 @@ export type VaultUnlockResult =
 /** A new Vault PIN is refused before any request: too easy to guess, or too close to the app PIN. */
 export type VaultPinRefusal = { ok: false; error: 'weak_pin' | 'matches_app_pin' };
 
+/** Answer of `vaultSetup`: the recovery key is shown once, here. */
+export type VaultSetupResult = { ok: true; recoveryKey: string } | { ok: false; error: string };
+
+/** Answer of `vaultRecover`. `error` is `bad_recovery_key`, `weak_pin`, `matches_app_pin` or an API error code. */
+export type VaultRecoverResult = { ok: true } | { ok: false; error: string };
+
+/** Answer of `vaultMoveIn` / `vaultMoveOut`: how many items moved and the ids that did not. */
+export type VaultMoveResult = { done: number; failed: string[] };
+
+/** Progress of a batch of moves or of the conversion of old files (`current` is the real name of the item in progress). */
+export type VaultProgress = { done: number; total: number; current?: string };
+
 export type UpdateCheck =
   | { status: 'latest'; current: string }
   | { status: 'available'; current: string; version: string; auto: boolean }
@@ -91,12 +103,25 @@ export type FatupApi = {
   list(): Promise<Result<Item[]>>;
   listTrash(): Promise<Result<Item[]>>;
   usage(): Promise<Result<Usage>>;
-  /** Re-checks the PIN and opens the Vault for this session. Shares the PIN attempt limit with the lock screen. */
-  vaultOpen(pin: string): Promise<UnlockResult>;
+  /** Whether the encrypted Vault is set up (`none`, `ready`, `wiped`) and the PIN attempts left. Needs no unlocked Vault. */
+  vaultStatus(): Promise<Result<VaultStatus>>;
+  /** First-time setup with the Vault PIN (6 digits). Opens the Vault and returns the recovery key, once. */
+  vaultSetup(pin: string): Promise<VaultSetupResult>;
+  /** Opens the Vault with the Vault PIN. The server counts wrong attempts, not this app. */
+  vaultUnlock(pin: string): Promise<VaultUnlockResult>;
+  /** Sets a new Vault PIN with the recovery key and opens the Vault. No file is re-encrypted. */
+  vaultRecover(recoveryKey: string, newPin: string): Promise<VaultRecoverResult>;
+  /** Changes the Vault PIN, proving with the old one. */
+  vaultChangePin(oldPin: string, newPin: string): Promise<VaultUnlockResult | VaultPinRefusal>;
+  /** Closes the Vault: the key is forgotten. Never refused. */
   vaultClose(): Promise<void>;
-  /** Fails with error 'vault_locked' unless vaultOpen succeeded. */
-  listVault(): Promise<Result<Item[]>>;
-  setVault(id: string, inVault: boolean): Promise<Result>;
+  /** The Vault's items (or its own trash with `trash`), already decrypted. Fails with error 'vault_locked' unless the Vault is open. */
+  listVault(opts?: { trash?: boolean }): Promise<Result<Item[]>>;
+  /** Encrypts plain files here and moves them into the Vault. */
+  vaultMoveIn(ids: string[]): Promise<Result<VaultMoveResult>>;
+  /** Decrypts Vault files here and moves them back out. */
+  vaultMoveOut(ids: string[]): Promise<Result<VaultMoveResult>>;
+  onVaultProgress(cb: (p: VaultProgress) => void): () => void;
   /** Changes a file's display name and/or colour tags. Fails with 'not_found' if it is gone or in the trash. */
   updateFile(id: string, patch: { name?: string; tags?: TagColor[]; url?: string; important?: boolean }): Promise<Result<Item>>;
   /** A photo or file's public share link, or null when it is not shared. */

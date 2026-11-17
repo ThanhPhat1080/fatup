@@ -1,6 +1,7 @@
 import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, safeStorage, session, shell } from 'electron';
 import { hostname } from 'node:os';
 import { createWriteStream, existsSync, renameSync, rmSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -8,20 +9,26 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import QRCode from 'qrcode';
 import type { FileItem, ShareExpiryDays, ShareInfo, TagColor } from '@fatup/shared';
 import { autoUpdater } from 'electron-updater';
-import type { AppState, Item, Prefs, Result, UnlockResult, UpdateCheck, ViewBounds } from '../shared-ipc';
+import type { AppState, Item, Prefs, Result, UnlockResult, UpdateCheck, ViewBounds, VaultMoveResult } from '../shared-ipc';
 import { WebPreview } from './webpreview';
 import { ApiClient, ApiError, normalizeServerUrl } from './api';
 import { ConfigStore } from './config';
 import { uniqueFileName } from './filename';
-import { checkPin, hashPin, isValidPin } from './pin';
+import { checkPin, hashPin, isValidPin, pinMatches } from './pin';
 import { PreviewCache, fetchPicture } from '../preview-cache';
 import { FilePreviewStore, PREVIEW_SCHEME } from './previews';
 import { UploadManager } from './uploader';
+import { VaultSession } from '../vault-session';
+import { VAULT_SCHEME, createVaultHandlers, type VaultHandlers } from './vault-ipc';
 import { fetchLatestRelease, isNewer, type ReleaseInfo } from './updater';
 
 if (process.env.FATUP_USER_DATA) app.setPath('userData', process.env.FATUP_USER_DATA);
 // Cached link pictures are loaded by the renderer as fatup-preview://p/<id>; the scheme has to be declared before the app is ready.
-protocol.registerSchemesAsPrivileged([{ scheme: PREVIEW_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+// Decrypted Vault pictures are served from memory as fatup-vault://thumb/<id> and fatup-vault://file/<id> (see vault-ipc.ts).
+protocol.registerSchemesAsPrivileged([
+  { scheme: PREVIEW_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+  { scheme: VAULT_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
 
 let config: ConfigStore;
 let unlocked = false;
@@ -30,8 +37,20 @@ const webPreview = new WebPreview(
   () => mainWindow,
   (channel, payload) => mainWindow?.webContents.send(channel, payload),
 );
-/** True only while the Vault view is open and the PIN was re-entered. Never persisted. */
-let vaultOpen = false;
+/**
+ * The one encrypted-Vault session of this process: the master key lives only inside it. It is closed by `vaultClose`, `lock` and `reset`
+ * (through `vault.vaultClose()`), and never leaves main.
+ */
+const vaultSession = new VaultSession({
+  client: () => client(),
+  // The Vault PIN may not share its first or last four digits with the app PIN; this check does not count against the lock screen's attempts.
+  appPinMatches: (pin4) => {
+    const record = config.snapshot.pin;
+    return record ? pinMatches(pin4, record) : false;
+  },
+});
+/** Vault IPC logic (no Electron imports); created once the app is ready because it needs the downloads folder. */
+let vault: VaultHandlers;
 let mainWindow: BrowserWindow | null = null;
 const itemCache = new Map<string, FileItem>();
 let pendingRelease: ReleaseInfo | null = null;
@@ -62,6 +81,7 @@ const uploads = new UploadManager({
   device: DEVICE_NAME,
   thumbnail: makeThumbnail,
   onChange: (jobs) => mainWindow?.webContents.send('uploads', jobs),
+  vault: vaultSession,
 });
 
 /**
@@ -114,14 +134,14 @@ async function fetchBytes(url: string): Promise<Buffer> {
 }
 
 function registerIpc() {
-  ipcMain.handle('uploadPick', async (_e, vault?: boolean) => {
-    if (!unlocked || !mainWindow || (vault && !vaultOpen)) return;
+  ipcMain.handle('uploadPick', async (_e, intoVault?: boolean) => {
+    if (!unlocked || !mainWindow || (intoVault && !vaultSession.isOpen())) return;
     const res = await dialog.showOpenDialog(mainWindow, { properties: ['openFile', 'multiSelections'] });
-    if (!res.canceled) uploads.add(res.filePaths, vault === true);
+    if (!res.canceled) uploads.add(res.filePaths, intoVault === true);
   });
-  ipcMain.handle('uploadPaths', (_e, paths: unknown, vault?: boolean) => {
-    if (!unlocked || !Array.isArray(paths) || (vault && !vaultOpen)) return;
-    uploads.add(paths.filter((p): p is string => typeof p === 'string' && p !== ''), vault === true);
+  ipcMain.handle('uploadPaths', (_e, paths: unknown, intoVault?: boolean) => {
+    if (!unlocked || !Array.isArray(paths) || (intoVault && !vaultSession.isOpen())) return;
+    uploads.add(paths.filter((p): p is string => typeof p === 'string' && p !== ''), intoVault === true);
   });
   ipcMain.handle('uploadCancel', (_e, id: string) => uploads.cancel(id));
   ipcMain.handle('uploadClear', () => uploads.clearFinished());
@@ -221,13 +241,13 @@ function registerIpc() {
   ipcMain.handle('lock', () => {
     unlocked = false;
     webPreview.hide();
-    vaultOpen = false;
+    vault.vaultClose(); // closes the Vault session: the master key is forgotten
     uploads.cancelAll();
     itemCache.clear();
   });
 
   ipcMain.handle('reset', async () => {
-    vaultOpen = false;
+    vault.vaultClose(); // closes the Vault session: the master key is forgotten
     uploads.cancelAll();
     config.reset();
     unlocked = false;
@@ -292,9 +312,9 @@ function registerIpc() {
 
   ipcMain.handle(
     'addLink',
-    guarded(async (url: string, title: string | undefined, vault: boolean | undefined): Promise<Item> => {
+    guarded(async (url: string, title: string | undefined, intoVault: boolean | undefined): Promise<Item> => {
       let item = await client().addLink({ url, title, device: DEVICE_NAME ?? undefined });
-      if (vault) item = await client().setVault(item.id, true);
+      if (intoVault) item = await client().setVault(item.id, true);
       itemCache.set(item.id, item);
       return (await previews.decorate([{ ...item, downloaded: false }]))[0];
     }),
@@ -314,53 +334,29 @@ function registerIpc() {
     if (unlocked && /^https?:\/\//i.test(url)) await shell.openExternal(url);
   });
 
-  ipcMain.handle('vaultOpen', (_e, pin: string): UnlockResult => {
-    if (!unlocked) return { ok: false, reason: 'wrong', attemptsLeft: 0 };
-    const res = tryUnlock(pin);
-    if (res.ok) vaultOpen = true;
-    return res;
-  });
-  ipcMain.handle('vaultClose', () => {
-    vaultOpen = false;
-  });
-  ipcMain.handle('listVault', async (): Promise<Result<Item[]>> => {
-    if (!unlocked) return { ok: false, error: 'locked' };
-    if (!vaultOpen) return { ok: false, error: 'vault_locked' };
-    try {
-      const items = await client().listEverything({ vault: true });
-      for (const it of items) itemCache.set(it.id, it);
-      const downloaded = new Set(config.snapshot.downloaded);
-      return { ok: true, value: await previews.decorate(items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) }))) };
-    } catch (err) {
-      return fail(err);
-    }
-  });
-  ipcMain.handle('setVault', async (_e, id: string, inVault: boolean): Promise<Result> => {
-    if (!unlocked) return { ok: false, error: 'locked' };
-    // Taking a file out of the Vault reveals it, so that needs the Vault open too.
-    if (!inVault && !vaultOpen) return { ok: false, error: 'vault_locked' };
-    try {
-      await client().setVault(id, inVault);
-      if (inVault) await previews.forget([id]); // the Vault leaves no pictures on the device
-      return { ok: true, value: undefined };
-    } catch (err) {
-      return fail(err);
-    }
-  });
+  // The encrypted Vault. All of the logic is in vault-ipc.ts; these lines only route (and check the shape of what the renderer sends).
+  const text = (v: unknown) => (typeof v === 'string' ? v : '');
+  ipcMain.handle('vaultStatus', () => vault.vaultStatus());
+  ipcMain.handle('vaultSetup', (_e, pin: unknown) => vault.vaultSetup(text(pin)));
+  ipcMain.handle('vaultUnlock', (_e, pin: unknown) => vault.vaultUnlock(text(pin)));
+  ipcMain.handle('vaultRecover', (_e, recoveryKey: unknown, newPin: unknown) => vault.vaultRecover(text(recoveryKey), text(newPin)));
+  ipcMain.handle('vaultChangePin', (_e, oldPin: unknown, newPin: unknown) => vault.vaultChangePin(text(oldPin), text(newPin)));
+  ipcMain.handle('vaultClose', () => vault.vaultClose());
+  ipcMain.handle('listVault', (_e, opts?: { trash?: boolean }) => vault.listVault({ trash: opts?.trash === true }));
+  // Task 9 (vault-mover.ts) implements moving files in and out; the legacy PUT /files/:id/vault is refused (426) once the Vault is set up.
+  ipcMain.handle('vaultMoveIn', async (): Promise<Result<VaultMoveResult>> => ({ ok: false, error: 'not_supported' }));
+  ipcMain.handle('vaultMoveOut', async (): Promise<Result<VaultMoveResult>> => ({ ok: false, error: 'not_supported' }));
 
   ipcMain.handle(
     'usage',
     guarded(async () => client().usage()),
   );
 
-  ipcMain.handle(
-    'previewUrl',
-    guarded(async (id: string) => client().downloadUrl(id)),
-  );
-  ipcMain.handle(
-    'fileBytes',
-    guarded(async (id: string) => new Uint8Array(await fetchBytes(await client().downloadUrl(id)))),
-  );
+  // Encrypted Vault items are decrypted in main (vault-ipc.ts); everything else, legacy Vault items included, takes the plain path.
+  const plainPreviewUrl = guarded(async (id: string) => client().downloadUrl(id));
+  ipcMain.handle('previewUrl', (e, id: string) => (vault.owns(id) ? vault.previewUrl(id) : plainPreviewUrl(e, id)));
+  const plainFileBytes = guarded(async (id: string) => new Uint8Array(await fetchBytes(await client().downloadUrl(id))));
+  ipcMain.handle('fileBytes', (e, id: string) => (vault.owns(id) ? vault.fileBytes(id) : plainFileBytes(e, id)));
   ipcMain.handle('webPreview:show', (_e, url: string, bounds: ViewBounds) => {
     if (unlocked) webPreview.show(url, bounds);
   });
@@ -370,9 +366,7 @@ function registerIpc() {
     if (['back', 'forward', 'reload'].includes(action)) webPreview.navigate(action);
   });
 
-  ipcMain.handle(
-    'download',
-    guarded(async (id: string, reveal = true) => {
+  const plainDownload = guarded(async (id: string, reveal = true) => {
       const item = itemCache.get(id);
       const url = await client().downloadUrl(id);
       const res = await fetch(url, { signal: AbortSignal.timeout(10 * 60_000) });
@@ -392,21 +386,43 @@ function registerIpc() {
       config.markDownloaded(id);
       if (reveal) shell.showItemInFolder(target);
       return target;
-    }),
-  );
+    });
+  ipcMain.handle('download', async (e, id: string, reveal = true) => {
+    if (!vault.owns(id)) return plainDownload(e, id, reveal);
+    const res = await vault.download(id);
+    if (res.ok && reveal) shell.showItemInFolder(res.value);
+    return res;
+  });
 
-  ipcMain.handle(
-    'copyImage',
-    guarded(async (id: string) => {
-      const item = itemCache.get(id);
-      let image = nativeImage.createFromBuffer(await fetchBytes(await client().downloadUrl(id)));
-      // Formats such as HEIC can't be decoded here; fall back to the JPEG preview.
-      if (image.isEmpty() && item?.thumbUrl) image = nativeImage.createFromBuffer(await fetchBytes(item.thumbUrl));
-      if (image.isEmpty()) throw new ApiError('unsupported_image', 'Cannot decode image');
-      const png = new Blob([new Uint8Array(image.toPNG())], { type: 'image/png' });
-      await clipboard.write([new ClipboardItem({ 'image/png': png })]);
-    }),
-  );
+  const copyToClipboard = async (image: Electron.NativeImage) => {
+    if (image.isEmpty()) throw new ApiError('unsupported_image', 'Cannot decode image');
+    const png = new Blob([new Uint8Array(image.toPNG())], { type: 'image/png' });
+    await clipboard.write([new ClipboardItem({ 'image/png': png })]);
+  };
+  const plainCopyImage = guarded(async (id: string) => {
+    const item = itemCache.get(id);
+    let image = nativeImage.createFromBuffer(await fetchBytes(await client().downloadUrl(id)));
+    // Formats such as HEIC can't be decoded here; fall back to the JPEG preview.
+    if (image.isEmpty() && item?.thumbUrl) image = nativeImage.createFromBuffer(await fetchBytes(item.thumbUrl));
+    await copyToClipboard(image);
+  });
+  ipcMain.handle('copyImage', async (e, id: string): Promise<Result> => {
+    if (!vault.owns(id)) return plainCopyImage(e, id);
+    const bytes = await vault.copyImageBytes(id);
+    if (!bytes.ok) return bytes;
+    try {
+      let image = nativeImage.createFromBuffer(Buffer.from(bytes.value));
+      if (image.isEmpty()) {
+        // Same fallback as above: the decrypted JPEG preview.
+        const thumb = await vault.vaultProtocol(`${VAULT_SCHEME}://thumb/${id}`);
+        if (thumb.status === 200 && thumb.body) image = nativeImage.createFromBuffer(Buffer.from(thumb.body));
+      }
+      await copyToClipboard(image);
+      return { ok: true, value: undefined };
+    } catch (err) {
+      return fail(err);
+    }
+  });
 
   ipcMain.handle(
     'remove',
@@ -499,6 +515,34 @@ app.whenReady().then(() => {
   // The end-to-end test serves its pictures from localhost, which is otherwise refused.
   const allowed = process.env.FATUP_E2E_LOCAL_PREVIEWS === '1' ? (u: string) => u.startsWith('http://127.0.0.1:') : undefined;
   previews = new PreviewCache(previewFiles, { fetchPicture: (url) => fetchPicture(url, undefined, allowed) });
+  vault = createVaultHandlers({
+    session: vaultSession,
+    client: () => client(),
+    isUnlocked: () => unlocked,
+    downloadsDir: downloadDir(),
+    // Written under a .part name and renamed, like every other download.
+    writeFile: async (path, bytes) => {
+      const partial = `${path}.part`;
+      try {
+        await writeFile(partial, bytes);
+        renameSync(partial, path);
+      } catch (err) {
+        rmSync(partial, { force: true });
+        throw err;
+      }
+    },
+    fileExists: (path) => existsSync(path) || existsSync(`${path}.part`),
+    isDownloaded: (id) => config.snapshot.downloaded.includes(id),
+    markDownloaded: (id) => config.markDownloaded(id),
+  });
+  // Decrypted Vault pictures live only in memory: never cached by Chromium (no-store) and never written to the previews folder.
+  protocol.handle(VAULT_SCHEME, async (req) => {
+    const res = await vault.vaultProtocol(req.url);
+    return new Response(res.body ? new Uint8Array(res.body) : null, {
+      status: res.status,
+      headers: { 'content-type': res.type ?? 'text/plain', 'cache-control': 'no-store' },
+    });
+  });
   protocol.handle(PREVIEW_SCHEME, async (req) => {
     const got = await previewFiles.read(new URL(req.url).pathname.slice(1));
     if (!got) return new Response('not found', { status: 404 });

@@ -39,7 +39,7 @@ export function VaultGate({ onUnlocked, onBack }: { onUnlocked: () => void; onBa
   async function submit(pin: string) {
     let res;
     try {
-      res = await window.fatup.vaultOpen(pin);
+      res = await window.fatup.vaultUnlock(pin);
     } catch (err) {
       // e.g. the preload is out of date: say so instead of silently swallowing the PIN.
       setErrorKey((k) => k + 1);
@@ -57,8 +57,11 @@ export function VaultGate({ onUnlocked, onBack }: { onUnlocked: () => void; onBa
     if (res.reason === 'locked') {
       setLockedUntil(res.lockedUntil);
       setNow(Date.now());
+    } else if (res.reason === 'wrong') {
+      setMessage(t.wrongPin(res.remaining));
     } else {
-      setMessage(t.wrongPin(res.attemptsLeft));
+      // wiped, not set up yet, or an error: the Vault setup and recovery screens (Tasks 11-12) will handle these properly.
+      setMessage(t.err_generic);
     }
   }
 

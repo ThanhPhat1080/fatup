@@ -13,7 +13,8 @@ Spec: `docs/spec/desktop-ui.md` (màn hình, liên kết, chia sẻ, lightbox, u
 | `src/main/api.ts` | `ApiClient` (fetch tới Worker). Bản web cũng dùng |
 | `src/main/config.ts`, `pin.ts` | config trong `userData`, token qua `safeStorage`, PIN scrypt + khóa khi sai |
 | `src/vault-session.ts` | `VaultSession`: phiên két mã hóa (giữ master key trong `#private`, không bao giờ extractable; `setup`/`unlock`/`recover`/`changePin`/`decryptList`/`encryptMetaFor`/`fileKey`). **Không import Node** vì bản web dùng lại; `ApiClient` và hàm kiểm tra PIN app được truyền vào |
-| `src/main/uploader.ts` | `UploadManager` (hàng đợi, 2 file cùng lúc, tiến độ, hủy) |
+| `src/main/vault-ipc.ts` | logic IPC của két mã hóa ở main, **không import Electron** (test được): `createVaultHandlers(deps)` (trạng thái/thiết lập/mở/khôi phục/đổi PIN, `listVault` đã giải mã, `fileBytes`/`download`/`copyImageBytes`/`previewUrl`) và `vaultProtocol` phục vụ `fatup-vault://thumb|file/<id>` từ bộ nhớ (chỉ khi két mở, không ghi đĩa). `index.ts` chỉ định tuyến tới đây (`owns(id)`) và gọi `vaultClose()` ở `lock`/`reset`. Renderer không bao giờ nhận `MK`/`DEK`/`S` |
+| `src/main/uploader.ts` | `UploadManager` (hàng đợi, 2 file cùng lúc, tiến độ, hủy); upload vào két mã hóa file (stream `encryptStream`) và thumbnail trước khi PUT, lỗi `vault_locked` nếu két đóng |
 | `src/main/previews.ts`, `src/preview-cache.ts`, `src/main/webpreview.ts` | ảnh xem trước của link (`fatup-preview://`) và xem trang web trong app |
 | `src/renderer/src/components/Main.tsx` | màn hình chính (file lớn nhất; tab, bộ lọc, menu, thao tác hàng loạt) |
 | `src/renderer/src/components/Files.tsx` | hiển thị dạng lưới/danh sách |

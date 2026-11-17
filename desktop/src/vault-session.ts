@@ -23,7 +23,9 @@ import {
   type VaultStatus,
 } from '@fatup/shared';
 import { ApiError, type ApiClient } from './main/api';
-import type { VaultPinRefusal, VaultUnlockResult } from './shared-ipc';
+import type { VaultPinRefusal, VaultRecoverResult, VaultSetupResult, VaultUnlockResult } from './shared-ipc';
+
+export type { VaultRecoverResult, VaultSetupResult };
 
 /** `CryptoKey` taken from the runtime's own typings (Node, DOM and the Worker each declare it differently). */
 type CryptoKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>;
@@ -39,8 +41,6 @@ export type VaultSessionDeps = {
   iterations?: number;
 };
 
-export type VaultSetupResult = { ok: true; recoveryKey: string } | { ok: false; error: string };
-export type VaultRecoverResult = { ok: true } | { ok: false; error: string };
 export type VaultChangePinResult = VaultUnlockResult | VaultPinRefusal;
 
 /** Thrown by everything that needs the master key while the Vault is closed. */

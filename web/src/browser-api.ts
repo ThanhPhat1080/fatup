@@ -1,5 +1,5 @@
 import type { FileItem } from '@fatup/shared';
-import type { AppState, FatupApi, Item, Prefs, Result, UnlockResult, UploadJob } from '../../desktop/src/shared-ipc';
+import type { AppState, FatupApi, Item, Prefs, Result, UnlockResult, UploadJob, VaultMoveResult } from '../../desktop/src/shared-ipc';
 import { ApiClient, ApiError, normalizeServerUrl } from '../../desktop/src/main/api';
 import { nextAttempt, open, seal, type Lockout, type Sealed } from './vault';
 import { WebUploadManager, deviceName } from './uploader';
@@ -120,6 +120,23 @@ export function installBrowserApi(): void {
     data.lockout = res.state;
     save();
     return { result: res.ok ? { ok: true } : asUnlockFailure(res), token };
+  }
+
+  /** Legacy move: one plain PUT per file. The Worker refuses it (426) once the encrypted Vault is set up. */
+  async function moveLegacy(ids: string[], into: boolean): Promise<Result<VaultMoveResult>> {
+    if (!unlockedToken) return { ok: false, error: 'locked' };
+    // Taking a file out of the Vault reveals it, so that needs the Vault open too.
+    if (!into && !vaultIsOpen) return { ok: false, error: 'vault_locked' };
+    const failed: string[] = [];
+    for (const id of ids) {
+      try {
+        await client().setVault(id, into);
+        if (into) await previews.forget([id]); // the Vault leaves no pictures on the device
+      } catch {
+        failed.push(id);
+      }
+    }
+    return { ok: true, value: { done: ids.length - failed.length, failed } };
   }
 
   const api: FatupApi = {
@@ -256,20 +273,27 @@ export function installBrowserApi(): void {
       if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener,noreferrer');
     },
 
-    vaultOpen: async (pin) => {
-      if (!unlockedToken) return { ok: false, reason: 'wrong', attemptsLeft: 0 };
+    // Task 10 gives the web the encrypted Vault (web/src/vault-session). Until then the web keeps the legacy behaviour:
+    // the Vault opens with the app PIN and moves use the plain PUT /files/:id/vault; the new calls are not supported yet.
+    vaultStatus: async () => ({ ok: false, error: 'not_supported' }),
+    vaultSetup: async () => ({ ok: false, error: 'not_supported' }),
+    vaultRecover: async () => ({ ok: false, error: 'not_supported' }),
+    vaultChangePin: async () => ({ ok: false, reason: 'error', error: 'not_supported' }),
+    vaultUnlock: async (pin) => {
+      if (!unlockedToken) return { ok: false, reason: 'error', error: 'locked' };
       const { result } = await tryUnlock(pin);
       if (result.ok) vaultIsOpen = true;
-      return result;
+      if (result.ok) return { ok: true };
+      return result.reason === 'locked' ? { ok: false, reason: 'locked', lockedUntil: result.lockedUntil } : { ok: false, reason: 'wrong', remaining: result.attemptsLeft };
     },
     vaultClose: async () => {
       vaultIsOpen = false;
     },
-    listVault: async (): Promise<Result<Item[]>> => {
+    listVault: async (opts): Promise<Result<Item[]>> => {
       if (!unlockedToken) return { ok: false, error: 'locked' };
       if (!vaultIsOpen) return { ok: false, error: 'vault_locked' };
       try {
-        const items = await client().listEverything({ vault: true });
+        const items = await client().listEverything({ vault: true, trash: opts?.trash === true });
         for (const it of items) itemCache.set(it.id, it);
         const downloaded = new Set(data.downloaded);
         return { ok: true, value: await previews.decorate(items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) }))) };
@@ -277,17 +301,9 @@ export function installBrowserApi(): void {
         return fail(err);
       }
     },
-    setVault: async (id, inVault) => {
-      if (!unlockedToken) return { ok: false, error: 'locked' };
-      if (!inVault && !vaultIsOpen) return { ok: false, error: 'vault_locked' };
-      try {
-        await client().setVault(id, inVault);
-        if (inVault) await previews.forget([id]); // the Vault leaves no pictures on the device
-        return { ok: true, value: undefined };
-      } catch (err) {
-        return fail(err);
-      }
-    },
+    vaultMoveIn: (ids) => moveLegacy(ids, true),
+    vaultMoveOut: (ids) => moveLegacy(ids, false),
+    onVaultProgress: () => () => undefined,
 
     usage: () => guarded(() => client().usage()),
 
