@@ -125,6 +125,12 @@ export type FileItem = {
   important?: boolean;
   /** Has a public share link that is still valid. Optional for older servers. */
   shared?: boolean;
+  /** True when content and metadata are encrypted in the Vault (`name`, `mime`, `kind`, `url` are placeholders). Optional for older servers. */
+  encrypted?: boolean;
+  /** Base64 encrypted metadata (see VaultMeta); null unless encrypted. Optional for older servers. */
+  encMeta?: string | null;
+  /** Base64 file key wrapped with the Vault key; null unless encrypted. Optional for older servers. */
+  encKey?: string | null;
 };
 
 /** Expiry choices for a share link, in days; `null` means it never expires. */
@@ -188,6 +194,8 @@ export type CreateUploadRequest = {
   size: number;
   hasThumb: boolean;
   device?: string;
+  /** Upload straight into the encrypted Vault: encrypted metadata and the wrapped file key. Older servers ignore it. */
+  vault?: { encMeta: string; encKey: string };
 };
 
 export type CreateUploadResponse = {
@@ -216,3 +224,4 @@ export type DownloadResponse = { url: string };
 
 export type ApiError = { error: { code: string; message: string } };
 export * from './embed';
+export * from './vault';
