@@ -653,7 +653,7 @@ describe('POST /files/:id/vault/out/complete', () => {
     it('shows the link in the main list again', async () => {
       const id = await encryptedLink();
       await completeOut(id, linkBody());
-      const ids = ((await (await callV('/files')).json()) as ListFilesResponse).items.map((i) => i.id);
+      const ids = ((await (await callV('/files?kind=link')).json()) as ListFilesResponse).items.map((i) => i.id);
       expect(ids).toEqual([id]);
     });
 
