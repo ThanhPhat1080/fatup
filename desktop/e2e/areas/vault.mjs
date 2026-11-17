@@ -1,5 +1,6 @@
 // E2E area "vault": the encrypted Vault end to end: setup wizard with the recovery key, upload into the Vault, delete to its trash
 // (Undo toast), the trash panel (sidebar at 1280 px, full screen at 400 px), restore, close, and unlock with a wrong PIN twice, then the right one.
+// Last: move a seeded file into the Vault from the main list (the PIN prompt comes first and the list stays in view), then check it inside.
 // Run alone: npm run e2e -- vault   (see ../smoke.mjs)
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -87,6 +88,12 @@ export async function run(h) {
     await fields.nth(i).locator('input').fill(groups[n - 1]);
   }
   await page.locator('.vault-confirm').getByRole('button', { name: 'Tiếp', exact: true }).click();
+  // The commit (step two of the setup) shows its own line for a moment; the screenshot of it is best effort, the commit may be quicker.
+  if (await page.getByText('Đang tạo két sắt…', { exact: true }).waitFor({ timeout: 1500 }).then(() => true, () => false)) {
+    await h.shot(page, '13a2-vault-committing');
+  } else {
+    h.log('vault: the committing line was gone before the screenshot (commit was quicker)');
+  }
   await page.locator('.vault-card').getByRole('button', { name: 'Mở két', exact: true }).click();
 
   h.log('vault: opened');
@@ -172,4 +179,34 @@ export async function run(h) {
   await page.waitForTimeout(300);
   await h.shot(page, '13f-vault-list-dark');
   await page.emulateMedia({ colorScheme: 'light' });
+
+  h.log('vault: move a seeded file in from the main list');
+  // The Vault is closed now (the back button left it). Moving in asks for the PIN first; the list stays behind the prompt.
+  const SEEDED = 'Đà Lạt trip.jpg';
+  const seeded = page.locator('.list__row', { hasText: SEEDED });
+  const gate = page.locator('.vaultscreen');
+  await seeded.waitFor();
+  await seeded.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Chuyển vào Két sắt' }).click();
+  await gate.locator('.pin__input').waitFor();
+  await page.getByText('Nhập PIN két sắt để cất các file này vào két.', { exact: true }).waitFor();
+  assert.equal(await page.locator('.app.vault-mode').count(), 0, 'the PIN prompt does not open the Vault view');
+  await page.waitForTimeout(800); // let the gate's entrance animation settle before the screenshot
+  await h.shot(page, '13g-vault-move-unlock-prompt');
+  await typePin(page, PIN);
+
+  h.log('vault: the file leaves the list and the Vault closes again');
+  await gate.waitFor({ state: 'detached', timeout: 20_000 });
+  await seeded.waitFor({ state: 'detached', timeout: 30_000 });
+  assert.equal(await page.locator('.app.vault-mode').count(), 0, 'the user stays on the main list');
+  assert.equal(await page.locator('.app:not(.vault-mode)').count(), 1, 'the main list is still shown');
+
+  h.log('vault: the file is inside the Vault');
+  await page.getByRole('button', { name: 'Két sắt', exact: true }).first().click();
+  await gate.locator('.pin__input').waitFor();
+  await typePin(page, PIN);
+  await page.locator('.app.vault-mode').waitFor({ timeout: 20_000 });
+  await page.locator('.list__row', { hasText: SEEDED }).waitFor();
+  assert.equal(await page.locator('.list__row', { hasText: SEEDED }).count(), 1, 'the seeded file is listed inside the Vault');
+  await h.shot(page, '13h-vault-contains-moved');
 }

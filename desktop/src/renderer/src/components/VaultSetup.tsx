@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Copy } from 'lucide-react';
-import type { VaultProgress, VaultSetupResult } from '../../../shared-ipc';
+import type { VaultProgress, VaultSetupCommitResult, VaultSetupResult } from '../../../shared-ipc';
 import { useI18n } from '../lib/i18n';
 import { nextSetupState, vaultErrorText, VAULT_PIN_LENGTH, type SetupState } from '../lib/vault';
 import { PinInput } from './PinInput';
@@ -8,7 +8,11 @@ import { VaultFrame } from './VaultFrame';
 
 type Props = { onDone: () => void; onBack: () => void };
 
-/** First-time setup of the Vault: PIN, recovery key, confirmation, then the conversion of old files. The recovery key lives only in this state. */
+/**
+ * First-time setup of the Vault, in two steps (spec 4.7b I1): PIN, recovery key, confirmation (all local: `vaultSetupPrepare` only
+ * makes the keys), then `vaultSetupCommit` sets the Vault up on the server, and the conversion of old files follows.
+ * The recovery key lives only in this state. Leaving the wizard before the commit closes the Vault, which discards the prepared setup.
+ */
 export function VaultSetup({ onDone, onBack }: Props) {
   const { t } = useI18n();
   const dict = t as unknown as Record<string, unknown>;
@@ -18,9 +22,19 @@ export function VaultSetup({ onDone, onBack }: Props) {
   const [progress, setProgress] = useState<VaultProgress | null>(null);
   const [copied, setCopied] = useState(false);
   const [typed, setTyped] = useState<[string, string]>(['', '']);
+  const committing = useRef(false); // a second click while the commit runs must not send a second commit
+  const committed = useRef(false); // once committed the Vault stays open for the user: leaving the wizard must not close it
 
   // The main process converts old files as soon as the Vault opens, which can be during the recovery screen; listen from the start.
   useEffect(() => window.fatup.onVaultProgress(setProgress), []);
+
+  // Leaving the wizard before the commit discards the prepared setup (the Vault is closed, its keys forgotten).
+  useEffect(
+    () => () => {
+      if (!committed.current) void window.fatup.vaultClose();
+    },
+    [],
+  );
 
   // Every conversion run ends with a progress event that has no `current`, also when there was nothing to convert: that is the done signal.
   useEffect(() => {
@@ -42,9 +56,10 @@ export function VaultSetup({ onDone, onBack }: Props) {
     if (next.error) return setShake((k) => k + 1);
     if (!next.pin || next.step !== 'pinAgain') return;
     setBusy(true);
+    // Step one: checks the PIN and makes the keys. Nothing is sent to the server yet.
     let result: VaultSetupResult;
     try {
-      result = await window.fatup.vaultSetup(next.pin);
+      result = await window.fatup.vaultSetupPrepare(next.pin);
     } catch (err) {
       console.error(err);
       result = { ok: false, error: 'network' };
@@ -54,10 +69,27 @@ export function VaultSetup({ onDone, onBack }: Props) {
     setState((s) => nextSetupState(s, { type: 'setupResult', result }));
   }
 
+  /** Step two, after the recovery key was confirmed: the server gets the Vault, and the Vault opens. */
+  async function commit() {
+    if (committing.current) return;
+    committing.current = true;
+    let result: VaultSetupCommitResult;
+    try {
+      result = await window.fatup.vaultSetupCommit();
+    } catch (err) {
+      console.error(err);
+      result = { ok: false, error: 'network' };
+    }
+    committing.current = false;
+    if (result.ok) committed.current = true;
+    setState((s) => nextSetupState(s, { type: 'commitResult', result }));
+  }
+
   function onConfirm(e: FormEvent) {
     e.preventDefault();
     const next = nextSetupState(state, { type: 'confirmGroups', typed });
     setState(next);
+    if (next.step === 'committing') void commit();
   }
 
   async function copyKey() {
@@ -75,6 +107,7 @@ export function VaultSetup({ onDone, onBack }: Props) {
     return (
       <VaultFrame title={t.vaultSetupTitle} onBack={onBack}>
         <p className="vault-card__text">{t.vaultSetupIntro}</p>
+        {errorLine}
         <button className="btn btn--filled vault-card__action" onClick={() => setState((s) => nextSetupState(s, { type: 'start' }))}>
           {t.vaultStart}
         </button>
@@ -147,6 +180,16 @@ export function VaultSetup({ onDone, onBack }: Props) {
             {t.next}
           </button>
         </form>
+      </VaultFrame>
+    );
+  }
+
+  if (state.step === 'committing') {
+    return (
+      <VaultFrame title={t.vaultSetupTitle}>
+        <p className="vault-card__text" role="status">
+          {t.vaultCommitting}
+        </p>
       </VaultFrame>
     );
   }

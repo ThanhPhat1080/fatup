@@ -11,8 +11,10 @@ const LEAVE_MS = 3400; // long enough to read what the wizard says
 
 const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
-/** Shown every time the Vault is opened: the PIN has to be entered again. */
-export function VaultGate({ onUnlocked, onBack, onRecover }: { onUnlocked: () => void; onBack: () => void; onRecover: () => void }) {
+/**
+ * Shown every time the Vault is opened: the PIN has to be entered again. `hint` says why it is asked (moving files in from the list).
+ */
+export function VaultGate({ onUnlocked, onBack, onRecover, hint }: { onUnlocked: () => void; onBack: () => void; onRecover: () => void; hint?: string }) {
   const { t } = useI18n();
   const [message, setMessage] = useState<GateMessage | null>(null);
   const [errorKey, setErrorKey] = useState(0);
@@ -75,6 +77,8 @@ export function VaultGate({ onUnlocked, onBack, onRecover }: { onUnlocked: () =>
       <LockBackdrop />
       <div className="center-screen lockscreen__center">
         <div className="lockstage">
+          {/* Above the wizard, on the dark sky: the flames below the wizard would make the text hard to read. */}
+          {hint && <p className="vault-card__text" style={{ marginBottom: 12 }}>{hint}</p>}
           <LockWizard boom={boom} panicKey={errorKey} message={leaving ? 'GO BACK TO THE SHADOW!' : undefined} calm={leaving}>
             <PinInput label={t.vaultPrompt} onComplete={submit} errorKey={errorKey} disabled={locked || boom || leaving} length={VAULT_PIN_LENGTH} />
           </LockWizard>

@@ -2,7 +2,7 @@
  * Pure decision logic of the Vault UI: the setup wizard, the 6-digit gate, recovery and PIN change.
  * No React, no DOM: components call these and only render the result, so the logic is unit-tested (test/vault-ui.test.ts).
  */
-import type { Item, VaultPinRefusal, VaultUnlockResult } from '../../../shared-ipc';
+import type { Item, VaultPinRefusal, VaultSetupCommitResult, VaultUnlockResult } from '../../../shared-ipc';
 
 export const VAULT_PIN_LENGTH = 6;
 
@@ -31,11 +31,11 @@ export function checkConfirmGroups(recoveryKey: string, picks: [number, number],
   });
 }
 
-export type SetupStep = 'intro' | 'pin' | 'pinAgain' | 'recovery' | 'confirm' | 'migrating' | 'done';
+export type SetupStep = 'intro' | 'pin' | 'pinAgain' | 'recovery' | 'confirm' | 'committing' | 'migrating' | 'done';
 
 /**
- * State of the setup wizard. `pin` is kept only between the first and the repeated PIN and until the server answers;
- * `recoveryKey` and `picks` live only while the recovery screen is shown, and are dropped when the wizard is done.
+ * State of the setup wizard. `pin` is kept only between the first and the repeated PIN and until the prepare call answers;
+ * `recoveryKey` and `picks` live from the recovery screen until the commit succeeds (a failed commit can be retried), then are dropped.
  */
 export type SetupState = {
   step: SetupStep;
@@ -52,8 +52,12 @@ export type SetupEvent =
   | { type: 'setupResult'; result: { ok: true; recoveryKey: string } | { ok: false; error: string }; random?: () => number }
   | { type: 'saved' }
   | { type: 'confirmGroups'; typed: [string, string] }
+  | { type: 'commitResult'; result: VaultSetupCommitResult }
   | { type: 'confirmed' }
   | { type: 'migrationDone' };
+
+/** Commit errors that end the setup: the wizard goes back to the start and the recovery key is dropped. */
+const RESTART_ERRORS = new Set(['closed', 'no_prepared_setup', 'vault_exists']);
 
 /** Plain objects are accepted too: the wizard is also driven from untyped input (test/vault-ui.test.ts). The result is always a SetupState. */
 type Loose = Record<string, unknown>;
@@ -103,8 +107,17 @@ export function nextSetupState(state: SetupState | Loose, event: SetupEvent | Lo
 
     case 'confirmGroups': {
       if (s.step !== 'confirm' || !s.recoveryKey || !s.picks) return s;
-      if (!checkConfirmGroups(s.recoveryKey, s.picks, e.typed)) return { ...s, error: 'recovery_wrong' };
-      return { ...withoutError(s), step: 'migrating' };
+      // The key and picks stay: the commit is made from 'committing', and a failed commit goes back here with them.
+      if (!checkConfirmGroups(s.recoveryKey, s.picks, e.typed)) return { ...s, error: 'confirm_wrong' };
+      return { ...withoutError(s), step: 'committing' };
+    }
+
+    case 'commitResult': {
+      if (s.step !== 'committing') return s;
+      const { result } = e;
+      if (result.ok) return { step: 'migrating' };
+      if (RESTART_ERRORS.has(result.error)) return { step: 'intro', error: result.error };
+      return { step: 'confirm', error: result.error, recoveryKey: s.recoveryKey, picks: s.picks };
     }
 
     case 'confirmed':
@@ -132,7 +145,7 @@ export function vaultErrorKey(code: string): string {
       return 'vaultMatchesAppPin';
     case 'bad_recovery_key':
       return 'vaultBadRecoveryKey';
-    case 'recovery_wrong':
+    case 'confirm_wrong':
       return 'vaultRecoveryWrong';
     default:
       return `err_${code}`;
@@ -174,6 +187,17 @@ export function vaultText(dict: Record<string, unknown>, message: GateMessage): 
   const value = dict[message.key];
   if (typeof value === 'function') return (value as (args: Record<string, number>) => string)(message.args ?? {});
   return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Where a move into the Vault starts (spec 4.7b I2). An open Vault moves at once; a set-up Vault that is closed asks for the
+ * 6-digit PIN first, a wiped one goes to the recovery screen first. 'none' has nothing to unlock, so it moves as before.
+ */
+export function vaultMoveInPlan(status: 'none' | 'ready' | 'wiped', open: boolean): 'move' | 'unlock' | 'recover' {
+  if (open) return 'move';
+  if (status === 'ready') return 'unlock';
+  if (status === 'wiped') return 'recover';
+  return 'move';
 }
 
 /** Where the recovery screen goes after a failed `vaultRecover`: back to the key, back to the PIN, or stay on the repeat step. */

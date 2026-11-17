@@ -4,7 +4,7 @@ import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shar
 import { DEFAULT_QUOTA_BYTES, isShareable, type TagColor } from '@fatup/shared';
 import { DEFAULT_SORT, groupByDay, groupByDomain, inTab, matchesLink, matchesQuery, matchesSite, matchesTags, singleGroup, siteCounts, sortItems, type SiteFilter, type SortKey, type SortState } from '../lib/format';
 import { errorText, useI18n } from '../lib/i18n';
-import { canMoveOut, undoVaultDelete } from '../lib/vault';
+import { canMoveOut, undoVaultDelete, vaultMoveInPlan } from '../lib/vault';
 import { AddLinkDialog } from './AddLinkDialog';
 import { ConfirmDialog } from './Dialog';
 import { EmptyState, FileGrid, FileList } from './Files';
@@ -76,6 +76,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const [vaultTrashOpen, setVaultTrashOpen] = useState(false); // the trash of the open Vault: a sidebar, or a full-screen page on phones
   /** True while this window moves files in or out of the Vault, so their progress shows as a toast (not the conversion's). */
   const movingRef = useRef(false);
+  /** Files from the main list waiting for the Vault: the PIN gate or the recovery screen comes first (spec 4.7b I2). */
+  const [pendingMove, setPendingMove] = useState<Item[] | null>(null);
   const [shiver, setShiver] = useState(0);
   const [trashKick, setTrashKick] = useState(0); // bumped when the trash opens, to replay its lid animation
   const [trashInfoOpen, setTrashInfoOpen] = useState(false);
@@ -298,6 +300,13 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   /** Setup or recovery is done: the Vault is open already, so the list shows it straight away. */
   const vaultFlowDone = () => {
     setVaultFlow(null);
+    // Recovery that was started to move files in from the list: the files go in and the Vault closes again, the list stays.
+    if (pendingMove) {
+      const targets = pendingMove;
+      setPendingMove(null);
+      void moveInAndClose(targets);
+      return;
+    }
     setInTrash(false);
     setInVault(true);
     setVaultUnlocked(true);
@@ -307,6 +316,11 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const recoverVault = () => {
     leaveVault();
     setVaultFlow('recover');
+  };
+  /** Backs out of the setup or recovery screen; a move that was waiting for the Vault is dropped with it. */
+  const cancelVaultFlow = () => {
+    setVaultFlow(null);
+    setPendingMove(null);
   };
 
   /** Runs `fn` over the targets four at a time; returns the ids that succeeded. "Already gone" counts as success. */
@@ -379,11 +393,34 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     return { done: new Set(ids.filter((id) => !failed.has(id))), failed: failed.size };
   }
 
+  /**
+   * "Chuyển vào Két sắt" from the main list (spec 4.7b I2). The Vault's state decides the first step: an open Vault moves at once,
+   * a closed one asks for its PIN (or sends a wiped one to recovery) and the move runs after that, and the list stays in view.
+   */
   async function moveToVault(targets: Item[]) {
     if (targets.length === 0) return;
     setLightboxId(null);
     setLinkPreviewId(null);
     setPdfId(null);
+    const status = await window.fatup.vaultStatus();
+    if (!status.ok) return toast(errorText(t, status.error), true);
+    const plan = vaultMoveInPlan(status.value.state, inVault && vaultUnlocked);
+    if (plan === 'move') return performMoveIn(targets);
+    setPendingMove(targets);
+    if (plan === 'recover') setVaultFlow('recover');
+  }
+
+  /** Runs the move into the Vault that was waiting for the PIN or recovery, then closes the Vault again. */
+  async function moveInAndClose(targets: Item[]) {
+    try {
+      await performMoveIn(targets);
+    } finally {
+      leaveVault();
+    }
+  }
+
+  /** The move itself: the files leave the list for the Vault, and the toast reports how many. */
+  async function performMoveIn(targets: Item[]) {
     const moved = await moveBetween(targets, true);
     if (!moved) return;
     const { done, failed } = moved;
@@ -690,7 +727,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) && (e.target as HTMLInputElement).type !== 'checkbox';
-      const overlay = lightboxId || linkPreviewId || pdfId || settingsOpen || menu || confirm || vaultFlow || vaultTrashOpen || (inVault && !vaultUnlocked);
+      const overlay = lightboxId || linkPreviewId || pdfId || settingsOpen || menu || confirm || vaultFlow || pendingMove || vaultTrashOpen || (inVault && !vaultUnlocked);
       if (typing || overlay) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault();
@@ -704,7 +741,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lightboxId, linkPreviewId, pdfId, settingsOpen, menu, confirm, picked, inTrash, inVault, vaultUnlocked, vaultFlow, vaultTrashOpen, selectAll, clearSelection]);
+  }, [lightboxId, linkPreviewId, pdfId, settingsOpen, menu, confirm, picked, inTrash, inVault, vaultUnlocked, vaultFlow, pendingMove, vaultTrashOpen, selectAll, clearSelection]);
 
   // Trashed files can't be opened; restore them first.
   // Links open in the in-app preview; Ctrl/⌘ + click, or a site the person chose to always open directly, goes straight outside.
@@ -835,9 +872,21 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
 
       <main className="panel">
         {vaultFlow === 'setup' ? (
-          <VaultSetup onDone={vaultFlowDone} onBack={() => setVaultFlow(null)} />
+          <VaultSetup onDone={vaultFlowDone} onBack={cancelVaultFlow} />
         ) : vaultFlow === 'recover' ? (
-          <VaultRecover onDone={vaultFlowDone} onBack={() => setVaultFlow(null)} />
+          <VaultRecover onDone={vaultFlowDone} onBack={cancelVaultFlow} />
+        ) : pendingMove ? (
+          // Moving files into the Vault from the list: the PIN first; the list is still behind it.
+          <VaultGate
+            hint={t.vaultUnlockToMove}
+            onUnlocked={() => {
+              const targets = pendingMove;
+              setPendingMove(null);
+              void moveInAndClose(targets);
+            }}
+            onBack={() => setPendingMove(null)}
+            onRecover={() => setVaultFlow('recover')}
+          />
         ) : inVault && !vaultUnlocked ? (
           <VaultGate onUnlocked={() => setVaultUnlocked(true)} onBack={leaveVault} onRecover={recoverVault} />
         ) : (
