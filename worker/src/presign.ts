@@ -45,3 +45,12 @@ export function contentDisposition(filename: string): string {
 
 export const fileKey = (id: string) => `files/${id}`;
 export const thumbKey = (id: string) => `thumbs/${id}.jpg`;
+
+/** Encrypted Vault objects live under `vault/`; the row's `encrypted` flag tells which pair of keys applies. */
+export const vaultFileKey = (id: string) => `vault/${id}`;
+export const vaultThumbKey = (id: string) => `vault/${id}.thumb`;
+
+/** The R2 keys `[file, thumbnail]` of a row. */
+export function objectKeys(row: { id: string; encrypted: number }): [string, string] {
+  return row.encrypted === 1 ? [vaultFileKey(row.id), vaultThumbKey(row.id)] : [fileKey(row.id), thumbKey(row.id)];
+}

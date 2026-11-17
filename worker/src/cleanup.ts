@@ -1,6 +1,6 @@
 import { PENDING_TTL_HOURS, TRASH_RETENTION_DAYS } from '@fatup/shared';
 import type { Env } from './env';
-import { fileKey, thumbKey } from './presign';
+import { objectKeys } from './presign';
 
 const BATCH = 500; // R2 delete() accepts up to 1000 keys; each file has 2.
 const DAY = 24 * 60 * 60 * 1000;
@@ -9,11 +9,15 @@ const DAY = 24 * 60 * 60 * 1000;
 export async function purge(env: Env, ids: string[]): Promise<void> {
   for (let i = 0; i < ids.length; i += BATCH) {
     const chunk = ids.slice(i, i + BATCH);
-    await env.BUCKET.delete(chunk.flatMap((id) => [fileKey(id), thumbKey(id)]));
-    await env.DB.prepare(`DELETE FROM shares WHERE file_id IN (${chunk.map(() => '?').join(',')})`)
+    const marks = chunk.map(() => '?').join(',');
+    const { results } = await env.DB.prepare(`SELECT id, encrypted FROM files WHERE id IN (${marks})`)
+      .bind(...chunk)
+      .all<{ id: string; encrypted: number }>();
+    await env.BUCKET.delete(results.flatMap(objectKeys));
+    await env.DB.prepare(`DELETE FROM shares WHERE file_id IN (${marks})`)
       .bind(...chunk)
       .run();
-    await env.DB.prepare(`DELETE FROM files WHERE id IN (${chunk.map(() => '?').join(',')})`)
+    await env.DB.prepare(`DELETE FROM files WHERE id IN (${marks})`)
       .bind(...chunk)
       .run();
   }

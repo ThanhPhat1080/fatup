@@ -28,7 +28,7 @@ import {
 import { purge } from './cleanup';
 import { checkFrame, fetchPreview } from './preview';
 import type { Env } from './env';
-import { createPresigner, fileKey, thumbKey, type Presigner } from './presign';
+import { createPresigner, fileKey, thumbKey, vaultThumbKey, type Presigner } from './presign';
 import { createShareRoutes } from './share-public';
 import { isUlid, ulid } from './ulid';
 
@@ -54,6 +54,12 @@ type Row = {
   icon_url: string | null;
   /** 1 when marked important. */
   important: number;
+  /** 1 when the content and metadata are end-to-end encrypted (R2 keys under `vault/`). */
+  encrypted: number;
+  /** Base64 encrypted metadata, or null for plain rows. */
+  enc_meta: string | null;
+  /** Base64 file key wrapped with the Vault key, or null for plain rows. */
+  enc_key: string | null;
 };
 
 type AppEnv = { Bindings: Env; Variables: { presigner: Presigner } };
@@ -117,7 +123,9 @@ async function toItem(row: Row, presigner: Presigner, shared = false): Promise<F
     mime: row.mime,
     size: row.size,
     kind: row.kind,
-    thumbUrl: row.has_thumb ? await presigner.get(thumbKey(row.id), { contentType: 'image/jpeg' }) : null,
+    thumbUrl: row.has_thumb
+      ? await presigner.get(row.encrypted === 1 ? vaultThumbKey(row.id) : thumbKey(row.id), { contentType: row.encrypted === 1 ? 'application/octet-stream' : 'image/jpeg' })
+      : null,
     device: row.device,
     createdAt: row.created_at,
     deletedAt: row.deleted_at,
@@ -129,6 +137,9 @@ async function toItem(row: Row, presigner: Presigner, shared = false): Promise<F
     iconUrl: row.kind === 'link' ? (row.icon_url ?? null) : null,
     important: row.important === 1,
     shared,
+    encrypted: row.encrypted === 1,
+    encMeta: row.encrypted === 1 ? row.enc_meta : null,
+    encKey: row.encrypted === 1 ? row.enc_key : null,
   };
 }
 
@@ -283,6 +294,9 @@ export function createApp(options: AppOptions = {}) {
       title_set: title ? 1 : 0,
       icon_url: null,
       important: 0,
+      encrypted: 0,
+      enc_meta: null,
+      enc_key: null,
     };
     await c.env.DB.prepare(
       `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, device, created_at, url, title_set)
