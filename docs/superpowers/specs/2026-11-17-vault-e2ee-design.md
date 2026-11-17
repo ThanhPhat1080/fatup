@@ -143,7 +143,7 @@ Cron xóa vĩnh viễn và `DELETE /files/:id?permanent` xóa đúng R2 key theo
 
 1. Bấm két khi `state = none` → trình thiết lập: nhập PIN két 2 lần → hiện `RK` (có nút sao chép) → gõ lại 2 nhóm ngẫu nhiên của `RK` → `POST /vault/setup`.
 2. Ngay sau đó, và mỗi lần mở két khi còn mục `in_vault = 1 AND encrypted = 0`: chạy `vault/in` cho từng mục, có thanh tiến trình; mục chưa xong hiện dấu "đang mã hóa".
-3. Mục trong thùng rác (cũ) có `in_vault = 0` thì không động tới.
+3. Mục trong thùng rác thường (`in_vault = 0`) thì không động tới. Mục chưa mã hóa nằm trong **thùng rác của két** (`in_vault = 1`, `deleted_at` có giá trị: bị xóa trong két sau khi deploy Worker mới nhưng trước khi thiết lập) **cũng được mã hóa**, và vẫn ở thùng rác của két. `vault/in` và `vault/in/complete` nhận các mục này; `vault/out` thì không (phải khôi phục trước).
 
 ### 4.8 Giới hạn bảo mật còn lại
 

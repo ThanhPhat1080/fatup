@@ -716,6 +716,28 @@ describe('POST /files/:id/vault/out/complete', () => {
   });
 });
 
+describe('a legacy item in the vault trash', () => {
+  // Deleted in the vault before encryption was set up: it sits in the vault trash in plain form and must be encrypted too.
+  it('can be moved in, stays in the vault trash, and loses its plain objects', async () => {
+    const deletedAt = Date.now() - 1000;
+    const id = await plainFile({ inVault: 1, deletedAt, thumb: true });
+    const urls = await moveIn(id);
+    expect(urls.status).toBe(200);
+    await put(`vault/${id}`, 40);
+    await put(`vault/${id}.thumb`, 20);
+    const res = await completeIn(id, inBody({ size: 40, hasThumb: true }));
+    expect(res.status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, deleted_at: deletedAt, name: '' });
+    expect(await has(`files/${id}`)).toBe(false);
+    expect(await has(`thumbs/${id}.jpg`)).toBe(false);
+  });
+
+  it('is not moved out while it is in the trash (restore it first)', async () => {
+    const id = await vaultedFile({ deletedAt: Date.now() });
+    expect((await moveOut(id)).status).toBe(404);
+  });
+});
+
 describe('guards on all four routes', () => {
   /** Each route with a row it would accept and a body that would otherwise be valid. */
   const routes: { name: string; call: (id: string) => Response | Promise<Response>; make: (f?: NewRow) => Promise<string> }[] = [
