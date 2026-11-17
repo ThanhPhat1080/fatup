@@ -197,7 +197,7 @@ async function beginMove<B = null>(
 
 const isSize = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
 
-type InBody = { encMeta: string; encKey: string; size: number; hasThumb: boolean };
+type InBody = { encMeta: string; encKey: string; size: number; hasThumb: boolean; etag: unknown };
 type OutBody = { link: { url: string; title: string } | null; name: string; mime: string; size: number; hasThumb: boolean };
 
 function parseIn(c: Ctx) {
@@ -205,7 +205,7 @@ function parseIn(c: Ctx) {
     if (!isEncText(b.encMeta, MAX_ENC_META) || !isEncText(b.encKey, MAX_ENC_KEY) || !isSize(b.size)) {
       return badRequest(c, `encMeta (at most ${MAX_ENC_META} characters), encKey (at most ${MAX_ENC_KEY}) and a non-negative integer size are required`);
     }
-    return { encMeta: b.encMeta, encKey: b.encKey, size: b.size, hasThumb: b.hasThumb === true };
+    return { encMeta: b.encMeta, encKey: b.encKey, size: b.size, hasThumb: b.hasThumb === true, etag: b.etag };
   };
 }
 
@@ -226,6 +226,15 @@ function parseOut(c: Ctx) {
 }
 
 const reload = async (c: Ctx, id: string) => (await c.env.DB.prepare('SELECT * FROM files WHERE id = ?').bind(id).first<Row>())!;
+
+const MAX_ETAG = 200;
+
+/** The `etag` of a move-in: a non-empty string of at most `MAX_ETAG` characters; one pair of surrounding quotes (the ETag header form) is dropped. */
+function cleanEtag(v: unknown): string | null {
+  if (typeof v !== 'string' || v.length === 0 || v.length > MAX_ETAG) return null;
+  const bare = v.length >= 2 && v.startsWith('"') && v.endsWith('"') ? v.slice(1, -1) : v;
+  return bare.length > 0 ? bare : null;
+}
 
 const changed = (c: Ctx) => fail(c, 409, 'item_changed', 'The item changed while moving it; try again');
 
@@ -263,6 +272,9 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
     }
 
     const isLink = row.kind === 'link';
+    // A file must say which bytes it encrypted (the ETag of its PUT), so two devices moving the same file in cannot mix one's key with the other's ciphertext.
+    const etag = isLink ? null : cleanEtag(body.etag);
+    if (!isLink && etag === null) return badRequest(c, `etag (the ETag of the uploaded encrypted file, at most ${MAX_ETAG} characters) is required`);
     if (!isLink) {
       if (body.size > vaultCiphertextSize(MAX_FILE_SIZE)) {
         await c.env.BUCKET.delete(vaultKeys);
@@ -274,6 +286,8 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
         await c.env.BUCKET.delete(vaultKeys);
         return fail(c, 409, 'size_mismatch', 'Uploaded size does not match');
       }
+      // Another device overwrote vault/<id> since this one's PUT: nothing is written or deleted, the client starts over.
+      if (object.etag !== etag) return changed(c);
     }
     const keepThumb = body.hasThumb && (await c.env.BUCKET.head(vaultThumbKey(row.id))) !== null;
 
@@ -299,6 +313,8 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
     if (begun instanceof Response) return begun;
     const { row } = begun;
     if (row.encrypted !== 1) return fail(c, 409, 'not_encrypted', 'The item is not encrypted');
+    // From here plain objects may appear under files/<id>; the daily cron sweeps them if this move never completes.
+    await c.env.DB.prepare('UPDATE files SET out_started_at = ? WHERE id = ?').bind(Date.now(), row.id).run();
     const presigner = c.get('presigner');
     const withThumb = row.has_thumb === 1;
     const res: VaultMoveUrls = {
@@ -322,7 +338,8 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
       const same = body.link ? row.kind === 'link' && row.url === body.link.url : row.kind !== 'link' && row.size === body.size;
       if (row.in_vault !== 0 || !same) return fail(c, 409, 'not_encrypted', 'The item is not encrypted');
       await c.env.BUCKET.delete(vaultKeys);
-      return c.json(await itemOf(c, row));
+      await c.env.DB.prepare('UPDATE files SET out_started_at = NULL WHERE id = ?').bind(row.id).run();
+      return c.json(await itemOf(c, await reload(c, row.id)));
     }
 
     let res: D1Result;
@@ -333,7 +350,7 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
       if (dup) return fail(c, 409, 'duplicate_url', 'This link is already saved');
       res = await c.env.DB.prepare(
         `UPDATE files SET encrypted = 0, in_vault = 0, enc_meta = NULL, enc_key = NULL, name = ?, mime = ?, kind = 'link', url = ?,
-           size = 0, has_thumb = 0, previewed_at = NULL, icon_url = NULL, title_set = ?
+           size = 0, has_thumb = 0, previewed_at = NULL, icon_url = NULL, title_set = ?, out_started_at = NULL
          WHERE id = ? AND encrypted = 1 AND status = 'ready' AND deleted_at IS NULL`,
       )
         .bind(title || hostOf(url), LINK_MIME, url, title ? 1 : 0, row.id)
@@ -354,7 +371,7 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
       const keepThumb = body.hasThumb && kind === 'image' && (await c.env.BUCKET.head(thumbKey(row.id))) !== null;
       res = await c.env.DB.prepare(
         `UPDATE files SET encrypted = 0, in_vault = 0, enc_meta = NULL, enc_key = NULL, name = ?, mime = ?, kind = ?, url = NULL,
-           size = ?, has_thumb = ?, previewed_at = NULL, icon_url = NULL, title_set = 0
+           size = ?, has_thumb = ?, previewed_at = NULL, icon_url = NULL, title_set = 0, out_started_at = NULL
          WHERE id = ? AND encrypted = 1 AND status = 'ready' AND deleted_at IS NULL`,
       )
         .bind(body.name, body.mime, kind, body.size, keepThumb ? 1 : 0, row.id)

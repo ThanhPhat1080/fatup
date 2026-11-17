@@ -535,7 +535,7 @@ export function createApp(options: AppOptions = {}) {
   app.delete('/trash', async (c) => {
     let deleted = 0;
     for (;;) {
-      const { results } = await c.env.DB.prepare('SELECT id FROM files WHERE deleted_at IS NOT NULL LIMIT 500').all<{ id: string }>();
+      const { results } = await c.env.DB.prepare('SELECT id FROM files WHERE deleted_at IS NOT NULL AND in_vault = 0 LIMIT 500').all<{ id: string }>();
       if (results.length === 0) break;
       await purge(c.env, results.map((r) => r.id));
       deleted += results.length;

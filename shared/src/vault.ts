@@ -99,7 +99,14 @@ export type VaultPinRequest = {
 };
 
 /** `POST /files/:id/vault/in/complete`. */
-export type VaultMoveInComplete = { encMeta: string; encKey: string; size: number; hasThumb: boolean };
+export type VaultMoveInComplete = {
+  encMeta: string;
+  encKey: string;
+  size: number;
+  hasThumb: boolean;
+  /** The ETag R2 returned for the PUT of vault/<id>. Required for anything but a link; a mismatch answers 409 `item_changed`. */
+  etag?: string;
+};
 /** `POST /files/:id/vault/out/complete`. */
 export type VaultMoveOutComplete = {
   name: string;

@@ -2,6 +2,7 @@
 ALTER TABLE files ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;  -- 1 = content and metadata are encrypted
 ALTER TABLE files ADD COLUMN enc_meta  TEXT;                         -- base64, NULL when encrypted = 0
 ALTER TABLE files ADD COLUMN enc_key   TEXT;                         -- file key wrapped with the Vault key, base64
+ALTER TABLE files ADD COLUMN out_started_at INTEGER;                 -- epoch ms of the last vault/out; cleared by vault/out/complete, the cron sweeps plain leftovers when it stays set
 
 CREATE TABLE vault_keys (
   id                  INTEGER PRIMARY KEY CHECK (id = 1),  -- one user, one Vault
