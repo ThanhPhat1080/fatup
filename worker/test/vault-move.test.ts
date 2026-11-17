@@ -207,6 +207,16 @@ describe('POST /files/:id/vault/in', () => {
     expect(u.thumbUrl).toBeNull();
   });
 
+  it('keeps the preview picture of a link that has one: its thumbnail moves to vault/<id>.thumb (spec Q3)', async () => {
+    const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'example.com', size: 0, hasThumb: 1 });
+    const res = await moveIn(id);
+    expect(res.status).toBe(200);
+    const u = (await res.json()) as { downloadUrl: string | null; thumbUrl: string | null; thumbUploadUrl: string | null };
+    expect(u.downloadUrl).toBeNull();
+    expect(keyOf(u.thumbUrl)).toBe(`thumbs/${id}.jpg`);
+    expect(keyOf(u.thumbUploadUrl)).toBe(`vault/${id}.thumb`);
+  });
+
   it('changes nothing: no row change and no object is written or removed', async () => {
     const id = await plainFile({ thumb: true });
     await moveIn(id);
@@ -371,6 +381,17 @@ describe('POST /files/:id/vault/in/complete', () => {
       icon_url: null,
     });
     expect(await vaultObjects()).toEqual([]);
+  });
+
+  it('moves a link with a preview picture in, keeping the picture encrypted and removing the plain one (spec Q3)', async () => {
+    const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0, hasThumb: 1 });
+    await put(`thumbs/${id}.jpg`, 7);
+    await put(`vault/${id}.thumb`, 39);
+    const res = await completeIn(id, inBody({ size: 0, hasThumb: true }));
+    expect(res.status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, kind: 'file', url: null, size: 0, has_thumb: 1 });
+    expect(await has(`thumbs/${id}.jpg`)).toBe(false);
+    expect(await vaultObjects()).toEqual([`vault/${id}.thumb`]);
   });
 
   it('is idempotent: a second complete answers 200 and deletes nothing from vault/', async () => {
