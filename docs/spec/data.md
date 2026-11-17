@@ -45,8 +45,35 @@ CREATE TABLE shares (
 CREATE TRIGGER shares_revoke_on_hide AFTER UPDATE OF deleted_at, in_vault ON files
 WHEN NEW.deleted_at IS NOT NULL OR NEW.in_vault = 1
 BEGIN DELETE FROM shares WHERE file_id = NEW.id; END;
+
+-- 0009_vault_e2ee.sql: két sắt mã hóa phía client (mục 7.1–7.6 của security.md)
+ALTER TABLE files ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;  -- 1 = nội dung và metadata đã mã hóa
+ALTER TABLE files ADD COLUMN enc_meta  TEXT;                         -- base64, NULL khi encrypted = 0
+ALTER TABLE files ADD COLUMN enc_key   TEXT;                         -- DEK bọc bằng MK, base64
+ALTER TABLE files ADD COLUMN out_started_at INTEGER;                 -- lúc vault/out gần nhất; vault/out/complete xóa; cron dọn bản rõ sót nếu còn quá 1 giờ
+ALTER TABLE files ADD COLUMN in_claim TEXT;                          -- token của máy được ghi vault/<id> lúc này (vault/in); vault/in/complete xóa
+ALTER TABLE files ADD COLUMN in_claim_until INTEGER;                 -- epoch ms; giữ chỗ hết hiệu lực khi đã qua mốc này
+
+CREATE TABLE vault_keys (
+  id                  INTEGER PRIMARY KEY CHECK (id = 1),  -- một người dùng, một két (luôn một dòng)
+  kdf_salt            TEXT NOT NULL,                       -- salt của PBKDF2 (base64)
+  kdf_iterations      INTEGER NOT NULL,                    -- số vòng PBKDF2 của PIN két
+  auth_hash           TEXT,                                -- SHA-256(authKey) hex; NULL sau khi bị xóa vì sai 10 lần
+  server_secret       TEXT,                                -- S (base64); NULL sau khi bị xóa
+  wrapped_mk_pin      TEXT,                                -- MK bọc bằng KEK của PIN (base64); NULL sau khi bị xóa
+  rk_auth_hash        TEXT NOT NULL,                       -- SHA-256(rkAuth) hex
+  wrapped_mk_recovery TEXT NOT NULL,                       -- MK bọc bằng khóa của recovery key (base64)
+  failed_attempts     INTEGER NOT NULL DEFAULT 0,          -- số lần sai liên tiếp; về 0 khi đúng
+  locked_until        INTEGER,                             -- epoch ms; NULL khi không khóa
+  created_at          INTEGER NOT NULL,
+  updated_at          INTEGER NOT NULL
+);
 ```
 
 - `kind = 'image'` khi `mime` bắt đầu bằng `image/`, còn lại là `'file'`.
-- R2 key: `files/<id>` cho file gốc, `thumbs/<id>.jpg` cho thumbnail.
+- R2 key: `files/<id>` cho file gốc, `thumbs/<id>.jpg` cho thumbnail (bản rõ). Mục mã hóa dùng `vault/<id>` và `vault/<id>.thumb` (bản mã FUV1). Cột `encrypted` quyết định cặp nào đang áp dụng.
+- **Mục đã mã hóa** (`encrypted = 1`): `name = ''`, `mime = 'application/octet-stream'`, `kind = 'file'`, `url = NULL`; giá trị thật nằm trong `enc_meta`. `size` là kích thước bản mã.
+- `in_vault = 1` cũng là thùng rác của két khi `deleted_at` có giá trị. `deleted_at` và `in_vault` là hai cột độc lập: thùng rác thường là `deleted_at IS NOT NULL AND in_vault = 0`.
+- `0009` chỉ thêm cột và bảng, không đổi dữ liệu cũ; mọi dòng hiện có có `encrypted = 0`.
+- Hằng số liên quan: `MAX_ENC_META = 8192`, `MAX_ENC_KEY = 512` ký tự (validate ở API, không ở schema).
 - Migration chạy theo thứ tự. Mỗi lần nâng cấp: **migrate trước, deploy sau** (code mới đọc cột mới).

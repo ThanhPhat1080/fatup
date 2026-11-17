@@ -1,6 +1,6 @@
 # Mã hóa Két sắt phía client (E2EE): thiết kế
 
-Trạng thái: **chờ người dùng duyệt**. Viết ngày 2026-11-17 sau một buổi hỏi đáp thiết kế; người dùng đã đồng ý các câu Q1 đến Q7 ở mục 3. Các quyết định kỹ thuật ở mục 4 do Claude đề xuất và nằm ở mục 7 để người dùng xem lại. Thay đổi quyết định thì sửa file này trước, code sau; khi làm xong phải cập nhật `docs/spec/lifecycle.md` (5.2), `security.md`, `api.md`, `data.md`, `desktop-ui.md`, `web.md`, và viết ADR mới thay một phần ADR 0006.
+Trạng thái: **đã duyệt và đã triển khai** (nhánh `feat/vault-e2ee`; chưa phát hành). Viết ngày 2026-11-17 sau một buổi hỏi đáp thiết kế; người dùng đã đồng ý các câu Q1 đến Q7 ở mục 3. Các quyết định kỹ thuật ở mục 4 do Claude đề xuất và nằm ở mục 7 để người dùng xem lại. Thay đổi quyết định thì sửa file này trước, code sau; khi làm xong phải cập nhật `docs/spec/lifecycle.md` (5.2), `security.md`, `api.md`, `data.md`, `desktop-ui.md`, `web.md`, và viết ADR mới thay một phần ADR 0006.
 
 ## 1. Mục đích
 
@@ -134,7 +134,7 @@ Cron xóa vĩnh viễn và `DELETE /files/:id?permanent` xóa đúng R2 key theo
 
 ### 4.6 Web
 
-- Lõi mã hóa trong `web/src/vault.ts` (dùng chung `shared/`). `MK` trong bộ nhớ JS, không ghi `localStorage`/IndexedDB.
+- Lõi mã hóa trong `web/src/vault-web.ts` (dùng chung `shared/`; `web/src/vault.ts` là token của PWA, không phải két). `MK` trong bộ nhớ JS, không ghi `localStorage`/IndexedDB.
 - Upload vào két: mã hóa từng khối thành `Blob` rồi PUT. Tải về: giải mã vào bộ nhớ rồi lưu như hiện nay. File tối đa `MAX_FILE_SIZE` (100 MB) nên không cần ghi theo luồng xuống đĩa.
 - Thumbnail và ảnh trong két: giải mã thành `blob:` URL trong bộ nhớ, không lưu vào kho ảnh xem trước (IndexedDB); đóng két thì `revokeObjectURL`.
 - Kiểm tra PIN yếu như desktop (PIN app trên web cũng chỉ kiểm tra cục bộ).

@@ -20,9 +20,14 @@ Spec: `docs/spec/desktop-ui.md` (màn hình, liên kết, chia sẻ, lightbox, u
 | `src/main/previews.ts`, `src/preview-cache.ts`, `src/main/webpreview.ts` | ảnh xem trước của link (`fatup-preview://`) và xem trang web trong app |
 | `src/renderer/src/components/Main.tsx` | màn hình chính (file lớn nhất; tab, bộ lọc, menu, thao tác hàng loạt) |
 | `src/renderer/src/components/Files.tsx` | hiển thị dạng lưới/danh sách |
-| `src/renderer/src/components/Lock*.tsx`, `Moria*`, `Fellowship`, `VaultGate` | màn hình khóa có hoạt họa và cổng két sắt |
+| `src/renderer/src/components/Lock*.tsx`, `Moria*`, `Fellowship` | màn hình khóa có hoạt họa |
+| `src/renderer/src/components/VaultGate.tsx`, `LockWizard` (dùng chung với cổng két) | cổng 6 số của két sắt, có ông phù thủy và hiệu ứng nổ |
+| `src/renderer/src/components/VaultSetup.tsx`, `VaultRecover.tsx`, `VaultPinChange.tsx` | trình thiết lập hai bước (PIN, recovery key, xác nhận 2 nhóm), màn khôi phục, đổi PIN két trong Cài đặt |
+| `src/renderer/src/components/VaultTrash.tsx`, `VaultTrashIcon.tsx`, `VaultFrame.tsx` | thùng rác của két (sidebar 70% / toàn màn hình ≤ 720 px), icon của nó, khung chế độ két (`vault-mode`) |
+| `src/renderer/src/lib/vault.ts` | hàm thuần của két: bước thiết lập, thông báo cổng và lỗi, kế hoạch cất vào két, xác nhận recovery key — có unit test. Logic giao diện két đặt ở đây, không ở component |
 | `src/renderer/src/lib/format.ts` | hàm thuần: nhóm, sắp xếp, lọc, dung lượng — có unit test |
 | `src/renderer/src/lib/i18n.ts` | từ điển `en` và `vi` |
+| `src/main/web-globals.d.ts` | khai báo kiểu `CryptoKey`, `BodyInit` cho các test (project không có DOM lib) |
 | `e2e/smoke.mjs` | runner E2E: chạy các vùng trong `e2e/areas/`, mỗi vùng một mock server + profile riêng |
 | `e2e/harness.mjs` | phần dùng chung: `createHarness`, `launch`, `launchReady` (setup nhanh, PIN 1234), `log` (watchdog), `shot`, `kind`, `showAll`, `typePin` |
 | `e2e/areas/*.mjs` | các vùng E2E: `setup` (lần đầu + màn khóa), `files`, `share`, `links`, `settings`, `vault` (két sắt: thiết lập + recovery key, upload, thùng rác của két, khóa sai PIN) |
@@ -31,6 +36,7 @@ Spec: `docs/spec/desktop-ui.md` (màn hình, liên kết, chia sẻ, lightbox, u
 ## Test
 
 - Unit: `npm test -w @fatup/desktop` (vitest, `test/*.test.ts`). Logic giao diện được test qua hàm thuần trong `lib/` — đặt logic mới ở đó, không đặt trong component, để test được. `test/uploader.test.ts` chạy một HTTP server giả.
+- Két sắt: `test/vault-crypto.test.ts` (FUV1, khóa, recovery key), `vault-session.test.ts` (phiên, setup hai bước, bộ đếm thế hệ), `vault-api.test.ts` (client `/vault/*`), `vault-mover.test.ts` (cất, lấy ra, chuyển đổi), `vault-ipc.test.ts` (IPC và scheme, renderer không nhận khóa), `vault-ui.test.ts` (`lib/vault.ts`), `vault-styles.test.ts`, `vault-shared.test.ts`, `vault-wiring.test.ts`.
 - E2E: `npm run e2e` chạy mọi vùng; `npm run e2e -- links share` (hoặc `E2E_ONLY=links,share`) chỉ chạy các vùng đó; đã build rồi thì `node e2e/smoke.mjs links` (trong `desktop/`) để bỏ bước build. `npm run e2e:lock -w @fatup/desktop` cho màn khóa trên điện thoại. Cần màn hình (CI bọc bằng `xvfb-run`). `SCREENSHOT_DIR=…` lưu ảnh chụp (lỗi thì có `failure-<vùng>.png`); `E2E_VERBOSE=1` in từng bước.
   - Mỗi vùng bắt đầu từ trạng thái sạch (mock server, profile, thư mục tải về riêng), nên không phụ thuộc thứ tự. Thêm vùng mới: tạo `e2e/areas/<tên>.mjs` export `run(h)`, rồi thêm vào `AREAS` trong `smoke.mjs`.
   - Thêm kiểm tra cho một tính năng: đặt vào vùng của tính năng đó, bắt đầu bằng `h.launchReady()`. API giả là `e2e/mock-server.mjs` — thêm route/dữ liệu vào đó khi cần (`test/e2e-mock.test.ts` kiểm tra dữ liệu giả và các route két). Két sắt trong API giả giữ bản mã như client gửi, không giải mã; PUT trả header `ETag` và `vault/in/complete` đòi `etag` khớp như Worker; thời gian khóa rút ngắn bằng `E2E_VAULT_LOCK_SCALE` (mặc định 1).

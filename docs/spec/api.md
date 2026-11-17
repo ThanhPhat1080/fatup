@@ -11,18 +11,19 @@ Tất cả trả JSON, lỗi có dạng `{ "error": { "code": string, "message":
 | `GET` | `/health` | Không cần auth. `{ ok: true }` |
 | `GET` | `/me` | Client dùng để kiểm tra URL + token khi setup |
 | `GET` | `/usage` | `{ usedBytes, limitBytes }`. Tổng `size` của file `ready` (**gồm cả thùng rác và két sắt**, không tính thumbnail). `limitBytes` mặc định 10 GB (free tier R2), đổi bằng biến `R2_QUOTA_GB` |
-| `POST` | `/uploads` | Body `{ name, mime, size, hasThumb, device? }`. Kiểm tra `size ≤ 100MB`. Tạo row `pending`. Trả `{ id, uploadUrl, thumbUploadUrl? }` |
+| `POST` | `/uploads` | Body `{ name, mime, size, hasThumb, device?, vault? }`. Kiểm tra `size ≤ 100MB`. Tạo row `pending`. Trả `{ id, uploadUrl, thumbUploadUrl? }`. Với `vault: { encMeta, encKey }` (upload thẳng vào két, [mục 4.3](#43-két-sắt-mã-hóa)): `size` là kích thước bản mã (≤ `vaultCiphertextSize(100MB)`) và địa chỉ là `vault/<id>`. |
 | `POST` | `/uploads/:id/complete` | `HEAD` R2 xác nhận object tồn tại và đúng size. `status = 'ready'`, `created_at = now`. Trả `FileItem` |
 | `GET` | `/files?kind=&limit=&cursor=` | Danh sách chính: `ready`, **không ở thùng rác, không ở két sắt**. Mới nhất trước |
-| `GET` | `/files?vault=1` | Danh sách trong két sắt (không gồm file đã vào thùng rác) |
-| `GET` | `/files?trash=1` | Thùng rác, sắp theo thời điểm xóa (mới xóa trước). Cursor theo `deleted_at` |
-| `GET` | `/files/:id/download` | `{ url }`: presigned GET có `response-content-disposition` theo tên gốc. 404 nếu file ở thùng rác |
-| `DELETE` | `/files/:id` | **Chuyển vào thùng rác** (idempotent): đặt `deleted_at`, đưa ra khỏi két sắt (`in_vault = 0`). Riêng upload `pending` thì xóa hẳn |
+| `GET` | `/files?vault=1` | Danh sách trong két sắt (không gồm mục đã vào thùng rác của két). Cần header `X-FatUp-Vault: 2` khi két đã thiết lập, [mục 4.3](#43-két-sắt-mã-hóa) |
+| `GET` | `/files?vault=1&trash=1` | Thùng rác của két sắt, theo `deleted_at` |
+| `GET` | `/files?trash=1` | Thùng rác thường, sắp theo thời điểm xóa (mới xóa trước). Cursor theo `deleted_at`. Không bao giờ có mục của két |
+| `GET` | `/files/:id/download` | `{ url }`: presigned GET có `response-content-disposition` theo tên gốc. 404 nếu file ở thùng rác. Mục mã hóa: presigned GET của `vault/<id>`, không kèm tên hay loại (client tự giải mã) |
+| `DELETE` | `/files/:id` | **Chuyển vào thùng rác** (idempotent): đặt `deleted_at`. Mục trong két giữ `in_vault = 1` (vào thùng rác của két). Riêng upload `pending` thì xóa hẳn |
 | `POST` | `/files/:id/restore` | Khôi phục khỏi thùng rác: `deleted_at = NULL`. Idempotent. Trả `FileItem` |
 | `DELETE` | `/files/:id/permanent` | Xóa vĩnh viễn (R2 + D1). Chỉ cho file đang ở thùng rác, không thì `409 not_in_trash` |
-| `DELETE` | `/trash` | Dọn sạch thùng rác. Trả `{ deleted }` |
-| `PATCH` | `/files/:id` | Body `{ name?, tags? }`, phải có ít nhất một. `name` là tên hiển thị mới (đã gồm phần mở rộng); `tags` là mảng tối đa 3 màu khác nhau trong `TAG_COLORS`. Chỉ sửa D1: object R2 đặt theo `id` nên đổi tên không động tới R2. Trả `FileItem` |
-| `PUT` | `/files/:id/vault` | Body `{ inVault: boolean }`. Chuyển vào/ra két sắt. 404 nếu file không tồn tại hoặc đang ở thùng rác |
+| `DELETE` | `/trash` | Dọn sạch **thùng rác thường** (`in_vault = 0`), theo lô 100. Không đụng thùng rác của két. Trả `{ deleted }` |
+| `PATCH` | `/files/:id` | Body `{ name?, tags?, encMeta? }`, phải có ít nhất một. `name` là tên hiển thị mới (đã gồm phần mở rộng); `tags` là mảng tối đa 3 màu khác nhau trong `TAG_COLORS`. Mục trong két: `name` và `url` dạng rõ bị `409 encrypted`; đổi tên thì gửi `encMeta` mới (client mã hóa lại). Mục thường gửi `encMeta` bị `400`. Chỉ sửa D1: object R2 đặt theo `id` nên đổi tên không động tới R2. Trả `FileItem` |
+| `PUT` | `/files/:id/vault` | Body `{ inVault: boolean }`. Khi két **chưa thiết lập** (`state = none`): chuyển vào/ra két như cũ. Khi đã thiết lập: `426 app_outdated`, dùng [mục 4.3](#43-két-sắt-mã-hóa). 404 nếu file không tồn tại hoặc đang ở thùng rác |
 
 ```ts
 type FileItem = {
@@ -34,6 +35,9 @@ type FileItem = {
   deletedAt: number | null;  // có giá trị khi ở thùng rác
   inVault: boolean;
   tags: TagColor[];          // tối đa MAX_TAGS (3), theo thứ tự thêm
+  encrypted?: boolean;       // mục két đã mã hóa: name = '', mime = 'application/octet-stream', kind = 'file', url = null
+  encMeta?: string | null;   // base64: name, mime, kind, url/title đã mã hóa bằng MK; chỉ khi encrypted
+  encKey?: string | null;    // base64: DEK đã bọc bằng MK; chỉ khi encrypted
 };
 
 // shared: TAG_COLORS = red | orange | yellow | green | blue | purple | gray
@@ -82,3 +86,96 @@ Một link là một row `files` với `kind = 'link'`, `mime = 'text/uri-list'`
 - **Thu hồi tức thì:** trigger `shares_revoke_on_hide` xóa link khi file vào thùng rác hoặc két sắt, bằng bất cứ đường nào. Khôi phục hoặc đưa ra khỏi két **không** làm link sống lại; chia sẻ lại thì ra token mới.
 - Header: `Cache-Control: no-store`, `X-Robots-Tag: noindex, nofollow`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`; phản hồi file thêm CSP `sandbox; default-src 'none'`. File do người dùng tải lên cùng origin với PWA nên **chỉ ảnh raster được inline**; SVG, HTML, mọi loại khác luôn là `attachment`.
 - Không hỗ trợ `Range`, không giới hạn tần suất, không giới hạn lượt tải.
+
+### 4.3 Két sắt mã hóa
+
+Mọi route dưới đây đòi Bearer token như các route khác. Thiết kế mã hóa, các khóa và bộ đếm: [mục 7.1–7.3](security.md#71-két-sắt-mã-hóa-phía-client-e2ee). Lý do: [ADR 0013](../decisions/0013-ket-sat-ma-hoa-phia-client.md).
+
+**Phiên bản.** Client biết két mã hóa gửi header `X-FatUp-Vault: 2`. Khi két đã thiết lập (`state ≠ none`), `GET /files?vault=1` và `PUT /files/:id/vault` trả `426 app_outdated` nếu thiếu header. App bản cũ vì thế không thấy và không đưa file vào két mới được.
+
+**Két và mở két.** Mọi giá trị là base64 chuẩn có padding; `kdfIterations` là số nguyên dương.
+
+| Method | Path | Body | Trả về | Lỗi |
+|---|---|---|---|---|
+| `GET` | `/vault` | — | `{ state, kdf?, failedAttempts, lockedUntil, remaining }`. `state` là `none`, `ready` hoặc `wiped`; `kdf = { salt, iterations }` có khi đã thiết lập; `lockedUntil` là `null` khi không khóa (kể cả khóa đã hết hạn) | — |
+| `POST` | `/vault/setup` | `{ kdfSalt, kdfIterations, authKey, serverSecret, wrappedMkPin, rkAuth, wrappedMkRecovery }` | `201 { ok: true }` | `400 bad_request`; `409 vault_exists` (két đã có, kể cả khi đã bị xóa bí mật) |
+| `POST` | `/vault/unlock` | `{ authKey }` | `200 { serverSecret, wrappedMkPin }`, bộ đếm về 0 | `403 { remaining, lockedUntil }` sai PIN; `423 { remaining, lockedUntil }` đang khóa; `410 vault_wiped`; `409 vault_not_ready`, `vault_busy` |
+| `POST` | `/vault/recover` | `{ rkAuth }` | `200 { wrappedMkRecovery }` | `403 forbidden` sai recovery key; `409 vault_not_ready` |
+| `PUT` | `/vault/pin` | `{ proof, kdfSalt, kdfIterations, authKey, serverSecret, wrappedMkPin }`. `proof` là `{ authKey }` (PIN cũ) **hoặc** `{ rkAuth }`, đúng một trong hai; `authKey` ở đây là PIN mới | `200 { ok: true }`, bộ đếm về 0, `state` = `ready` | `400 bad_request`; `403 { remaining, lockedUntil }` (authKey cũ sai); `403 forbidden` (rkAuth sai); `423`; `410 vault_wiped` (authKey cũ sau khi đã xóa bí mật); `409 vault_not_ready`, `vault_busy` |
+
+- `unlock` và `PUT /vault/pin` bằng `authKey` cũ dùng chung bộ đếm và khóa. Bằng `rkAuth` thì không đếm và không bị khóa (`recover` cũng vậy).
+- Lỗi `403`/`423` của `unlock` và `PUT /vault/pin` (bằng `authKey`) có body **phẳng** `{ remaining, lockedUntil }`, không có khóa `error`. Các lỗi khác có dạng `{ error: { code, message } }`.
+- Bảng số lần sai và thời gian khóa: [mục 7.3](security.md#73-bộ-đếm-sai-phía-server).
+
+**Thêm, lấy và đưa mục ra khỏi két.** Các route này cần két `ready` (lỗi `vault_not_ready` khi két `none` hoặc `wiped`). Mục phải tồn tại và không ở thùng rác thường. `vault/in` còn nhận mục đang ở thùng rác của két (`in_vault = 1`, đã xóa), vì mục đó vẫn phải được mã hóa.
+
+| Method | Path | Body | Trả về |
+|---|---|---|---|
+| `POST` | `/uploads` | Thêm `vault: { encMeta, encKey }`. `name` và `mime` vẫn bắt buộc (client gửi `''` và `application/octet-stream`); `size` là kích thước **bản mã** | `201 { id, uploadUrl (vault/<id>), thumbUploadUrl? (vault/<id>.thumb) }` |
+| `POST` | `/files/:id/vault/in` | — | `{ uploadUrl, thumbUploadUrl, downloadUrl, thumbUrl, claim }`: địa chỉ ghi `vault/<id>` (và thumb), địa chỉ đọc bản gốc. Liên kết không có object nên `downloadUrl` là `null`. Mục đang có `claim` còn hạn của máy khác: `409 item_busy` |
+| `POST` | `/files/:id/vault/in/complete` | `{ encMeta, encKey, size, hasThumb, etag?, claim? }` | `FileItem` (đã mã hóa) |
+| `POST` | `/files/:id/vault/out` | — | `{ uploadUrl (files/<id>), thumbUploadUrl, downloadUrl (vault/<id>), thumbUrl }`. Ghi `out_started_at` |
+| `POST` | `/files/:id/vault/out/complete` | `{ name, mime, size, hasThumb }`. Liên kết gửi `{ url, title? }` (có `url` thì là liên kết, `name` và `mime` bị bỏ qua) | `FileItem` (dạng rõ) |
+
+*`vault/in/complete`:*
+
+- Mục đã mã hóa: trả `FileItem` ngay (idempotent) và dọn bản rõ còn sót.
+- Mục chưa mã hóa, không phải liên kết: `etag` là bắt buộc (`400` nếu thiếu; dạng có hoặc không có ngoặc kép đều được). `size` phải khớp kích thước object (`size_mismatch`). `etag` phải khớp object hiện có (`item_changed`).
+- Liên kết: không cần `etag`, `size` lưu là `0`. Ảnh xem trước (nếu có) được mã hóa vào `vault/<id>.thumb`.
+- Hàng đang có `claim`: body phải kèm đúng `claim` và giữ chỗ còn hạn, không thì `409 item_busy` và không đổi gì.
+- Thành công: một câu `UPDATE` ghi `encrypted = 1`, `in_vault = 1`, `name = ''`, `mime = 'application/octet-stream'`, `kind = 'file'`, `url = NULL`, `enc_meta`, `enc_key`, xóa `claim`. Sau đó mới xóa `files/<id>` và `thumbs/<id>.jpg` (và `vault/<id>.thumb` nếu không dùng).
+- `item_changed` và `size_mismatch` không xóa giữ chỗ; giữ chỗ được rút xuống còn 16 phút tính từ lúc cấp, nên mọi `vault/in` trong thời gian đó nhận `item_busy`. `size_mismatch` xóa `vault/<id>`.
+- `too_large` (`413`): bản mã vượt `vaultCiphertextSize(100 MB)`; `vault/<id>` bị xóa.
+
+*`vault/out` và `vault/out/complete`:*
+
+- `vault/out` chỉ cho mục đã mã hóa (`not_encrypted` nếu không) và ghi `out_started_at`. Từ đó bản rõ có thể xuất hiện ở `files/<id>`; cron dọn nếu lượt này không hoàn tất ([mục 6](lifecycle.md#6-vòng-đời-file-thùng-rác-và-dọn-dẹp)).
+- `vault/out/complete` trên mục đã mã hóa và còn `out_started_at`: một câu `UPDATE` ghi lại bản rõ (`encrypted = 0`, `in_vault = 0`, xóa `enc_meta`, `enc_key`, `out_started_at`), rồi xóa `vault/<id>` và thumb mã hóa.
+- Mục đã rõ, `in_vault = 0`, cùng tên/loại (hoặc cùng URL với liên kết) và cùng kích thước: đây là lần thử lại của lượt đã xong. Dọn bản mã còn sót và trả `FileItem`.
+- Mục mã hóa mà `out_started_at` là `NULL` (cron đã nhả): `409 item_changed`, không đổi gì.
+- `size_mismatch` và `not_uploaded` áp dụng cho `files/<id>`; object sai kích thước thì bị xóa.
+- Liên kết trùng URL với link khác đang sống: `409 duplicate_url`. Liên kết có URL không hợp lệ: `400 bad_url`.
+- Quá kích thước `MAX_FILE_SIZE` (100 MB): `413 too_large`, `files/<id>` bị xóa.
+
+*Mục đã mã hóa trong danh sách:* `encrypted: true`, `encMeta`, `encKey` (base64, đã bọc bằng MK), `name = ''`, `mime = 'application/octet-stream'`, `kind = 'file'`, `url = null`. `thumbUrl` trỏ vào `vault/<id>.thumb` (presigned GET 1 giờ, `contentType: application/octet-stream`). Server không giải mã gì; client giải mã `encMeta` bằng MK.
+
+**Danh sách và các route ngoài két.**
+
+| Route | Ghi chú |
+|---|---|
+| `GET /files` (không `vault`) | Chỉ mục ngoài két. Không bao giờ có mục đã vào thùng rác của két |
+| `GET /files?vault=1` | Mục két đang sống, cần header `X-FatUp-Vault: 2` khi két đã thiết lập |
+| `GET /files?vault=1&trash=1` | Thùng rác của két |
+| `GET /files?trash=1` | Thùng rác thường (`in_vault = 0`) |
+| `DELETE /files/:id` | Mục trong két giữ `in_vault = 1` (vào thùng rác của két). Mục khác vào thùng rác thường |
+| `DELETE /trash` | Chỉ mục có `in_vault = 0`, theo lô 100 |
+| `PATCH /files/:id` | `encMeta` (chuỗi, ≤ 8192 ký tự) cho mục mã hóa khi đổi tên hoặc URL trong két. Mục mã hóa gửi `name` hoặc `url` dạng rõ: `409 encrypted`. Mục thường gửi `encMeta`: `400`. `tags` và `important` vẫn sửa được |
+| `POST /links/:id/preview` | Mục mã hóa: `409 encrypted`. Server không đọc được địa chỉ, nên không xem trước |
+| `PUT /files/:id/vault` | `state = none`: như cũ. `state ≠ none`: `426 app_outdated` |
+
+Giới hạn độ dài: `encMeta` ≤ 8192 ký tự, `encKey` ≤ 512 ký tự, vi phạm thì `400 bad_request`.
+
+**Mã lỗi mới của két sắt:**
+
+| Mã | HTTP | Khi nào | Client làm gì |
+|---|---|---|---|
+| `vault_not_ready` | 409 | Két chưa thiết lập (`none`) hoặc đã bị xóa bí mật (`wiped`) với route cần két sẵn sàng (`vault/in`, `vault/out`, upload vào két, `unlock`, `recover`, `PUT /vault/pin`) | Thiết lập, hoặc mở bằng recovery key |
+| `vault_exists` | 409 | `POST /vault/setup` khi két đã có | Không thiết lập lại |
+| `vault_wiped` | 410 | `unlock`, hoặc `PUT /vault/pin` bằng `authKey` khi két đã bị xóa bí mật | Dùng recovery key |
+| `vault_busy` | 409 | Két đổi giữa lúc kiểm tra (request song song) | Thử lại |
+| `app_outdated` | 426 | Thiếu `X-FatUp-Vault: 2` khi két đã thiết lập (`GET /files?vault=1`, `PUT /files/:id/vault`) | Cập nhật app |
+| `forbidden` | 403 | `rkAuth` sai (`recover`, `PUT /vault/pin` bằng `rkAuth`) | Kiểm tra recovery key |
+| `item_busy` | 409 | Mục đang được máy khác giữ để ghi (claim còn hạn), hoặc `vault/in/complete` thiếu, sai hoặc hết hạn claim | Thử lại sau. Mục chưa được cất lần này |
+| `item_changed` | 409 | `etag` không khớp object (`vault/in/complete`); `out_started_at` không còn (`vault/out/complete`); mục đổi giữa chừng | Làm lại từ đầu |
+| `size_mismatch` | 409 | Kích thước object không khớp body | Làm lại |
+| `not_uploaded` | 409 | Object chưa được PUT, hoặc complete trước khi PUT | Làm lại PUT |
+| `already_encrypted` | 409 | `vault/in` cho mục đã mã hóa | Không cần làm gì (mục đã trong két) |
+| `not_encrypted` | 409 | `vault/out` hoặc `vault/out/complete` cho mục không mã hóa | Không cần làm gì |
+| `encrypted` | 409 | `PATCH` đổi `name`/`url` dạng rõ trên mục mã hóa; `POST /links/:id/preview` trên mục mã hóa | Gửi `encMeta` |
+| `too_large` | 413 | Bản mã (`vault/in`, upload vào két) hoặc bản rõ (`vault/out/complete`) vượt giới hạn | — |
+| `bad_request` | 400 | JSON sai, thiếu trường, `etag` thiếu với file, `encMeta`/`encKey` quá dài | Sửa request |
+| `bad_url` | 400 | Liên kết trong `vault/out/complete` có URL không hợp lệ | — |
+| (phẳng) | 403 | `authKey` sai: body `{ remaining, lockedUntil }` | Nhập lại PIN |
+| (phẳng) | 423 | Két đang khóa do sai nhiều: body `{ remaining, lockedUntil }` | Chờ `lockedUntil` |
+
+`vault_locked` không phải mã HTTP: đó là lỗi phía client khi két đang đóng trong app (desktop, web). Lỗi `no_etag` cũng phía client: R2 không trả header `ETag` cho trình duyệt (xem [mục 10](web.md#10-bản-web-pwa), CORS `ExposeHeaders: ETag`).

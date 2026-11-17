@@ -4,6 +4,47 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [0.5.0] — chưa phát hành
+
+### Thêm
+- **Két sắt mã hóa đầu cuối** (máy tính và bản web). File trong két được mã hóa trên máy trước khi rời máy: nội dung, ảnh xem trước, tên, loại và địa chỉ liên kết. Server và R2 chỉ thấy bản mã, nên người có API token không đọc được file trong két.
+  - Mở két bằng **PIN két 6 số**, khác PIN app 4 số. Nhập sai nhiều lần thì két bị khóa tạm; sai 10 lần thì két bị đặt lại và chỉ **recovery key** mở được.
+  - Thiết lập lần đầu theo hai bước: đặt PIN, rồi nhận **recovery key** (hiện một lần, có nút sao chép) và gõ lại hai nhóm ngẫu nhiên để xác nhận. Các file đã có trong két được mã hóa dần, có tiến trình.
+  - **Recovery key** dùng khi quên PIN: màn khôi phục đặt PIN mới, không mã hóa lại file. Đổi PIN két trong Cài đặt (cần PIN cũ hoặc recovery key).
+  - **Thùng rác riêng của két**: khôi phục, xóa vĩnh viễn, dọn sạch, Hoàn tác 8 giây; file tự xóa sau 30 ngày.
+  - Cất vào két từ danh sách chính qua cổng PIN. File đang mã hóa có nhãn; file không đọc được hiện "Không đọc được trên thiết bị này".
+  - Tải file lên thẳng vào két khi két đang mở.
+  - Bản web: két chạy trong bộ nhớ trang. Khóa và dữ liệu két không ghi vào `localStorage`, IndexedDB hay Cache Storage.
+  - Tài liệu: [mục 7.1–7.7 của security](docs/spec/security.md), [ADR 0013](docs/decisions/0013-ket-sat-ma-hoa-phia-client.md) và [ADR 0014](docs/decisions/0014-mot-nguoi-ghi-moi-muc-khi-cat-vao-ket.md).
+
+### Đổi
+- **Xóa một file trong két** đưa nó vào **thùng rác của két**, không còn vào thùng rác thường. File vẫn ở trong két.
+- **Thùng rác thường không hiện file của két.** **Dọn sạch** thùng rác thường không đụng tới thùng rác của két.
+- **PIN két là 6 số**, tách khỏi PIN app. PIN app vẫn là 4 số và vẫn không rời khỏi thiết bị.
+- **Két sắt không còn chỉ là lớp che giao diện.** File trong két không đọc được bằng API token nữa.
+- **Ứng dụng cũ** (không gửi header `X-FatUp-Vault: 2`): khi két đã được thiết lập, các thao tác với két trả lỗi "Cần cập nhật app" (HTTP 426). Cập nhật app để dùng két.
+- **Máy tính, khi két chưa thiết lập:** "Chuyển vào Két sắt" vẫn hoạt động như trước. File được mã hóa sau khi bạn thiết lập két.
+- **Android chưa thấy và chưa mở được két.** File trong két không hiện trên Android. Đây là nợ kỹ thuật, xem [roadmap](docs/spec/roadmap.md).
+
+### Nâng cấp
+Thứ tự: **migrate trước, deploy sau**. Có một migration mới, `0009_vault_e2ee.sql`: thêm cột vào `files` và tạo bảng `vault_keys`. Migration không đổi dữ liệu cũ.
+
+1. Sao lưu D1 trước khi làm bước nào khác.
+2. Trong `worker/`: `npm run db:migrate:remote` (gõ `y` khi được hỏi).
+3. Sau đó mới deploy Worker: `npm run deploy` trong `worker/`.
+4. Nếu bucket R2 chưa có CORS với `ExposeHeaders: ETag`: trong `worker/`, chạy `npm run r2:cors` (áp dụng `worker/r2-cors.json`). Thiếu bước này thì cất vào két trên bản web báo lỗi `no_etag`.
+5. Cập nhật app máy tính lên bản mới trên **mọi** máy (Cài đặt → Kiểm tra cập nhật, hoặc tải bản mới). Mở lại bản web (PWA) hai lần để service worker nhận bản mới.
+6. Trên máy cá nhân: mở két → thiết lập → **cất recovery key vào trình quản lý mật khẩu** → chờ tới khi không còn mục nào hiện "đang mã hóa".
+7. **Kiểm sau deploy** (thay cho bước chạy thử với Worker và R2 thật, đã bỏ qua theo quyết định của người dùng):
+   - Object `vault/<id>` trên R2 bắt đầu bằng 4 byte `FUV1`.
+   - Object `files/<id>` của mục đó đã bị xóa.
+   - Gọi `GET /vault` và `GET /files?vault=1` bằng token: không có giá trị nào đủ để thử PIN. `GET /vault` chỉ trả muối, số vòng, số lần sai và trạng thái.
+8. **Không mở két trên máy công ty hoặc qua mạng bị soi HTTPS (ví dụ Zscaler).** Mở két ở đó sẽ lộ khóa và cho phép thử PIN offline.
+9. App bản cũ, sau khi két đã được thiết lập, báo "Cần cập nhật app" khi dùng két. Đó là đúng; cập nhật app là xong.
+10. Dev: D1 local đã chạy `npm run dev:worker` trên nhánh này trước đó phải reset (xóa `worker/.wrangler/state`), vì `0009` đã được sửa tại chỗ trước khi merge.
+
+**Lưu ý:** file đưa vào két trước bản này vẫn ở dạng chưa mã hóa cho tới khi được mã hóa ở bước 6. Nếu những file đó từng đi qua máy công ty có Zscaler thì admin mạng có thể đã thấy nội dung. Mã hóa không lấy lại được điều đó.
+
 ## [0.4.2] — 2026-11-16
 
 ### Thêm
