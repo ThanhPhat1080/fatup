@@ -109,12 +109,14 @@ describe('UploadManager', () => {
     expect(complete).toHaveBeenCalledWith('id1');
   });
 
-  it('moves vault uploads into the vault after completing', async () => {
+  it('refuses a vault upload when there is no vault encryptor, and never uses the legacy setVault', async () => {
+    // The encrypted vault is always set up before anything can be uploaded into it (spec Q4), so a vault upload
+    // without an encryptor must fail rather than store a plain file in the vault.
     const { manager, setVault, settled } = setup();
     manager.add([write('secret.txt', 4)], true);
     await settled();
-    expect(manager.snapshot()[0].state).toBe('done');
-    expect(setVault).toHaveBeenCalledWith('id1', true);
+    expect(manager.snapshot()[0]).toMatchObject({ state: 'error', error: 'vault_locked' });
+    expect(setVault).not.toHaveBeenCalled();
   });
 
   it('does not touch the vault for normal uploads', async () => {
