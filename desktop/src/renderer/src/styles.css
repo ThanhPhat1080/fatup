@@ -1827,6 +1827,20 @@ h2 {
   width: 45.83%;
   height: 11.07%;
 }
+/* Six cells (the Vault's PIN): the board is wider (x 110-370 of the 480-unit frame), and so is its slot; the cells are a little smaller so the row sits inside the board with an even margin on both sides. */
+.lockheist--wide .lockheist__pin {
+  left: 22.92%;
+  width: 54.17%;
+}
+.lockheist--wide .heist__pin .pin__cells {
+  gap: 1.6cqw;
+  justify-content: center;
+}
+.lockheist--wide .heist__pin .pin__cell {
+  width: 6.4cqw;
+  height: 8.2cqw;
+  border-radius: 1.4cqw;
+}
 .lockheist .heist__pin .pin__cell {
   background: #f5e9cf;
   border-color: #4b2f14;

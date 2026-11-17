@@ -79,7 +79,7 @@ export function VaultGate({ onUnlocked, onBack, onRecover, hint }: { onUnlocked:
         <div className="lockstage">
           {/* Above the wizard, on the dark sky: the flames below the wizard would make the text hard to read. */}
           {hint && <p className="vault-card__text" style={{ marginBottom: 12 }}>{hint}</p>}
-          <LockWizard boom={boom} panicKey={errorKey} message={leaving ? 'GO BACK TO THE SHADOW!' : undefined} calm={leaving}>
+          <LockWizard wide boom={boom} panicKey={errorKey} message={leaving ? 'GO BACK TO THE SHADOW!' : undefined} calm={leaving}>
             <PinInput label={t.vaultPrompt} onComplete={submit} errorKey={errorKey} disabled={locked || boom || leaving} length={VAULT_PIN_LENGTH} />
           </LockWizard>
           <p className={`error ${shown || locked ? '' : 'error--hidden'}`} role="alert">
