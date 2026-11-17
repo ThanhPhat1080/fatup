@@ -107,7 +107,7 @@ function plainThumbSrc(f, base) {
 
 /** The item as the Worker's toItem returns it, for a plain (not encrypted) file. */
 function plainJson(f, base, shares) {
-  const { img, uploaded, hasThumb, ...item } = f;
+  const { img, uploaded, hasThumb, claim, claimUntil, ...item } = f;
   return { ...item, encrypted: false, encMeta: null, encKey: null, shared: shares.has(f.id), thumbUrl: plainThumbSrc(f, base) };
 }
 
