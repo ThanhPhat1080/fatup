@@ -63,6 +63,7 @@ import {
 } from '@fatup/shared';
 import { ApiError } from '../src/main/api';
 import { VAULT_SCHEME, createVaultHandlers, type VaultHandlerDeps } from '../src/main/vault-ipc';
+import { createVaultCore } from '../src/vault-handlers';
 import { VaultSession } from '../src/vault-session';
 
 const ITERATIONS = 1000;
@@ -224,6 +225,8 @@ function stubSession() {
   const stub = {
     status: vi.fn(async () => ({ state: 'ready', failedAttempts: 0, lockedUntil: null, remaining: 10 }) as VaultStatus),
     setup: vi.fn(async (_pin: string): Promise<unknown> => ({ ok: true, recoveryKey: 'AAAA-BBBB' })),
+    prepareSetup: vi.fn(async (_pin: string): Promise<unknown> => ({ ok: true, recoveryKey: 'AAAA-BBBB' })),
+    commitSetup: vi.fn(async (): Promise<unknown> => ({ ok: true })),
     unlock: vi.fn(async (_pin: string): Promise<unknown> => ({ ok: true })),
     recover: vi.fn(async (_rk: string, _pin: string): Promise<unknown> => ({ ok: true })),
     changePin: vi.fn(async (_old: string, _next: string): Promise<unknown> => ({ ok: true })),
@@ -324,10 +327,93 @@ describe('Vault handlers: PIN, setup and recovery', () => {
     for (const spy of [session.status, session.setup, session.unlock, session.recover, session.changePin]) expect(spy).not.toHaveBeenCalled();
   });
 
+  it('refuses the two-step setup with "locked" while the app is locked, without touching the session', async () => {
+    const { session, handlers } = stubbed(false);
+    expect(await handlers.vaultSetupPrepare(PIN)).toEqual({ ok: false, error: 'locked' });
+    expect(await handlers.vaultSetupCommit()).toEqual({ ok: false, error: 'locked' });
+    expect(session.prepareSetup).not.toHaveBeenCalled();
+    expect(session.commitSetup).not.toHaveBeenCalled();
+  });
+
   it('still closes the Vault while the app is locked (closing is never refused)', async () => {
     const { session, handlers } = stubbed(false);
     await handlers.vaultClose();
     expect(session.close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Vault handlers: two-step setup (review I1)', () => {
+  it('vaultSetupPrepare hands the PIN to prepareSetup and returns its answer, recovery key included', async () => {
+    const { session, handlers } = stubbed();
+    expect(await handlers.vaultSetupPrepare(PIN)).toEqual({ ok: true, recoveryKey: 'AAAA-BBBB' });
+    expect(session.prepareSetup).toHaveBeenCalledWith(PIN);
+    expect(session.commitSetup).not.toHaveBeenCalled();
+    expect(session.setup).not.toHaveBeenCalled();
+  });
+
+  it.each([[{ ok: false, error: 'weak_pin' }], [{ ok: false, error: 'matches_app_pin' }]])('vaultSetupPrepare returns a refusal unchanged: %j', async (answer) => {
+    const { session, handlers } = stubbed();
+    session.prepareSetup.mockResolvedValueOnce(answer);
+    expect(await handlers.vaultSetupPrepare(PIN)).toEqual(answer);
+  });
+
+  it.each([[{ ok: true }], [{ ok: false, error: 'vault_exists' }], [{ ok: false, error: 'network' }], [{ ok: false, error: 'no_prepared_setup' }], [{ ok: false, error: 'closed' }]])(
+    'vaultSetupCommit returns the answer of commitSetup unchanged: %j',
+    async (answer) => {
+      const { session, handlers } = stubbed();
+      session.commitSetup.mockResolvedValueOnce(answer);
+      expect(await handlers.vaultSetupCommit()).toEqual(answer);
+      expect(session.commitSetup).toHaveBeenCalledTimes(1);
+      expect(session.prepareSetup).not.toHaveBeenCalled();
+    },
+  );
+
+  it('over a real session: prepare reaches no server and shows the key, commit sets the vault up and opens it', async () => {
+    const server = miniServer();
+    const calls: string[] = [];
+    const counted = Object.fromEntries(
+      Object.entries(server.client).map(([name, fn]) => [name, (...args: unknown[]) => (calls.push(name), (fn as (...a: unknown[]) => unknown)(...args))]),
+    );
+    const session = new VaultSession({ client: () => counted as never, appPinMatches: () => false, iterations: ITERATIONS });
+    const handlers = createVaultHandlers({
+      session,
+      client: () => ({}) as never,
+      isUnlocked: () => true,
+      downloadsDir: DOWNLOADS,
+      writeFile: async () => undefined,
+      fileExists: () => false,
+      isDownloaded: () => false,
+      markDownloaded: () => undefined,
+    });
+    const prepared = await handlers.vaultSetupPrepare(PIN);
+    expect(prepared).toMatchObject({ ok: true, recoveryKey: expect.any(String) });
+    expect(calls).toEqual([]);
+    expect(server.state.req).toBeNull();
+    expect(session.isOpen()).toBe(false);
+
+    expect(await handlers.vaultSetupCommit()).toEqual({ ok: true });
+    expect(calls).toEqual(['vaultSetup']);
+    expect(server.state.req).not.toBeNull();
+    expect(session.isOpen()).toBe(true);
+  });
+
+  it('vaultClose discards a prepared setup, so a commit after it posts nothing', async () => {
+    const server = miniServer();
+    const session = new VaultSession({ client: () => server.client as never, appPinMatches: () => false, iterations: ITERATIONS });
+    const handlers = createVaultHandlers({
+      session,
+      client: () => ({}) as never,
+      isUnlocked: () => true,
+      downloadsDir: DOWNLOADS,
+      writeFile: async () => undefined,
+      fileExists: () => false,
+      isDownloaded: () => false,
+      markDownloaded: () => undefined,
+    });
+    await handlers.vaultSetupPrepare(PIN);
+    handlers.vaultClose();
+    expect(await handlers.vaultSetupCommit()).toEqual({ ok: false, error: 'no_prepared_setup' });
+    expect(server.state.req).toBeNull();
   });
 });
 
@@ -860,5 +946,111 @@ describe('addLink into the Vault', () => {
     const res = await w.handlers.addLink('https://example.com/', 'x');
     expect(res.ok).toBe(false);
     expect(w.client.complete).not.toHaveBeenCalled();
+  });
+});
+
+describe('listVault while the Vault is closed in the middle of it (review M4)', () => {
+  /** A promise the test settles by hand. */
+  function latch() {
+    let open!: () => void;
+    const wait = new Promise<void>((r) => (open = r));
+    return { open, wait };
+  }
+  const gone = async (w: { handlers: { owns(id: string): boolean; rawItem(id: string): unknown; vaultProtocol(url: string): Promise<{ status: number }> } }, ids: string[]) => {
+    for (const id of ids) {
+      expect(w.handlers.owns(id), `owns(${id})`).toBe(false);
+      expect(w.handlers.rawItem(id), `rawItem(${id})`).toBeUndefined();
+      expect((await w.handlers.vaultProtocol(`fatup-vault://file/${id}`)).status).toBe(404);
+      expect((await w.handlers.vaultProtocol(`fatup-vault://thumb/${id}`)).status).toBe(404);
+    }
+  };
+
+  it('answers vault_locked and keeps nothing when vaultClose runs while the server list is awaited', async () => {
+    const w = await world();
+    await w.addItem('I1', PDF, enc('a'));
+    await w.addItem('I2', PHOTO, enc('b'), { thumb: enc('t') });
+    const gate = latch();
+    w.client.listEverything.mockImplementationOnce(async () => {
+      await gate.wait;
+      return w.raw.map((r) => ({ ...r }));
+    });
+    const pending = w.handlers.listVault({});
+    w.handlers.vaultClose();
+    gate.open();
+    expect(await pending).toMatchObject({ ok: false, error: 'vault_locked' });
+    await gone(w, ['I1', 'I2']);
+  });
+
+  it('answers vault_locked and keeps nothing when vaultClose runs after the names were decrypted but before the list was kept', async () => {
+    const w = await world();
+    await w.addItem('I1', PDF, enc('a'));
+    await w.addItem('I2', PHOTO, enc('b'), { thumb: enc('t') });
+    const gate = latch();
+    const decrypt = w.session.decryptList.bind(w.session);
+    vi.spyOn(w.session, 'decryptList').mockImplementationOnce(async (items) => {
+      const out = await decrypt(items); // decrypted with the key that was open then
+      await gate.wait;
+      return out;
+    });
+    const pending = w.handlers.listVault({});
+    await vi.waitFor(() => expect(w.session.decryptList).toHaveBeenCalled());
+    await Promise.resolve();
+    w.handlers.vaultClose();
+    gate.open();
+    const res = await pending;
+    expect(res).toMatchObject({ ok: false, error: 'vault_locked' });
+    await gone(w, ['I1', 'I2']);
+  });
+
+  it('answers vault_locked and keeps nothing when vaultClose runs while a thumbnail is being fetched (the web strategy)', async () => {
+    const w = await world();
+    await w.addItem('I2', PHOTO, enc('b'), { thumb: enc('t') });
+    const gate = latch();
+    const reached = latch();
+    const core = createVaultCore({
+      session: w.session,
+      client: () => w.client,
+      isUnlocked: () => true,
+      saveDownload: async () => 'x',
+      fetchImpl: w.fetchImpl as unknown as typeof fetch,
+      views: {
+        thumbnail: async (_id, current, load) => {
+          reached.open();
+          await gate.wait;
+          await load().catch(() => undefined);
+          return current;
+        },
+        preview: async (id) => `blob:${id}`,
+        forget: () => undefined,
+        closeAll: () => undefined,
+      },
+    });
+    const pending = core.listVault({});
+    await reached.wait;
+    core.vaultClose();
+    gate.open();
+    expect(await pending).toMatchObject({ ok: false, error: 'vault_locked' });
+    expect(core.owns('I2')).toBe(false);
+    expect(core.rawItem('I2')).toBeUndefined();
+    expect(await core.serve('I2', 'file')).toMatchObject({ status: 404 });
+    expect(await core.serve('I2', 'thumb')).toMatchObject({ status: 404 });
+  });
+
+  it('lists normally again after the Vault is reopened, and claims the items of the new listing', async () => {
+    const w = await world();
+    await w.addItem('I1', PDF, enc('a'));
+    const gate = latch();
+    w.client.listEverything.mockImplementationOnce(async () => {
+      await gate.wait;
+      return w.raw.map((r) => ({ ...r }));
+    });
+    const pending = w.handlers.listVault({});
+    w.handlers.vaultClose();
+    gate.open();
+    await pending;
+    expect(await w.handlers.vaultUnlock(PIN)).toEqual({ ok: true });
+    expect(await w.handlers.listVault({})).toMatchObject({ ok: true, value: [{ id: 'I1', name: 'Hợp đồng.pdf' }] });
+    expect(w.handlers.owns('I1')).toBe(true);
+    expect((await w.handlers.vaultProtocol('fatup-vault://file/I1')).status).toBe(200);
   });
 });

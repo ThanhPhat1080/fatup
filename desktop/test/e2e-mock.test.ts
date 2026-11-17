@@ -198,8 +198,8 @@ describe('the mock Vault routes', () => {
     const id = String(0).padStart(26, '0'); // the first seeded picture
     const into = await api(base, 'POST', `/files/${id}/vault/in`);
     expect(into.json.uploadUrl).toContain(`/put/vault/${id}`);
-    await putBytes(into.json.uploadUrl, 'cipher');
-    const moved = await api(base, 'POST', `/files/${id}/vault/in/complete`, { encMeta: 'm', encKey: 'k', size: 6, hasThumb: false });
+    const stored = await putBytes(into.json.uploadUrl, 'cipher');
+    const moved = await api(base, 'POST', `/files/${id}/vault/in/complete`, { encMeta: 'm', encKey: 'k', size: 6, hasThumb: false, etag: stored.headers.get('etag') });
     expect(moved).toMatchObject({ status: 200, json: { id, encrypted: true, inVault: true } });
     expect((await api(base, 'GET', '/files')).json.items.some((i: { id: string }) => i.id === id)).toBe(false);
 
@@ -210,5 +210,107 @@ describe('the mock Vault routes', () => {
     const plain = (await api(base, 'GET', '/files')).json.items.find((i: { id: string }) => i.id === id);
     expect(plain).toMatchObject({ name: 'a.txt', size: 6 });
     expect(await (await fetch(`${base}/raw/${id}`)).text()).toBe('plain!');
+  });
+
+  describe('the ETag of a stored object and the move-in etag check (like worker/src/vault.ts, review C1)', () => {
+    const firstId = String(0).padStart(26, '0'); // a seeded plain file
+    const complete = (base: string, id: string, extra: Record<string, unknown> = {}) =>
+      api(base, 'POST', `/files/${id}/vault/in/complete`, { encMeta: 'm', encKey: 'k', size: 6, hasThumb: false, ...extra });
+
+    /** Moves `id` in up to the point of the PUT; returns the ETag header the mock answered for the object. */
+    async function stage(base: string, id: string, bytes = 'cipher') {
+      await api(base, 'POST', '/vault/setup', setupBody());
+      const into = await api(base, 'POST', `/files/${id}/vault/in`);
+      const res = await putBytes(into.json.uploadUrl, bytes);
+      return { into, put: res, etag: res.headers.get('etag') };
+    }
+
+    it('answers a PUT of a stored object with a non-empty ETag header', async () => {
+      const base = await start();
+      const { put, etag } = await stage(base, firstId);
+      expect(put.status).toBe(200);
+      expect(etag).toBeTruthy();
+      expect(etag!.length).toBeLessThanOrEqual(200);
+    });
+
+    it('answers the PUT of a thumbnail with an ETag header too', async () => {
+      const base = await start();
+      const { into } = await stage(base, firstId);
+      const res = await putBytes(`${base}/put/vault/${firstId}.thumb`, 'thumbnail');
+      expect(res.status).toBe(200);
+      expect(res.headers.get('etag')).toBeTruthy();
+      expect(into.json.uploadUrl).toContain(`/put/vault/${firstId}`);
+    });
+
+    it('gives an overwrite with different bytes a different ETag', async () => {
+      const base = await start();
+      const { into, etag } = await stage(base, firstId, 'cipher');
+      const other = await putBytes(into.json.uploadUrl, 'CIPHER');
+      expect(other.headers.get('etag')).toBeTruthy();
+      expect(other.headers.get('etag')).not.toBe(etag);
+    });
+
+    it('completes a move in with the ETag of the last PUT, quoted or not', async () => {
+      const base = await start();
+      const { etag } = await stage(base, firstId);
+      const bare = etag!.replace(/^"|"$/g, '');
+      expect((await complete(base, firstId, { etag: bare })).status).toBe(200);
+
+      const base2 = await start();
+      const second = await stage(base2, firstId);
+      expect((await complete(base2, firstId, { etag: second.etag })).status).toBe(200);
+    });
+
+    it.each([
+      ['missing', {}],
+      ['empty', { etag: '' }],
+      ['not a string', { etag: 5 }],
+      ['over 200 characters', { etag: 'a'.repeat(201) }],
+    ])('refuses a move in of a file whose etag is %s with 400 and changes nothing', async (_name, extra) => {
+      const base = await start();
+      await stage(base, firstId);
+      const res = await complete(base, firstId, extra);
+      expect(res.status).toBe(400);
+      expect(res.json.error.code).toBe('bad_request');
+      expect((await api(base, 'GET', '/files')).json.items.some((i: { id: string }) => i.id === firstId)).toBe(true);
+      expect((await fetch(`${base}/raw/${firstId}`)).status).toBe(200);
+    });
+
+    it('answers 409 item_changed when another PUT replaced the object, and then neither writes the row nor removes the plain file', async () => {
+      const base = await start();
+      const { into, etag } = await stage(base, firstId, 'cipher');
+      await putBytes(into.json.uploadUrl, 'CIPHER'); // the other device
+      const res = await complete(base, firstId, { etag });
+      expect(res.status).toBe(409);
+      expect(res.json.error.code).toBe('item_changed');
+      expect((await api(base, 'GET', '/files?vault=1', undefined, VAULT_HEADERS)).json.items.map((i: { id: string }) => i.id)).not.toContain(firstId);
+      expect((await api(base, 'GET', '/files')).json.items.some((i: { id: string }) => i.id === firstId)).toBe(true);
+      expect((await fetch(`${base}/raw/${firstId}`)).status).toBe(200);
+    });
+
+    it('lets the client start over after a 409: a new PUT and its own ETag complete the move in', async () => {
+      const base = await start();
+      const { into, etag } = await stage(base, firstId, 'cipher');
+      await putBytes(into.json.uploadUrl, 'CIPHER');
+      expect((await complete(base, firstId, { etag })).status).toBe(409);
+      const mine = await putBytes(into.json.uploadUrl, 'second');
+      const done = await complete(base, firstId, { etag: mine.headers.get('etag'), size: 6 });
+      expect(done).toMatchObject({ status: 200, json: { id: firstId, encrypted: true, inVault: true } });
+    });
+
+    it('does not compare the etag again once the row is encrypted (a retry answers 200)', async () => {
+      const base = await start();
+      const { etag } = await stage(base, firstId);
+      expect((await complete(base, firstId, { etag })).status).toBe(200);
+      expect((await complete(base, firstId, { etag: 'some-other-etag' })).status).toBe(200);
+    });
+
+    it('still reports an object that was never uploaded as 409 not_uploaded', async () => {
+      const base = await start();
+      await api(base, 'POST', '/vault/setup', setupBody());
+      await api(base, 'POST', `/files/${firstId}/vault/in`);
+      const res = await complete(base, firstId, { etag: '"whatever"' });
+      expect(res).toMatchObject({ status: 409, json: { error: { code: 'not_uploaded' } } });
+    });
   });
 });

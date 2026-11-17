@@ -162,6 +162,8 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
   const server = miniServer();
   const objects = new Map<string, Uint8Array>();
   const puts: { url: string; body: Uint8Array }[] = [];
+  /** The ETag header the fake R2 answered for the last PUT of each address. */
+  const etags = new Map<string, string>();
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (init?.method === 'PUT') {
@@ -169,7 +171,10 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
       const body = sent instanceof Blob ? await bytesOf(sent) : new Uint8Array(sent as ArrayBufferLike);
       puts.push({ url, body });
       objects.set(url, body);
-      return new Response(null, { status: 200 });
+      // R2 answers a PUT with the ETag of the stored object; a move in must send it back to the Worker (review C1).
+      const etag = `"etag-${puts.length}-${body.length}"`;
+      etags.set(url, etag);
+      return new Response(null, { status: 200, headers: { ETag: etag } });
     }
     const body = objects.get(url);
     return body ? new Response(body as unknown as BodyInit) : new Response('missing', { status: 404 });
@@ -320,7 +325,7 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
     return row;
   }
 
-  return { server, vault, client, fetchImpl, objects, puts, rows, created, updates, completesIn, completesOut, made, revoked, saved, state, deps: baseDeps, readDeps, masterKey, addItem, addPlain, recoveryKey };
+  return { server, vault, client, fetchImpl, objects, puts, etags, rows, created, updates, completesIn, completesOut, made, revoked, saved, state, deps: baseDeps, readDeps, masterKey, addItem, addPlain, recoveryKey };
 }
 
 const PDF_META: VaultMeta = { name: 'Hợp đồng.pdf', mime: 'application/pdf', kind: 'file' };
@@ -369,6 +374,84 @@ describe('web Vault: status, setup and PIN checks', () => {
     expect(w.recoveryKey).toMatch(/\S{8,}/);
     expect(w.vault.uploadEncryptor().isOpen()).toBe(true);
     expect(await w.vault.listVault()).toEqual({ ok: true, value: [] });
+  });
+
+  describe('two-step setup (review I1)', () => {
+    /** A set-up world whose server is reset to "none" and whose Vault is closed: the next setup is a first one. */
+    async function fresh(over: Parameters<typeof world>[0] = {}) {
+      const w = await world({ open: false, ...over });
+      w.server.state.req = null;
+      w.client.vaultSetup.mockClear();
+      w.client.vaultStatus.mockClear();
+      w.client.listEverything.mockClear();
+      w.client.moveIn.mockClear();
+      return w;
+    }
+
+    it('vaultSetupPrepare shows the recovery key and reaches no server: nothing is set up, nothing is open, nothing is converted', async () => {
+      const w = await fresh();
+      w.addPlain('LEG', { name: 'old.txt', mime: 'text/plain', inVault: true }, enc('written before encryption'));
+      const res = await w.vault.vaultSetupPrepare(PIN);
+      expect(res).toMatchObject({ ok: true, recoveryKey: expect.stringMatching(/\S{8,}/) });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(w.client.vaultSetup).not.toHaveBeenCalled();
+      expect(w.server.state.req).toBeNull();
+      expect(w.client.listEverything).not.toHaveBeenCalled(); // the background conversion has not started
+      expect(w.client.moveIn).not.toHaveBeenCalled();
+      expect(w.vault.uploadEncryptor().isOpen()).toBe(false);
+    });
+
+    it('vaultSetupCommit sets the vault up, opens it and starts the background conversion of old Vault files', async () => {
+      const w = await fresh();
+      w.addPlain('LEG', { name: 'old.txt', mime: 'text/plain', inVault: true }, enc('written before encryption'));
+      const prepared = await w.vault.vaultSetupPrepare(PIN);
+      if (!prepared.ok) throw new Error(prepared.error);
+      expect(await w.vault.vaultSetupCommit()).toEqual({ ok: true });
+      expect(w.client.vaultSetup).toHaveBeenCalledTimes(1);
+      expect(w.server.state.req).not.toBeNull();
+      expect(w.vault.uploadEncryptor().isOpen()).toBe(true);
+      await vi.waitFor(() => expect(w.completesIn.map((c) => c.id)).toEqual(['LEG']));
+      // The request carries what the PIN and the shown recovery key derive, and neither of them.
+      expect(JSON.stringify(w.server.state.req)).not.toContain(prepared.recoveryKey);
+      expect((await derivePinKeys(PIN, w.server.state.req!.kdfSalt, ITERATIONS)).authKey).toBe(w.server.state.req!.authKey);
+    });
+
+    it.each([
+      ['weak', '111111', 'weak_pin'],
+      ['app-PIN-like', PIN, 'matches_app_pin'],
+    ])('a refused (%s) PIN makes no request, starts no conversion and leaves nothing to commit', async (_label, pin, error) => {
+      const w = await fresh({ appPinMatches: (pin4) => pin4 === '1357' });
+      expect(await w.vault.vaultSetupPrepare(pin)).toEqual({ ok: false, error });
+      expect(await w.vault.vaultSetupCommit()).toEqual({ ok: false, error: 'no_prepared_setup' });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(w.client.vaultSetup).not.toHaveBeenCalled();
+      expect(w.client.listEverything).not.toHaveBeenCalled();
+    });
+
+    it('a failed commit (the server refuses) starts no conversion and stays closed', async () => {
+      const w = await fresh();
+      await w.vault.vaultSetupPrepare(PIN);
+      w.client.vaultSetup.mockRejectedValueOnce(new ApiError('vault_exists', 'exists', 409));
+      expect(await w.vault.vaultSetupCommit()).toEqual({ ok: false, error: 'vault_exists' });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(w.client.listEverything).not.toHaveBeenCalled();
+      expect(w.vault.uploadEncryptor().isOpen()).toBe(false);
+    });
+
+    it('vaultClose discards the prepared setup', async () => {
+      const w = await fresh();
+      await w.vault.vaultSetupPrepare(PIN);
+      w.vault.vaultClose();
+      expect(await w.vault.vaultSetupCommit()).toEqual({ ok: false, error: 'no_prepared_setup' });
+      expect(w.client.vaultSetup).not.toHaveBeenCalled();
+    });
+
+    it('refuses both steps with "locked" while the app is locked, and does not touch the server', async () => {
+      const w = await fresh({ unlocked: false });
+      expect(await w.vault.vaultSetupPrepare(PIN)).toEqual({ ok: false, error: 'locked' });
+      expect(await w.vault.vaultSetupCommit()).toEqual({ ok: false, error: 'locked' });
+      for (const [name, fn] of Object.entries(w.client)) expect(fn, name).not.toHaveBeenCalled();
+    });
   });
 
   it('opens with the right PIN and maps the server answers: wrong, locked, wiped', async () => {
@@ -582,6 +665,33 @@ describe('web Vault: opening, saving and copying', () => {
   });
 });
 
+describe('web Vault: closing in the middle of a listing (review M4)', () => {
+  it('answers vault_locked, keeps no item and makes no blob URL when the Vault closes while a thumbnail is being fetched', async () => {
+    const w = await world();
+    await w.addItem('P', PHOTO_META, PHOTO, { thumb: THUMB });
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    let reached!: () => void;
+    const there = new Promise<void>((r) => (reached = r));
+    const real = w.fetchImpl.getMockImplementation()!;
+    w.fetchImpl.mockImplementation(async (input, init) => {
+      if (String(input) === `${R2}/vault/P.thumb`) {
+        reached();
+        await gate;
+      }
+      return real(input, init);
+    });
+    const pending = w.vault.listVault();
+    await there;
+    w.vault.vaultClose();
+    open();
+    expect(await pending).toMatchObject({ ok: false, error: 'vault_locked' });
+    expect(w.vault.owns('P')).toBe(false);
+    expect(w.made).toHaveLength(0); // nothing was made that the close could no longer revoke
+    expect(await w.vault.previewUrl('P')).toMatchObject({ ok: false, error: 'vault_locked' });
+  });
+});
+
 describe('web Vault: closing', () => {
   it('revokes EVERY object URL it made (thumbnails and previews), synchronously, then refuses to list', async () => {
     const w = await world();
@@ -732,6 +842,40 @@ describe('web Vault: moving in and out', () => {
     const res = await w.vault.listVault();
     if (!res.ok) throw new Error(res.error);
     expect(res.value[0]).toMatchObject({ id: 'A', name: 'Hợp đồng.pdf', mime: 'application/pdf' });
+  });
+
+  it('sends the ETag R2 answered for the PUT of vault/<id> with the completion (review C1)', async () => {
+    const w = await world();
+    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
+    expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
+    const stored = w.etags.get(`${R2}/put/vault/A`);
+    expect(stored).toBeTruthy();
+    expect(w.completesIn[0].req.etag).toBe(stored);
+  });
+
+  it('retries once from scratch when the Worker answers 409 item_changed, and reports the item as moved', async () => {
+    const w = await world();
+    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
+    w.client.moveInComplete.mockImplementationOnce(async (id: string, req: VaultMoveInComplete) => {
+      w.completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
+      throw new ApiError('item_changed', 'The item changed', 409, { error: { code: 'item_changed', message: 'changed' } });
+    });
+    expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
+    expect(w.client.moveIn).toHaveBeenCalledTimes(2);
+    expect(w.completesIn).toHaveLength(2);
+    expect(w.completesIn[1].req.etag).toBe(w.etags.get(`${R2}/put/vault/A`));
+    expect(w.completesIn[1].req.etag).not.toBe(w.completesIn[0].req.etag);
+    expect(w.completesIn[1].req.encKey).not.toBe(w.completesIn[0].req.encKey);
+  });
+
+  it('cleans up the plain copy when a move out fails after the plain upload (review C3)', async () => {
+    const w = await world();
+    const row = await w.addItem('E', PDF_META, PDF);
+    await w.vault.listVault();
+    w.client.moveOutComplete.mockRejectedValueOnce(new ApiError('network', 'down'));
+    expect(await w.vault.vaultMoveOut(['E'])).toEqual({ ok: true, value: { done: 0, failed: ['E'] } });
+    expect(w.puts.some((p) => p.url === `${R2}/put/files/E`)).toBe(true);
+    expect(w.completesIn).toEqual([{ id: 'E', req: { encMeta: row.encMeta, encKey: row.encKey, size: row.size, hasThumb: false } }]);
   });
 
   it('reports an id it cannot find among the failures and moves the rest', async () => {

@@ -872,3 +872,260 @@ describe('VaultSession keeps its secrets', () => {
     expect(keysIn(session)).toEqual([]);
   });
 });
+
+describe('VaultSession.prepareSetup and commitSetup (review I1: nothing reaches the server before the recovery key is confirmed)', () => {
+  it('prepareSetup returns the recovery key and makes no server call, and the vault stays closed', async () => {
+    const { session, server } = make();
+    const res = await session.prepareSetup(PIN);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(parseRecoveryKey(res.recoveryKey)).not.toBeNull();
+    expect(server.calls).toEqual([]);
+    expect(server.req).toBeNull();
+    expect(session.isOpen()).toBe(false);
+    await lockedError(session.encryptMetaFor(fileMeta));
+  });
+
+  it.each(['111111', '123456', '654321', '000000', '12345', '1234567', 'abcdef'])('prepareSetup refuses the weak PIN %s (weak_pin) with no server call', async (pin) => {
+    const { session, server } = make();
+    expect(await session.prepareSetup(pin)).toEqual({ ok: false, error: 'weak_pin' });
+    expect(server.calls).toEqual([]);
+  });
+
+  it('prepareSetup refuses a PIN that starts or ends with the app PIN (matches_app_pin)', async () => {
+    const first = make(undefined, '1357');
+    expect(await first.session.prepareSetup('135792')).toEqual({ ok: false, error: 'matches_app_pin' });
+    expect(first.appPinMatches).toHaveBeenCalledWith('1357');
+    expect(first.server.calls).toEqual([]);
+    const last = make(undefined, '5792');
+    expect(await last.session.prepareSetup('135792')).toEqual({ ok: false, error: 'matches_app_pin' });
+    expect(last.server.calls).toEqual([]);
+  });
+
+  it('a refused prepareSetup leaves nothing to commit', async () => {
+    const { session, server } = make();
+    await session.prepareSetup('111111');
+    expect(await session.commitSetup()).toEqual({ ok: false, error: 'no_prepared_setup' });
+    expect(server.calls).toEqual([]);
+  });
+
+  it('commitSetup posts the prepared request once, opens the vault and returns only { ok: true } (the recovery key is not repeated)', async () => {
+    const { session, server } = make();
+    const prepared = await session.prepareSetup(PIN);
+    if (!prepared.ok) throw new Error('prepare failed');
+    expect(await session.commitSetup()).toEqual({ ok: true });
+    expect(server.calls).toEqual(['vaultSetup']);
+    expect(session.isOpen()).toBe(true);
+
+    // The request is the one the PIN and the shown recovery key derive; neither of them is in it.
+    expect((await recoveryKeys(prepared.recoveryKey)).rkAuth).toBe(server.req!.rkAuth);
+    expect((await derivePinKeys(PIN, server.req!.kdfSalt, ITERATIONS)).authKey).toBe(server.req!.authKey);
+    expect(server.req!.kdfIterations).toBe(ITERATIONS);
+    const sent = JSON.stringify(server.req);
+    expect(sent).not.toContain(PIN);
+    expect(sent).not.toContain(prepared.recoveryKey);
+    expect(sent).not.toContain(prepared.recoveryKey.replace(/-/g, ''));
+  });
+
+  it('the opened vault holds the master key the server stored wrapped', async () => {
+    const { session, server } = make();
+    await session.prepareSetup(PIN);
+    await session.commitSetup();
+    const { encMeta } = await session.encryptMetaFor(fileMeta);
+    expect(await decryptMeta(encMeta, await masterKeyFor(server, PIN))).toEqual(fileMeta);
+  });
+
+  it('commitSetup with nothing prepared answers no_prepared_setup and calls nothing', async () => {
+    const { session, server } = make();
+    expect(await session.commitSetup()).toEqual({ ok: false, error: 'no_prepared_setup' });
+    expect(server.calls).toEqual([]);
+    expect(session.isOpen()).toBe(false);
+  });
+
+  it('the prepared request is single-use: a second commitSetup posts nothing', async () => {
+    const { session, server } = make();
+    await session.prepareSetup(PIN);
+    expect(await session.commitSetup()).toEqual({ ok: true });
+    expect(await session.commitSetup()).toEqual({ ok: false, error: 'no_prepared_setup' });
+    expect(server.calls).toEqual(['vaultSetup']);
+  });
+
+  it('a second prepareSetup replaces the first: the server gets the second PIN and the second recovery key', async () => {
+    const { session, server } = make();
+    const one = await session.prepareSetup(PIN);
+    const two = await session.prepareSetup(PIN2);
+    if (!one.ok || !two.ok) throw new Error('prepare failed');
+    expect(two.recoveryKey).not.toBe(one.recoveryKey);
+    expect(await session.commitSetup()).toEqual({ ok: true });
+    expect((await recoveryKeys(two.recoveryKey)).rkAuth).toBe(server.req!.rkAuth);
+    expect((await recoveryKeys(one.recoveryKey)).rkAuth).not.toBe(server.req!.rkAuth);
+    expect((await derivePinKeys(PIN2, server.req!.kdfSalt, ITERATIONS)).authKey).toBe(server.req!.authKey);
+    expect(server.calls).toEqual(['vaultSetup']);
+  });
+
+  it('close() discards a prepared setup', async () => {
+    const { session, server } = make();
+    await session.prepareSetup(PIN);
+    session.close();
+    expect(await session.commitSetup()).toEqual({ ok: false, error: 'no_prepared_setup' });
+    expect(server.calls).toEqual([]);
+    expect(session.isOpen()).toBe(false);
+  });
+
+  it('commitSetup answers vault_exists when the vault was set up in the meantime, and does not open', async () => {
+    const { server } = await setUp();
+    const other = restart(server);
+    await other.prepareSetup(PIN2);
+    expect(await other.commitSetup()).toEqual({ ok: false, error: 'vault_exists' });
+    expect(other.isOpen()).toBe(false);
+  });
+
+  it('commitSetup reports a network failure as error "network", not as an open vault', async () => {
+    const { session, server } = make();
+    await session.prepareSetup(PIN);
+    server.fault = new ApiError('network', 'fetch failed');
+    expect(await session.commitSetup()).toEqual({ ok: false, error: 'network' });
+    expect(session.isOpen()).toBe(false);
+  });
+
+  it('setup(pin) still is prepare + commit in one call', async () => {
+    const { session, server } = make();
+    const res = await session.setup(PIN);
+    expect(res.ok).toBe(true);
+    expect(server.calls).toEqual(['vaultSetup']);
+    expect(session.isOpen()).toBe(true);
+  });
+});
+
+/**
+ * A client whose `method` answers only after `release()`, so that a test can `close()` the session while the call is in flight.
+ * The server has already done the work when the call is held (the answer is what waits). Only the first call is held.
+ */
+function gated(server: FakeVaultServer, method: keyof FakeVaultServer['client']) {
+  let release!: () => void;
+  let entered!: () => void;
+  const released = new Promise<void>((r) => (release = r));
+  const reached = new Promise<void>((r) => (entered = r));
+  let used = false;
+  const original = server.client[method] as (...args: unknown[]) => Promise<unknown>;
+  const client = {
+    ...server.client,
+    [method]: async (...args: unknown[]) => {
+      const hold = !used;
+      used = true;
+      const out = await original(...args);
+      if (hold) {
+        entered();
+        await released;
+      }
+      return out;
+    },
+  };
+  const session = new VaultSession({ client: () => client as unknown as Client, appPinMatches: () => false, iterations: ITERATIONS });
+  return { session, release, reached };
+}
+
+describe('VaultSession: close() while an opening call is in flight stays closed (review I3)', () => {
+  const closedUnlock = { ok: false, reason: 'error', error: 'closed' };
+  const closedPlain = { ok: false, error: 'closed' };
+
+  it.each(['vaultStatus', 'vaultUnlock'] as const)('unlock: close() while %s is awaiting leaves the vault closed and returns error "closed"', async (method) => {
+    const { server } = await setUp();
+    const { session, release, reached } = gated(server, method);
+    const pending = session.unlock(PIN);
+    await reached;
+    session.close();
+    release();
+    expect(await pending).toEqual(closedUnlock);
+    expect(session.isOpen()).toBe(false);
+    await lockedError(session.decryptList([item()]));
+    await lockedError(session.encryptMetaFor(fileMeta));
+  });
+
+  it.each(['vaultUnlock', 'vaultSetPin'] as const)('changePin: close() while %s is awaiting leaves the vault closed and returns error "closed"', async (method) => {
+    const { server } = await setUp();
+    const { session, release, reached } = gated(server, method);
+    const pending = session.changePin(PIN, PIN2);
+    await reached;
+    session.close();
+    release();
+    expect(await pending).toEqual(closedUnlock);
+    expect(session.isOpen()).toBe(false);
+    await lockedError(session.decryptList([item()]));
+  });
+
+  it.each(['vaultRecover', 'vaultSetPin'] as const)('recover: close() while %s is awaiting leaves the vault closed and returns error "closed"', async (method) => {
+    const { server, recoveryKey } = await setUp();
+    const { session, release, reached } = gated(server, method);
+    const pending = session.recover(recoveryKey, PIN2);
+    await reached;
+    session.close();
+    release();
+    expect(await pending).toEqual(closedPlain);
+    expect(session.isOpen()).toBe(false);
+    await lockedError(session.decryptList([item()]));
+  });
+
+  it('commitSetup: close() while the POST is awaiting leaves the vault closed and returns error "closed"', async () => {
+    const server = new FakeVaultServer();
+    const { session, release, reached } = gated(server, 'vaultSetup');
+    expect((await session.prepareSetup(PIN)).ok).toBe(true);
+    const pending = session.commitSetup();
+    await reached;
+    session.close();
+    release();
+    expect(await pending).toEqual(closedPlain);
+    expect(session.isOpen()).toBe(false);
+    await lockedError(session.encryptMetaFor(fileMeta));
+  });
+
+  it('a stale unlock that resolves after close() holds no key: a later decryptList of an encrypted item is refused', async () => {
+    const { session: owner, server } = await setUp();
+    const { item: stored } = await encryptedItem(owner, fileMeta);
+    const { session, release, reached } = gated(server, 'vaultUnlock');
+    const pending = session.unlock(PIN);
+    await reached;
+    session.close();
+    release();
+    await pending;
+    await lockedError(session.decryptList([stored]));
+  });
+
+  it('close() then a fresh unlock that completes works normally, and the stale unlock resolving later does not close it', async () => {
+    const { server } = await setUp();
+    const { session, release, reached } = gated(server, 'vaultUnlock');
+    const stale = session.unlock(PIN);
+    await reached;
+    session.close();
+
+    expect(await session.unlock(PIN)).toEqual({ ok: true }); // the gate holds only the first call
+    expect(session.isOpen()).toBe(true);
+
+    release();
+    expect(await stale).toEqual(closedUnlock);
+    expect(session.isOpen()).toBe(true);
+    const { encMeta } = await session.encryptMetaFor(fileMeta);
+    expect(await decryptMeta(encMeta, await masterKeyFor(server, PIN))).toEqual(fileMeta);
+  });
+
+  it('without a close() in between, the same calls still open the vault', async () => {
+    const { server, recoveryKey } = await setUp();
+    for (const [method, run] of [
+      ['vaultUnlock', (s: VaultSession) => s.unlock(PIN)],
+      ['vaultSetPin', (s: VaultSession) => s.changePin(PIN, PIN2)],
+    ] as const) {
+      const { session, release, reached } = gated(server, method);
+      const pending = run(session);
+      await reached;
+      release();
+      expect(await pending).toEqual({ ok: true });
+      expect(session.isOpen()).toBe(true);
+    }
+    const { session, release, reached } = gated(server, 'vaultRecover');
+    const pending = session.recover(recoveryKey, PIN);
+    await reached;
+    release();
+    expect(await pending).toEqual({ ok: true });
+    expect(session.isOpen()).toBe(true);
+  });
+});

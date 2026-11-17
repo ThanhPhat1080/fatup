@@ -43,4 +43,9 @@ describe('wiring (static checks on files the unit tests cannot load)', () => {
     const line = /const API_PATHS = \[([^\]]*)\]/.exec(viteConfigSource)?.[1] ?? '';
     expect(line).toContain("'vault'");
   });
+
+  it('browser-api.ts exposes the two-step Vault setup through the web Vault (review I1)', () => {
+    expect(api).toMatch(/vaultSetupPrepare:\s*\(?[^\n]*webVault\.vaultSetupPrepare/);
+    expect(api).toMatch(/vaultSetupCommit:\s*\(?[^\n]*webVault\.vaultSetupCommit/);
+  });
 });

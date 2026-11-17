@@ -116,7 +116,16 @@ async function world() {
   /** Per item: does it have a thumbnail, is it a link. */
   const shape = new Map<string, { thumb: boolean; link: boolean }>();
   const failGet = new Set<string>();
+  /** PUT addresses that answer 500 (the object is not stored). */
+  const failPut = new Set<string>();
+  /** The ETag header R2 returns per stored address; `etagMode = 'none'` makes PUT answers carry no ETag header at all. */
+  const etags = new Map<string, string>();
+  const state = { etagMode: 'header' as 'header' | 'none', putCount: 0 };
   const failComplete = new Map<string, number>();
+  /** How many times the next moveInComplete of an id answers 409 item_changed. */
+  const conflictComplete = new Map<string, number>();
+  /** How many times the next moveOutComplete of an id fails with a network error. */
+  const failCompleteOut = new Map<string, number>();
   const completeIn = new Map<string, VaultMoveInComplete[]>();
   const completeOut = new Map<string, VaultMoveOutComplete[]>();
 
@@ -127,8 +136,12 @@ async function world() {
       events.push(`PUT ${url}`);
       const body = await bodyBytes(init?.body);
       puts.push({ url, body, contentLength: new Headers(init?.headers).get('content-length') });
+      if (failPut.has(url)) return new Response('boom', { status: 500 });
       objects.set(url, body);
-      return new Response(null, { status: 200 });
+      // R2 answers a PUT with the object's ETag (quoted); the Vault move-in has to send it back to the Worker.
+      const etag = `"etag-${++state.putCount}-${body.length}"`;
+      etags.set(url, etag);
+      return new Response(null, { status: 200, headers: state.etagMode === 'header' ? { ETag: etag } : {} });
     }
     events.push(`GET ${url}`);
     gets.push(url);
@@ -180,6 +193,11 @@ async function world() {
         failComplete.set(id, left - 1);
         throw new ApiError('network', 'connection reset');
       }
+      const conflicts = conflictComplete.get(id) ?? 0;
+      if (conflicts > 0) {
+        conflictComplete.set(id, conflicts - 1);
+        throw new ApiError('item_changed', 'The item changed', 409, { error: 'item_changed' });
+      }
       return row(id);
     }),
     moveOut: vi.fn(async (id: string): Promise<VaultMoveUrls> => {
@@ -198,6 +216,11 @@ async function world() {
       events.push(`complete:${id}`);
       record('moveOutComplete', [id, req], () => undefined);
       completeOut.set(id, [...(completeOut.get(id) ?? []), req]);
+      const left = failCompleteOut.get(id) ?? 0;
+      if (left > 0) {
+        failCompleteOut.set(id, left - 1);
+        throw new ApiError('network', 'connection reset');
+      }
       return row(id);
     }),
     listEverything: vi.fn(async (opts: { trash?: boolean; vault?: boolean } = {}) => (opts.trash ? listed.trash : listed.live).map((r) => ({ ...r }))),
@@ -228,10 +251,14 @@ async function world() {
     shape.set(id, { thumb: opts.thumb !== undefined, link: meta.kind === 'link' });
     if (meta.kind !== 'link') objects.set(addr.vaultGet(id), cipher);
     if (opts.thumb) objects.set(addr.vaultThumbGet(id), await encryptBytes(opts.thumb, dek));
-    return { ...row(id), size: cipher.length, encrypted: true, encMeta, encKey };
+    // `thumbUrl` is the (presigned) address of the encrypted thumbnail, as the server lists it.
+    return { ...row(id), size: cipher.length, thumbUrl: opts.thumb ? addr.vaultThumbGet(id) : null, encrypted: true, encMeta, encKey };
   }
 
-  return { server, session, mover, client, fetchImpl, objects, puts, gets, events, calls, failGet, failComplete, completeIn, completeOut, listed, masterKey, legacy, sealed };
+  return {
+    server, session, mover, client, fetchImpl, objects, puts, gets, events, calls, failGet, failPut, etags, state, failComplete, conflictComplete,
+    failCompleteOut, completeIn, completeOut, listed, masterKey, legacy, sealed,
+  };
 }
 
 type World = Awaited<ReturnType<typeof world>>;
@@ -433,6 +460,122 @@ describe('moveIn: a plain Vault file becomes an encrypted one', () => {
   });
 });
 
+describe('moveIn: the ETag of the stored ciphertext goes back to the Worker (review C1)', () => {
+  // Two devices moving the same file in at once would otherwise leave the row with one device's key over the other's ciphertext.
+  // The Worker compares the etag with what is stored at vault/<id>; the client must send the one R2 answered for ITS PUT.
+  it('sends the ETag header of the PUT of vault/<id> as `etag`, verbatim', async () => {
+    const w = await world();
+    const item = w.legacy('A', { name: 'a.pdf', mime: 'application/pdf' }, PDF);
+    expect(await w.mover.moveIn([item])).toEqual({ done: ['A'], failed: [] });
+    const [req] = w.completeIn.get('A')!;
+    expect(w.etags.get(addr.vaultPut('A'))).toMatch(/^"etag-/); // the fake did answer a quoted ETag
+    expect(req.etag).toBe(w.etags.get(addr.vaultPut('A')));
+  });
+
+  it('keeps the quotes and any weak prefix of the header exactly as R2 wrote it', async () => {
+    const w = await world();
+    const item = w.legacy('A', { name: 'a.pdf' });
+    w.fetchImpl.mockImplementationOnce(async () => new Response(enc('x'))); // the download
+    w.fetchImpl.mockImplementationOnce(async () => new Response(null, { status: 200, headers: { ETag: 'W/"abc123"' } })); // the PUT
+    expect(await w.mover.moveIn([item])).toEqual({ done: ['A'], failed: [] });
+    expect(w.completeIn.get('A')![0].etag).toBe('W/"abc123"');
+  });
+
+  it('sends the etag of the file, not the one of its thumbnail', async () => {
+    const w = await world();
+    const item = w.legacy('P', { name: 'photo.jpg', mime: 'image/jpeg', kind: 'image' }, enc('jpeg of a photo'), THUMB);
+    expect(await w.mover.moveIn([item])).toEqual({ done: ['P'], failed: [] });
+    const fileEtag = w.etags.get(addr.vaultPut('P'));
+    const thumbEtag = w.etags.get(addr.vaultThumbPut('P'));
+    expect(fileEtag).toBeTruthy();
+    expect(thumbEtag).toBeTruthy();
+    expect(fileEtag).not.toBe(thumbEtag);
+    expect(w.completeIn.get('P')![0].etag).toBe(fileEtag);
+  });
+
+  it('fails the item without calling complete when the PUT answer has no ETag header', async () => {
+    const w = await world();
+    w.state.etagMode = 'none';
+    const res = await w.mover.moveIn([w.legacy('A'), w.legacy('B')]);
+    expect(res).toEqual({ done: [], failed: ['A', 'B'] });
+    expect(w.puts).toHaveLength(2); // both were uploaded...
+    expect(w.client.moveInComplete).not.toHaveBeenCalled(); // ...but nothing is claimed without the proof
+  });
+
+  it('sends no etag for a link, which has no file to PUT (its thumbnail PUT does not count)', async () => {
+    const w = await world();
+    const bare = w.legacy('L1', { kind: 'link', mime: LINK_MIME, name: 'Trang chủ', url: LINK_URL, size: 0 }, null);
+    const pictured = w.legacy('L2', { kind: 'link', mime: LINK_MIME, name: 'Trang hai', url: LINK_URL, size: 0 }, null, THUMB);
+    expect(await w.mover.moveIn([bare, pictured])).toEqual({ done: ['L1', 'L2'], failed: [] });
+    expect(w.completeIn.get('L1')![0].etag).toBeUndefined();
+    expect(w.completeIn.get('L2')![0].etag).toBeUndefined();
+  });
+
+  it('a link still moves in when the storage answers its thumbnail PUT without an ETag', async () => {
+    const w = await world();
+    w.state.etagMode = 'none';
+    const pictured = w.legacy('L', { kind: 'link', mime: LINK_MIME, name: 'Trang', url: LINK_URL, size: 0 }, null, THUMB);
+    expect(await w.mover.moveIn([pictured])).toEqual({ done: ['L'], failed: [] });
+  });
+
+  it('migrateLegacy sends the etag too', async () => {
+    const w = await world();
+    w.listed.live = [w.legacy('A', { name: 'a.txt' })];
+    expect(await w.mover.migrateLegacy()).toEqual({ done: ['A'], failed: [] });
+    expect(w.completeIn.get('A')![0].etag).toBe(w.etags.get(addr.vaultPut('A')));
+  });
+
+  describe('409 item_changed from complete', () => {
+    it('retries the item once from scratch: a new file key, a new PUT, and a complete with the NEW etag', async () => {
+      const w = await world();
+      const item = w.legacy('A', { name: 'a.pdf', mime: 'application/pdf' }, PDF);
+      w.conflictComplete.set('A', 1);
+      expect(await w.mover.moveIn([item])).toEqual({ done: ['A'], failed: [] });
+
+      expect(w.client.moveIn).toHaveBeenCalledTimes(2);
+      expect(w.puts.map((p) => p.url)).toEqual([addr.vaultPut('A'), addr.vaultPut('A')]);
+      const [first, second] = w.completeIn.get('A')!;
+      expect(second.encKey).not.toBe(first.encKey);
+      expect(first.etag).toBeTruthy();
+      expect(second.etag).not.toBe(first.etag);
+      expect(second.etag).toBe(w.etags.get(addr.vaultPut('A'))); // the etag of the LAST PUT
+
+      // What is stored is what the last completion's key opens.
+      const stored = w.objects.get(addr.vaultPut('A'))!;
+      expect(same(await decryptBytes(stored, await keyOf(w, second.encKey)), PDF)).toBe(true);
+      expect(second.size).toBe(stored.length);
+    });
+
+    it('puts the item in failed after a second 409, with no third attempt, and goes on to the next item', async () => {
+      const w = await world();
+      w.conflictComplete.set('A', 2);
+      const res = await w.mover.moveIn([w.legacy('A'), w.legacy('B')]);
+      expect(res).toEqual({ done: ['B'], failed: ['A'] });
+      expect(w.completeIn.get('A')).toHaveLength(2);
+      expect(w.client.moveIn.mock.calls.filter(([id]) => id === 'A')).toHaveLength(2);
+    });
+
+    it('does not retry other failures of complete (the run can be repeated later)', async () => {
+      const w = await world();
+      w.failComplete.set('A', 1);
+      expect(await w.mover.moveIn([w.legacy('A')])).toEqual({ done: [], failed: ['A'] });
+      expect(w.completeIn.get('A')).toHaveLength(1);
+      expect(w.client.moveIn).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts the retried item once in the progress', async () => {
+      const w = await world();
+      w.conflictComplete.set('A', 1);
+      const onProgress = vi.fn();
+      await w.mover.moveIn([w.legacy('A'), w.legacy('B')], onProgress);
+      expect(onProgress.mock.calls.map(([p]) => [p.done, p.total, p.current])).toEqual([
+        [1, 2, 'A'],
+        [2, 2, 'B'],
+      ]);
+    });
+  });
+});
+
 describe('moveOut: an encrypted Vault file becomes a plain one', () => {
   it('downloads the ciphertext, uploads the plain bytes and completes with the real name, type and size', async () => {
     const w = await world();
@@ -508,6 +651,128 @@ describe('moveOut: an encrypted Vault file becomes a plain one', () => {
       [2, 'A'],
       [2, 'B'],
     ]);
+  });
+});
+
+describe('moveOut: a move interrupted after the plain upload cleans up (review C3)', () => {
+  // The plain object in files/<id> is readable with the API token. When a move out fails after it was written, the item is still
+  // encrypted in D1, so the client asks the Worker's idempotent move-in branch (same encMeta/encKey, no etag) to sweep the plain copies.
+  const pdfMeta: VaultMeta = { name: 'a.pdf', mime: 'application/pdf', kind: 'file' };
+  const cleanups = (w: World, id: string) => w.calls.filter((c) => c.name === 'moveInComplete' && c.args[0] === id);
+
+  it('after a failed moveOutComplete, calls moveInComplete with the row\'s own encMeta, encKey and size, and no etag', async () => {
+    const w = await world();
+    const item = await w.sealed('A', pdfMeta, PDF);
+    w.failCompleteOut.set('A', 1);
+    expect(await w.mover.moveOut([item])).toEqual({ done: [], failed: ['A'] });
+
+    expect(w.puts.map((p) => p.url)).toEqual([addr.plainPut('A')]); // the plain copy was written
+    expect(w.completeIn.get('A')).toEqual([{ encMeta: item.encMeta, encKey: item.encKey, size: item.size, hasThumb: false }]);
+    expect(w.completeIn.get('A')![0]).not.toHaveProperty('etag');
+    // The cleanup comes after the failed completion.
+    expect(w.calls.filter((c) => c.args[0] === 'A').map((c) => c.name)).toEqual(['moveOut', 'moveOutComplete', 'moveInComplete']);
+  });
+
+  it('sets hasThumb to whether the item has an encrypted thumbnail', async () => {
+    const w = await world();
+    const item = await w.sealed('P', { name: 'photo.jpg', mime: 'image/jpeg', kind: 'image' }, enc('jpeg of a photo'), { thumb: THUMB });
+    w.failCompleteOut.set('P', 1);
+    expect(await w.mover.moveOut([item])).toEqual({ done: [], failed: ['P'] });
+    expect(w.completeIn.get('P')).toEqual([{ encMeta: item.encMeta, encKey: item.encKey, size: item.size, hasThumb: true }]);
+  });
+
+  it('cleans up when the thumbnail PUT fails after the file PUT, and never completes the move out', async () => {
+    const w = await world();
+    const item = await w.sealed('P', { name: 'photo.jpg', mime: 'image/jpeg', kind: 'image' }, enc('jpeg of a photo'), { thumb: THUMB });
+    w.failPut.add(addr.plainThumbPut('P'));
+    expect(await w.mover.moveOut([item])).toEqual({ done: [], failed: ['P'] });
+    expect(w.client.moveOutComplete).not.toHaveBeenCalled();
+    expect(w.completeIn.get('P')).toEqual([{ encMeta: item.encMeta, encKey: item.encKey, size: item.size, hasThumb: true }]);
+  });
+
+  it('swallows a failing cleanup call: the item is in failed, nothing is thrown, the next item still moves out', async () => {
+    const w = await world();
+    const a = await w.sealed('A', pdfMeta, PDF);
+    const b = await w.sealed('B', { ...pdfMeta, name: 'b.pdf' }, PDF);
+    w.failCompleteOut.set('A', 1);
+    w.failComplete.set('A', 1); // the cleanup call (moveInComplete) fails as well
+    await expect(w.mover.moveOut([a, b])).resolves.toEqual({ done: ['B'], failed: ['A'] });
+    expect(cleanups(w, 'A')).toHaveLength(1); // tried once, not retried
+  });
+
+  it('does not clean up when the item moved out fine', async () => {
+    const w = await world();
+    const item = await w.sealed('A', pdfMeta, PDF);
+    expect(await w.mover.moveOut([item])).toEqual({ done: ['A'], failed: [] });
+    expect(w.client.moveInComplete).not.toHaveBeenCalled();
+  });
+
+  describe('no cleanup while nothing plain was written', () => {
+    it('for a file whose ciphertext was modified', async () => {
+      const w = await world();
+      const bad = await w.sealed('A', pdfMeta, PDF, { tamper: true });
+      expect(await w.mover.moveOut([bad])).toEqual({ done: [], failed: ['A'] });
+      expect(w.client.moveInComplete).not.toHaveBeenCalled();
+    });
+
+    it('for a file whose download fails', async () => {
+      const w = await world();
+      const item = await w.sealed('A', pdfMeta, PDF);
+      w.failGet.add(addr.vaultGet('A'));
+      expect(await w.mover.moveOut([item])).toEqual({ done: [], failed: ['A'] });
+      expect(w.client.moveInComplete).not.toHaveBeenCalled();
+    });
+
+    it('for a thumbnail that cannot be decrypted', async () => {
+      const w = await world();
+      const item = await w.sealed('P', { name: 'photo.jpg', mime: 'image/jpeg', kind: 'image' }, enc('jpeg'), { thumb: THUMB });
+      const stored = w.objects.get(addr.vaultThumbGet('P'))!;
+      stored[stored.length - 1] ^= 1;
+      expect(await w.mover.moveOut([item])).toEqual({ done: [], failed: ['P'] });
+      expect(w.puts).toHaveLength(0);
+      expect(w.client.moveInComplete).not.toHaveBeenCalled();
+    });
+
+    it('when the Vault is closed', async () => {
+      const w = await world();
+      const item = await w.sealed('A', pdfMeta, PDF);
+      w.session.close();
+      expect(await w.mover.moveOut([item])).toEqual({ done: [], failed: ['A'] });
+      expect(w.client.moveInComplete).not.toHaveBeenCalled();
+    });
+
+    it('when the server refuses the move out itself', async () => {
+      const w = await world();
+      const item = await w.sealed('A', pdfMeta, PDF);
+      w.client.moveOut.mockRejectedValueOnce(new ApiError('vault_busy', 'busy', 409));
+      expect(await w.mover.moveOut([item])).toEqual({ done: [], failed: ['A'] });
+      expect(w.client.moveInComplete).not.toHaveBeenCalled();
+    });
+
+    it('when the PUT of the plain file itself is refused', async () => {
+      // Nothing was stored (the fake does not keep an object it answered 500 for), so there is nothing to sweep.
+      const w = await world();
+      const item = await w.sealed('A', pdfMeta, PDF);
+      w.failPut.add(addr.plainPut('A'));
+      expect(await w.mover.moveOut([item])).toEqual({ done: [], failed: ['A'] });
+      expect(w.client.moveInComplete).not.toHaveBeenCalled();
+    });
+
+    it('for a link, which has no plain file at all', async () => {
+      const w = await world();
+      const item = await w.sealed('L', { name: 'Trang', title: 'Trang', mime: LINK_MIME, kind: 'link', url: LINK_URL }, new Uint8Array(0));
+      w.failCompleteOut.set('L', 1);
+      expect(await w.mover.moveOut([item])).toEqual({ done: [], failed: ['L'] });
+      expect(w.client.moveInComplete).not.toHaveBeenCalled();
+    });
+  });
+
+  it('also cleans up through moveOutIds (the call the UI makes)', async () => {
+    const w = await world();
+    const item = await w.sealed('A', pdfMeta, PDF);
+    w.failCompleteOut.set('A', 1);
+    expect(await w.mover.moveOutIds(['A'], (id) => (id === 'A' ? item : undefined))).toEqual({ done: [], failed: ['A'] });
+    expect(w.completeIn.get('A')).toEqual([{ encMeta: item.encMeta, encKey: item.encKey, size: item.size, hasThumb: false }]);
   });
 });
 

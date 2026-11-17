@@ -43,4 +43,28 @@ describe('wiring (static checks on files the unit tests cannot load)', () => {
       expect(contract, old).not.toContain(`${old}(`);
     }
   });
+
+  it('the bridge exposes the two-step Vault setup (review I1): contract, preload and the main-process handlers', () => {
+    const preload = src('preload/index.ts');
+    const contract = src('shared-ipc.ts');
+    const main = src('main/index.ts');
+    for (const name of ['vaultSetupPrepare', 'vaultSetupCommit']) {
+      expect(contract, `FatupApi.${name}`).toMatch(new RegExp(`\\b${name}\\(`));
+      expect(preload, `preload ${name}`).toContain(`${name}:`);
+      expect(preload, `preload invoke ${name}`).toContain(`ipcRenderer.invoke('${name}'`);
+      expect(main, `ipcMain.handle ${name}`).toContain(`ipcMain.handle('${name}'`);
+    }
+  });
+
+  it('only a successful commit starts the background conversion in the main process (not the prepare step)', () => {
+    const main = src('main/index.ts');
+    // The text of one registration: from `ipcMain.handle('<name>'` up to the next registration.
+    const registration = (name: string) => main.split('ipcMain.handle(').find((chunk) => chunk.startsWith(`'${name}'`)) ?? '';
+    const prepare = registration('vaultSetupPrepare');
+    const commit = registration('vaultSetupCommit');
+    expect(prepare).not.toBe('');
+    expect(commit).not.toBe('');
+    expect(prepare).not.toContain('afterOpen');
+    expect(commit).toContain('afterOpen');
+  });
 });
