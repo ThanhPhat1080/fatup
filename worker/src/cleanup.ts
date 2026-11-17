@@ -2,7 +2,8 @@ import { PENDING_TTL_HOURS, TRASH_RETENTION_DAYS } from '@fatup/shared';
 import type { Env } from './env';
 import { fileKey, thumbKey, vaultFileKey, vaultThumbKey } from './presign';
 
-const BATCH = 250; // R2 delete() accepts up to 1000 keys; each file has 4.
+/** Ids per statement and per R2 delete: D1 binds at most 100 values per statement, and 100 ids are 400 keys (R2 takes up to 1000). */
+const BATCH = 100;
 const DAY = 24 * 60 * 60 * 1000;
 /** A move out of the Vault older than this is dead, not running. */
 const OUT_MOVE_GRACE_MS = 60 * 60 * 1000;
@@ -40,17 +41,15 @@ export async function cleanup(env: Env, now = Date.now()): Promise<number> {
   // A move out of the Vault that never completed may have left plain objects next to the ciphertext. Only encrypted rows are
   // swept: a plain row's files/<id> is its file.
   const outCutoff = now - OUT_MOVE_GRACE_MS;
-  for (;;) {
-    const { results } = await env.DB.prepare('SELECT id FROM files WHERE encrypted = 1 AND out_started_at IS NOT NULL AND out_started_at < ? LIMIT ?')
-      .bind(outCutoff, BATCH)
-      .all<{ id: string }>();
-    if (results.length === 0) break;
-    await env.BUCKET.delete(results.flatMap((r) => [fileKey(r.id), thumbKey(r.id)]));
-    const marks = results.map(() => '?').join(',');
-    await env.DB.prepare(`UPDATE files SET out_started_at = NULL WHERE id IN (${marks})`)
-      .bind(...results.map((r) => r.id))
-      .run();
-    if (results.length < BATCH) break;
+  // Release first, delete second: a vault/out/complete that finishes meanwhile needs out_started_at, so it either wins (the row is
+  // plain and the UPDATE below skips it) or finds the row released and answers item_changed. Deleting first could remove the new plain file.
+  const { results: released } = await env.DB.prepare(
+    'UPDATE files SET out_started_at = NULL WHERE encrypted = 1 AND out_started_at IS NOT NULL AND out_started_at < ? RETURNING id',
+  )
+    .bind(outCutoff)
+    .all<{ id: string }>();
+  for (let i = 0; i < released.length; i += BATCH) {
+    await env.BUCKET.delete(released.slice(i, i + BATCH).flatMap((r) => [fileKey(r.id), thumbKey(r.id)]));
   }
 
   for (;;) {

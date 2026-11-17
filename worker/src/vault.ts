@@ -197,7 +197,7 @@ async function beginMove<B = null>(
 
 const isSize = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
 
-type InBody = { encMeta: string; encKey: string; size: number; hasThumb: boolean; etag: unknown };
+type InBody = { encMeta: string; encKey: string; size: number; hasThumb: boolean; etag: unknown; claim: string | null };
 type OutBody = { link: { url: string; title: string } | null; name: string; mime: string; size: number; hasThumb: boolean };
 
 function parseIn(c: Ctx) {
@@ -205,7 +205,8 @@ function parseIn(c: Ctx) {
     if (!isEncText(b.encMeta, MAX_ENC_META) || !isEncText(b.encKey, MAX_ENC_KEY) || !isSize(b.size)) {
       return badRequest(c, `encMeta (at most ${MAX_ENC_META} characters), encKey (at most ${MAX_ENC_KEY}) and a non-negative integer size are required`);
     }
-    return { encMeta: b.encMeta, encKey: b.encKey, size: b.size, hasThumb: b.hasThumb === true, etag: b.etag };
+    if (b.claim !== undefined && typeof b.claim !== 'string') return badRequest(c, 'claim must be a string');
+    return { encMeta: b.encMeta, encKey: b.encKey, size: b.size, hasThumb: b.hasThumb === true, etag: b.etag, claim: b.claim ?? null };
   };
 }
 
@@ -236,6 +237,17 @@ function cleanEtag(v: unknown): string | null {
   return bare.length > 0 ? bare : null;
 }
 
+const busy = (c: Ctx) => fail(c, 409, 'item_busy', 'Another device is moving this item in; try again later');
+
+/** How long a device keeps the right to write vault/<id>: longer than the 15 minutes its presigned URLs live. */
+const CLAIM_MS = 30 * 60 * 1000;
+
+/** A random token, 16 bytes as base64url. */
+function newClaim(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
 const changed = (c: Ctx) => fail(c, 409, 'item_changed', 'The item changed while moving it; try again');
 
 function registerMoveRoutes(app: Hono<AppEnv>): void {
@@ -245,6 +257,17 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
     if (begun instanceof Response) return begun;
     const { row } = begun;
     if (row.encrypted === 1) return fail(c, 409, 'already_encrypted', 'The item is already encrypted');
+    // One writer at a time: the presigned PUT cannot be revoked, so no second URL is handed out while a claim lives.
+    // The check and the claim are one statement, so two devices asking together cannot both get one.
+    const now = Date.now();
+    const claimed = await c.env.DB.prepare(
+      `UPDATE files SET in_claim = ?, in_claim_until = ?
+       WHERE id = ? AND encrypted = 0 AND (in_claim IS NULL OR in_claim_until <= ?)
+       RETURNING in_claim`,
+    )
+      .bind(newClaim(), now + CLAIM_MS, row.id, now)
+      .first<{ in_claim: string }>();
+    if (!claimed) return busy(c);
     const presigner = c.get('presigner');
     // A link has no file object in R2 (its address travels in encMeta alone), but it may have a preview picture, which moves in too.
     const hasObjects = row.kind !== 'link';
@@ -254,6 +277,7 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
       thumbUploadUrl: withThumb ? await presigner.put(vaultThumbKey(row.id)) : null,
       downloadUrl: hasObjects ? await presigner.get(fileKey(row.id)) : null,
       thumbUrl: withThumb ? await presigner.get(thumbKey(row.id)) : null,
+      claim: claimed.in_claim,
     };
     return c.json(res);
   });
@@ -271,6 +295,15 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
       return c.json(await itemOf(c, row));
     }
 
+    // The row is claimed: only the holder of a live claim may go on. Anyone else changes and deletes nothing.
+    const now = Date.now();
+    if (row.in_claim !== null && (body.claim !== row.in_claim || row.in_claim_until === null || row.in_claim_until <= now)) return busy(c);
+    /** The caller's claim was valid, so a refusal that lets the client start over frees it at once. */
+    const release = async () => {
+      if (row.in_claim === null) return;
+      await c.env.DB.prepare('UPDATE files SET in_claim = NULL, in_claim_until = NULL WHERE id = ? AND in_claim = ?').bind(row.id, row.in_claim).run();
+    };
+
     const isLink = row.kind === 'link';
     // A file must say which bytes it encrypted (the ETag of its PUT), so two devices moving the same file in cannot mix one's key with the other's ciphertext.
     const etag = isLink ? null : cleanEtag(body.etag);
@@ -284,10 +317,14 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
       if (!object) return fail(c, 409, 'not_uploaded', 'The encrypted file has not been uploaded yet');
       if (object.size !== body.size) {
         await c.env.BUCKET.delete(vaultKeys);
+        await release();
         return fail(c, 409, 'size_mismatch', 'Uploaded size does not match');
       }
       // Another device overwrote vault/<id> since this one's PUT: nothing is written or deleted, the client starts over.
-      if (object.etag !== etag) return changed(c);
+      if (object.etag !== etag) {
+        await release();
+        return changed(c);
+      }
     }
     const keepThumb = body.hasThumb && (await c.env.BUCKET.head(vaultThumbKey(row.id))) !== null;
 
@@ -295,12 +332,16 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
     // deleted_at is left alone, so an item in the Vault's trash stays there. The share trigger (in_vault -> 1) kills the item's share link in the same statement.
     const res = await c.env.DB.prepare(
       `UPDATE files SET encrypted = 1, in_vault = 1, enc_meta = ?, enc_key = ?, name = '', mime = 'application/octet-stream', kind = 'file',
-         url = NULL, size = ?, has_thumb = ?, previewed_at = NULL, icon_url = NULL, title_set = 0
-       WHERE id = ? AND encrypted = 0 AND status = 'ready' AND (deleted_at IS NULL OR in_vault = 1)`,
+         url = NULL, size = ?, has_thumb = ?, previewed_at = NULL, icon_url = NULL, title_set = 0, in_claim = NULL, in_claim_until = NULL
+       WHERE id = ? AND encrypted = 0 AND status = 'ready' AND (deleted_at IS NULL OR in_vault = 1)
+         AND in_claim IS ? AND (in_claim IS NULL OR in_claim_until > ?)`,
     )
-      .bind(body.encMeta, body.encKey, isLink ? 0 : body.size, keepThumb ? 1 : 0, row.id)
+      .bind(body.encMeta, body.encKey, isLink ? 0 : body.size, keepThumb ? 1 : 0, row.id, row.in_claim, now)
       .run();
-    if (!res.meta.changes) return changed(c);
+    if (!res.meta.changes) {
+      await release();
+      return changed(c);
+    }
 
     // Only now are the plain objects (and an encrypted thumbnail nobody will reference) safe to remove.
     await c.env.BUCKET.delete(keepThumb ? plainKeys : [...plainKeys, vaultKeys[1]]);
@@ -351,7 +392,7 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
       res = await c.env.DB.prepare(
         `UPDATE files SET encrypted = 0, in_vault = 0, enc_meta = NULL, enc_key = NULL, name = ?, mime = ?, kind = 'link', url = ?,
            size = 0, has_thumb = 0, previewed_at = NULL, icon_url = NULL, title_set = ?, out_started_at = NULL
-         WHERE id = ? AND encrypted = 1 AND status = 'ready' AND deleted_at IS NULL`,
+         WHERE id = ? AND encrypted = 1 AND out_started_at IS NOT NULL AND status = 'ready' AND deleted_at IS NULL`,
       )
         .bind(title || hostOf(url), LINK_MIME, url, title ? 1 : 0, row.id)
         .run();
@@ -372,7 +413,7 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
       res = await c.env.DB.prepare(
         `UPDATE files SET encrypted = 0, in_vault = 0, enc_meta = NULL, enc_key = NULL, name = ?, mime = ?, kind = ?, url = NULL,
            size = ?, has_thumb = ?, previewed_at = NULL, icon_url = NULL, title_set = 0, out_started_at = NULL
-         WHERE id = ? AND encrypted = 1 AND status = 'ready' AND deleted_at IS NULL`,
+         WHERE id = ? AND encrypted = 1 AND out_started_at IS NOT NULL AND status = 'ready' AND deleted_at IS NULL`,
       )
         .bind(body.name, body.mime, kind, body.size, keepThumb ? 1 : 0, row.id)
         .run();

@@ -62,6 +62,10 @@ export type Row = {
   enc_meta: string | null;
   /** Base64 file key wrapped with the Vault key, or null for plain rows. */
   enc_key: string | null;
+  /** Token of the device that may write vault/<id> now (vault/in); null when nobody holds the item. */
+  in_claim: string | null;
+  /** Epoch ms until which `in_claim` holds. */
+  in_claim_until: number | null;
 };
 
 export type AppEnv = { Bindings: Env; Variables: { presigner: Presigner } };
@@ -339,6 +343,8 @@ export function createApp(options: AppOptions = {}) {
       encrypted: 0,
       enc_meta: null,
       enc_key: null,
+      in_claim: null,
+      in_claim_until: null,
     };
     await c.env.DB.prepare(
       `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, device, created_at, url, title_set)
@@ -535,7 +541,7 @@ export function createApp(options: AppOptions = {}) {
   app.delete('/trash', async (c) => {
     let deleted = 0;
     for (;;) {
-      const { results } = await c.env.DB.prepare('SELECT id FROM files WHERE deleted_at IS NOT NULL AND in_vault = 0 LIMIT 500').all<{ id: string }>();
+      const { results } = await c.env.DB.prepare('SELECT id FROM files WHERE deleted_at IS NOT NULL AND in_vault = 0 LIMIT 100').all<{ id: string }>();
       if (results.length === 0) break;
       await purge(c.env, results.map((r) => r.id));
       deleted += results.length;

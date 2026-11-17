@@ -478,10 +478,15 @@ export function startMockServer(realNow = Date.now(), options = {}) {
       if (!ready()) return notReady();
       const f = files.find((x) => x.id === m[1]);
       if (!f) return fail(404, 'not_found', 'File not found');
+      // One writer at a time, like the Worker: the claim lasts 30 minutes, and nobody else gets addresses while it lives.
+      if (f.claim && f.claimUntil > Date.now()) return fail(409, 'item_busy', 'Another device is moving this item in; try again later');
+      f.claim = randomBytes(16).toString('base64url');
+      f.claimUntil = Date.now() + 30 * 60 * 1000;
       const thumb = plainThumbSrc(f, base);
       return {
         status: 200,
         body: {
+          claim: f.claim,
           uploadUrl: `${base}/put/vault/${f.id}`,
           thumbUploadUrl: thumb ? `${base}/put/vault/${f.id}.thumb` : null,
           downloadUrl: `${base}/raw/${f.id}`,
@@ -494,11 +499,18 @@ export function startMockServer(realNow = Date.now(), options = {}) {
       const b = jsonObject(raw);
       if (!b) return badRequest('Body must be JSON');
       if (!isStr(b.encMeta) || !isStr(b.encKey) || !isInt(b.size)) return badRequest('encMeta, encKey and a non-negative integer size are required');
+      if (b.claim !== undefined && typeof b.claim !== 'string') return badRequest('claim must be a string');
       const id = m[1];
       const existing = vaultItem(id);
-      if (existing) return { status: 200, body: vaultJson(existing, base) }; // a retry after the move went through
+      if (existing) return { status: 200, body: vaultJson(existing, base) }; // a retry after the move went through: no claim or etag compare
       const f = files.find((x) => x.id === id);
       if (!f) return fail(404, 'not_found', 'File not found');
+      // A claimed row only completes for the holder of a live claim; a refusal that lets the client start over frees it.
+      if (f.claim && (b.claim !== f.claim || f.claimUntil <= Date.now())) return fail(409, 'item_busy', 'Another device is moving this item in; try again later');
+      const release = () => {
+        delete f.claim;
+        delete f.claimUntil;
+      };
       // Like the Worker: a file must say which bytes it encrypted (the ETag of its PUT), quoted or not.
       const etag = typeof b.etag === 'string' && b.etag.length <= 200 ? b.etag.replace(/^"(.*)"$/, '$1') : '';
       if (etag === '') return badRequest('etag (the ETag of the uploaded encrypted file, at most 200 characters) is required');
@@ -507,10 +519,14 @@ export function startMockServer(realNow = Date.now(), options = {}) {
       if (!obj) return fail(409, 'not_uploaded', 'The encrypted file has not been uploaded yet');
       if (obj.bytes.length !== b.size) {
         blobs.delete(key);
+        release();
         return fail(409, 'size_mismatch', 'Uploaded size does not match');
       }
       // Another PUT replaced the object since this client's own: nothing changes, the client starts over.
-      if (obj.etag.replace(/^"(.*)"$/, '$1') !== etag) return fail(409, 'item_changed', 'The item changed while moving it; try again');
+      if (obj.etag.replace(/^"(.*)"$/, '$1') !== etag) {
+        release();
+        return fail(409, 'item_changed', 'The item changed while moving it; try again');
+      }
       const hasThumb = b.hasThumb === true && blobs.has(`${key}.thumb`);
       files.splice(files.indexOf(f), 1);
       blobs.delete(`files/${id}`);

@@ -193,10 +193,12 @@ export class VaultSession {
 
   /** Sets a new PIN with the recovery key (also when the server has wiped its keys), then opens the Vault. No file is re-encrypted. */
   async recover(recoveryKey: string, newPin: string): Promise<VaultRecoverResult> {
+    // Taken before the app PIN check awaits: a close() during that wait must still win.
+    const generation = this.#generation;
     const refused = await this.#refusePin(newPin);
     if (refused) return refused;
+    if (generation !== this.#generation) return { ok: false, error: CLOSED };
     if (!parseRecoveryKey(recoveryKey)) return { ok: false, error: 'bad_recovery_key' };
-    const generation = this.#generation;
     try {
       const client = this.#deps.client();
       const { rkAuth, rkKek } = await recoveryKeys(recoveryKey);

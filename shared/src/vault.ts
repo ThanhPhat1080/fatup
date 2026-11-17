@@ -106,6 +106,8 @@ export type VaultMoveInComplete = {
   hasThumb: boolean;
   /** The ETag R2 returned for the PUT of vault/<id>. Required for anything but a link; a mismatch answers 409 `item_changed`. */
   etag?: string;
+  /** The `claim` that `vault/in` returned. Required while the row is claimed: a missing, wrong or expired claim answers 409 `item_busy`. Moves out do not send one. */
+  claim?: string;
 };
 /** `POST /files/:id/vault/out/complete`. */
 export type VaultMoveOutComplete = {
@@ -123,4 +125,6 @@ export type VaultMoveUrls = {
   /** Null for links, which have no file object to download. */
   downloadUrl: string | null;
   thumbUrl: string | null;
+  /** Only `vault/in` sets it: the token that gives this device the sole right to write vault/<id> for 30 minutes. Send it back to `vault/in/complete`. */
+  claim?: string;
 };

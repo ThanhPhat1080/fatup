@@ -5,7 +5,8 @@
 // Interrupted runs are safe to repeat: PUT overwrites the target object and the Worker's complete calls are idempotent.
 // Two safeguards on the Worker's side need the client's help: a move in sends the ETag of the ciphertext it stored (two devices moving the
 // same file in at once would otherwise mix one device's key with the other's ciphertext), and a move out that fails after the plain copy
-// was written asks the Worker to sweep that copy again.
+// was written asks the Worker to sweep that copy again. A move in also sends back the `claim` the Worker handed out with the addresses:
+// only one device at a time may write vault/<id>, and a device that is told `item_busy` gives up (the next unlock tries again).
 import { LINK_MIME, decryptBytes, encryptBytes, type FileItem, type VaultMeta } from '@fatup/shared';
 import type { VaultProgress } from '../shared-ipc';
 import type { VaultSession } from '../vault-session';
@@ -95,7 +96,10 @@ export function createVaultMover(deps: VaultMoverDeps) {
     return result;
   }
 
-  /** One attempt at moving an item in. Throws ApiError `item_changed` (409) when another device stored a different ciphertext meanwhile. */
+  /**
+ * One attempt at moving an item in. Throws ApiError `item_changed` (409) when another device stored a different ciphertext meanwhile,
+ * and `item_busy` (409, from the first call or from complete) when another device holds the item.
+ */
   async function moveInAttempt(item: FileItem): Promise<void> {
     const link = item.kind === 'link';
     if (link && !item.url) throw new ApiError('bad_item', 'A link without an address');
@@ -132,6 +136,7 @@ export function createVaultMover(deps: VaultMoverDeps) {
       size: cipher ? cipher.length : 0,
       hasThumb: thumbCipher !== null,
       ...(etag !== undefined ? { etag } : {}),
+      ...(urls.claim !== undefined ? { claim: urls.claim } : {}),
     });
   }
 
