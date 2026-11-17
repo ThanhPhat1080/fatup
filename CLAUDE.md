@@ -58,6 +58,16 @@ Android là project Gradle riêng: `cd android && ./gradlew testDebugUnitTest`. 
 
 Phân tích yêu cầu **không** là agent: nó cần hỏi qua lại với người dùng, điều subagent không làm được.
 
+**Model cho agent (bắt buộc, người dùng chốt):**
+
+| Việc | Model |
+|---|---|
+| Phân tích yêu cầu, design spec, plan, quyết định "Ruling", agent `reviewer` | **Opus** |
+| Task nặng hoặc đụng logic dùng chung: `shared/`, lõi mã hóa/bảo mật, schema D1, hợp đồng API/IPC mà nhiều package phụ thuộc | **Sonnet** |
+| Task nhẹ hơn: giao diện, CSS, chuỗi i18n, mock/e2e, tài liệu (`doc-keeper`), `e2e-verifier` | **Haiku** |
+
+`test-writer` và agent cài đặt dùng model của task (plan ghi `Model:` ở mỗi task; khi gọi Agent thì truyền `model` tương ứng). Không chắc task thuộc loại nào thì chọn model cao hơn.
+
 ## Quy tắc dễ vi phạm
 
 - File không đi qua Worker (presigned URL của R2), **trừ** link chia sẻ công khai `/s/<token>`. Xem ADR 0002.
