@@ -34,7 +34,7 @@ import { createShareRoutes } from './share-public';
 import { isUlid, ulid } from './ulid';
 import { appOutdated, registerVaultRoutes, speaksVault, vaultState } from './vault';
 
-type Row = {
+export type Row = {
   id: string;
   name: string;
   mime: string;
@@ -91,13 +91,18 @@ export function sanitizeTitle(raw: string): string {
   return raw.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 255);
 }
 
-const hostOf = (url: string) => new URL(url).hostname;
+export const hostOf = (url: string) => new URL(url).hostname;
 
 /** Strips directory parts and control characters from a client-supplied name. */
 export function sanitizeName(raw: string): string {
   const base = raw.split(/[\\/]/).pop() ?? '';
   const clean = base.replace(/[\x00-\x1f\x7f]/g, '').trim().slice(0, 255);
   return clean || 'file';
+}
+
+/** A client-supplied mime type as stored: lower-cased when it looks like one, otherwise the generic binary type. */
+export function cleanMime(raw: string): string {
+  return /^[\w.+-]+\/[\w.+-]+$/.test(raw) ? raw.toLowerCase() : 'application/octet-stream';
 }
 
 function parseTags(raw: string | null | undefined): TagColor[] {
@@ -118,7 +123,7 @@ function decodeCursor(cursor: string): { createdAt: number; id: string } | null 
   return m ? { createdAt: Number(m[1]), id: m[2] } : null;
 }
 
-async function toItem(row: Row, presigner: Presigner, shared = false): Promise<FileItem> {
+export async function toItem(row: Row, presigner: Presigner, shared = false): Promise<FileItem> {
   return {
     id: row.id,
     name: row.name,
@@ -146,9 +151,9 @@ async function toItem(row: Row, presigner: Presigner, shared = false): Promise<F
 }
 
 /** A non-empty string of at most `max` characters; the caps keep encrypted metadata from bloating D1 rows. */
-const isEncText = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
-const MAX_ENC_META = 8192;
-const MAX_ENC_KEY = 512;
+export const isEncText = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
+export const MAX_ENC_META = 8192;
+export const MAX_ENC_KEY = 512;
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -165,7 +170,7 @@ function toShareInfo(origin: string, r: ShareRow): ShareInfo {
 }
 
 /** Which of these files have a share link that has not expired. */
-async function sharedIds(db: D1Database, ids: string[]): Promise<Set<string>> {
+export async function sharedIds(db: D1Database, ids: string[]): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
   const { results } = await db
     .prepare(`SELECT file_id FROM shares WHERE file_id IN (${ids.map(() => '?').join(',')}) AND (expires_at IS NULL OR expires_at > ?)`)
@@ -174,11 +179,12 @@ async function sharedIds(db: D1Database, ids: string[]): Promise<Set<string>> {
   return new Set(results.map((r) => r.file_id));
 }
 
+/** A file as the API returns it, with its current `shared` state read from the database. */
+export const itemOf = async (c: Context<AppEnv>, row: Row) => toItem(row, c.get('presigner'), (await sharedIds(c.env.DB, [row.id])).has(row.id));
+
 export function createApp(options: AppOptions = {}) {
   const app = new Hono<AppEnv>();
   const makePresigner = options.presigner ?? createPresigner;
-  /** A file as the API returns it, with its current `shared` state read from the database. */
-  const itemOf = async (c: Context<AppEnv>, row: Row) => toItem(row, c.get('presigner'), (await sharedIds(c.env.DB, [row.id])).has(row.id));
 
   app.get('/health', (c) => c.json({ ok: true }));
 
@@ -254,15 +260,15 @@ export function createApp(options: AppOptions = {}) {
       return c.json(res, 201);
     }
 
-    const cleanMime = /^[\w.+-]+\/[\w.+-]+$/.test(mime) ? mime.toLowerCase() : 'application/octet-stream';
-    const kind = kindFromMime(cleanMime);
+    const mimeType = cleanMime(mime);
+    const kind = kindFromMime(mimeType);
     const withThumb = hasThumb === true && kind === 'image';
 
     await c.env.DB.prepare(
       `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, device, created_at)
        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
     )
-      .bind(id, sanitizeName(name), cleanMime, size, kind, withThumb ? 1 : 0, typeof device === 'string' ? device.slice(0, 64) : null, now)
+      .bind(id, sanitizeName(name), mimeType, size, kind, withThumb ? 1 : 0, typeof device === 'string' ? device.slice(0, 64) : null, now)
       .run();
 
     const res: CreateUploadResponse = {

@@ -113,6 +113,7 @@ export type VaultMoveOutComplete = {
 export type VaultMoveUrls = {
   uploadUrl: string;
   thumbUploadUrl: string | null;
-  downloadUrl: string;
+  /** Null for links, which have no file object to download. */
+  downloadUrl: string | null;
   thumbUrl: string | null;
 };
