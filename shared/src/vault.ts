@@ -125,6 +125,6 @@ export type VaultMoveUrls = {
   /** Null for links, which have no file object to download. */
   downloadUrl: string | null;
   thumbUrl: string | null;
-  /** Only `vault/in` sets it: the token that gives this device the sole right to write vault/<id> for 30 minutes. Send it back to `vault/in/complete`. */
+  /** Only `vault/in` sets it: the token that gives this device the sole right to write vault/<id> for 2 hours (shortened to 16 minutes after a refused complete). Send it back to `vault/in/complete`. */
   claim?: string;
 };
