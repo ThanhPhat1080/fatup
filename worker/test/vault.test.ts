@@ -2,7 +2,7 @@ import { env } from 'cloudflare:workers';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ListFilesResponse } from '@fatup/shared';
 import { createApp } from '../src/app';
-import { purge } from '../src/cleanup';
+import { cleanup, purge } from '../src/cleanup';
 import { fileKey, objectKeys, thumbKey, vaultFileKey, vaultThumbKey } from '../src/presign';
 import { ulid } from '../src/ulid';
 
@@ -35,6 +35,8 @@ async function insertFile(f: { encrypted: 0 | 1; inVault?: 0 | 1; hasThumb?: 0 |
     .run();
   return id;
 }
+
+const ALL_KEYS = (id: string) => [`files/${id}`, `thumbs/${id}.jpg`, `vault/${id}`, `vault/${id}.thumb`];
 
 async function fileRow(id: string) {
   return env.DB.prepare('SELECT id FROM files WHERE id = ?').bind(id).first();
@@ -85,6 +87,15 @@ describe('schema', () => {
     expect(by('encrypted')?.dflt_value).toBe('0');
     expect(by('enc_meta')).toBeDefined();
     expect(by('enc_key')).toBeDefined();
+  });
+
+  it('adds out_started_at to files: a nullable integer with no default', async () => {
+    const col = (await columns('files')).find((c) => c.name === 'out_started_at');
+    expect(col).toBeDefined();
+    expect(col!.notnull).toBe(0);
+    expect(col!.dflt_value).toBeNull();
+    const id = await insertFile({ encrypted: 0 });
+    expect(await env.DB.prepare('SELECT out_started_at FROM files WHERE id = ?').bind(id).first()).toEqual({ out_started_at: null });
   });
 
   it('refuses a second vault_keys row (id must be 1)', async () => {
@@ -139,6 +150,26 @@ describe('purge', () => {
     expect(await fileRow(id)).toBeNull();
   });
 
+  it('deletes all four keys of an encrypted item, even the plain ones an interrupted move-out left', async () => {
+    const id = await insertFile({ encrypted: 1, inVault: 1, hasThumb: 1, name: '', encMeta: 'M', encKey: 'K' });
+    for (const k of ALL_KEYS(id)) await env.BUCKET.put(k, 'x');
+
+    await purge(env, [id]);
+
+    for (const k of ALL_KEYS(id)) expect(await env.BUCKET.head(k)).toBeNull();
+    expect(await fileRow(id)).toBeNull();
+  });
+
+  it('deletes all four keys of a plain item, even the encrypted ones an interrupted move-in left', async () => {
+    const id = await insertFile({ encrypted: 0, hasThumb: 1 });
+    for (const k of ALL_KEYS(id)) await env.BUCKET.put(k, 'x');
+
+    await purge(env, [id]);
+
+    for (const k of ALL_KEYS(id)) expect(await env.BUCKET.head(k)).toBeNull();
+    expect(await fileRow(id)).toBeNull();
+  });
+
   it('cleans both kinds in one call and leaves other items alone', async () => {
     const plain = await insertFile({ encrypted: 0, hasThumb: 1 });
     const enc = await insertFile({ encrypted: 1, inVault: 1, hasThumb: 1, name: '', encMeta: 'M', encKey: 'K' });
@@ -184,5 +215,100 @@ describe('GET /files?vault=1', () => {
     const item = items.find((i) => i.id === id)!;
     expect(item.encMeta ?? null).toBeNull();
     expect(item.encKey ?? null).toBeNull();
+  });
+});
+
+describe('DELETE /trash', () => {
+  const trash = (id: string, at = Date.now()) => env.DB.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').bind(at, id).run();
+
+  it('purges only the normal trash: an item in the vault trash stays, with its objects (spec 4.7b C2)', async () => {
+    const normal = await insertFile({ encrypted: 0 });
+    await env.BUCKET.put(`files/${normal}`, 'plain');
+    const vaulted = await insertFile({ encrypted: 1, inVault: 1, hasThumb: 1, name: '', encMeta: 'M', encKey: 'K' });
+    await env.BUCKET.put(`vault/${vaulted}`, 'cipher');
+    await env.BUCKET.put(`vault/${vaulted}.thumb`, 'cipher-thumb');
+    await trash(normal);
+    await trash(vaulted);
+
+    const res = await call('/trash', { method: 'DELETE' });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ deleted: 1 });
+    expect(await fileRow(normal)).toBeNull();
+    expect(await env.BUCKET.head(`files/${normal}`)).toBeNull();
+    expect(await fileRow(vaulted)).not.toBeNull();
+    expect(await env.BUCKET.head(`vault/${vaulted}`)).not.toBeNull();
+    expect(await env.BUCKET.head(`vault/${vaulted}.thumb`)).not.toBeNull();
+  });
+
+  it('also keeps a legacy (not yet encrypted) item in the vault trash', async () => {
+    const legacy = await insertFile({ encrypted: 0, inVault: 1 });
+    await env.BUCKET.put(`files/${legacy}`, 'plain');
+    await trash(legacy);
+
+    const res = await call('/trash', { method: 'DELETE' });
+
+    expect(await res.json()).toEqual({ deleted: 0 });
+    expect(await fileRow(legacy)).not.toBeNull();
+    expect(await env.BUCKET.head(`files/${legacy}`)).not.toBeNull();
+  });
+});
+
+describe('cleanup: plain leftovers of an interrupted move out of the vault (spec 4.7b C3)', () => {
+  const NOW = 1_800_000_000_000;
+  const HOUR = 60 * 60 * 1000;
+  const MIN = 60 * 1000;
+  const stamp = (id: string, at: number) => env.DB.prepare('UPDATE files SET out_started_at = ? WHERE id = ?').bind(at, id).run();
+  const outStarted = async (id: string) =>
+    ((await env.DB.prepare('SELECT out_started_at AS t FROM files WHERE id = ?').bind(id).first()) as { t: number | null }).t;
+
+  async function encryptedWithLeftovers() {
+    const id = await insertFile({ encrypted: 1, inVault: 1, hasThumb: 1, name: '', encMeta: 'M', encKey: 'K' });
+    for (const k of [`files/${id}`, `thumbs/${id}.jpg`, `vault/${id}`]) await env.BUCKET.put(k, 'x');
+    return id;
+  }
+
+  it('deletes files/<id> and thumbs/<id>.jpg of an encrypted row whose move out started over an hour ago, and keeps vault/<id>', async () => {
+    const id = await encryptedWithLeftovers();
+    await stamp(id, NOW - 2 * HOUR);
+
+    await cleanup(env, NOW);
+
+    expect(await env.BUCKET.head(`files/${id}`)).toBeNull();
+    expect(await env.BUCKET.head(`thumbs/${id}.jpg`)).toBeNull();
+    expect(await env.BUCKET.head(`vault/${id}`)).not.toBeNull();
+    expect(await outStarted(id)).toBeNull();
+    expect(await env.DB.prepare('SELECT encrypted, in_vault, enc_key FROM files WHERE id = ?').bind(id).first()).toEqual({ encrypted: 1, in_vault: 1, enc_key: 'K' });
+  });
+
+  it('leaves a move out that started 10 minutes ago alone: it may still be running', async () => {
+    const id = await encryptedWithLeftovers();
+    await stamp(id, NOW - 10 * MIN);
+
+    await cleanup(env, NOW);
+
+    for (const k of [`files/${id}`, `thumbs/${id}.jpg`, `vault/${id}`]) expect(await env.BUCKET.head(k)).not.toBeNull();
+    expect(await outStarted(id)).toBe(NOW - 10 * MIN);
+  });
+
+  it('does not touch an encrypted row that has no out_started_at', async () => {
+    const id = await encryptedWithLeftovers();
+
+    await cleanup(env, NOW);
+
+    for (const k of [`files/${id}`, `thumbs/${id}.jpg`, `vault/${id}`]) expect(await env.BUCKET.head(k)).not.toBeNull();
+  });
+
+  it('never deletes the plain objects of a plain row, even with a stale out_started_at: that move finished and they are its file', async () => {
+    const id = await insertFile({ encrypted: 0, hasThumb: 1 });
+    await env.BUCKET.put(`files/${id}`, 'plain');
+    await env.BUCKET.put(`thumbs/${id}.jpg`, 'jpeg');
+    await stamp(id, NOW - 2 * HOUR);
+
+    await cleanup(env, NOW);
+
+    expect(await env.BUCKET.head(`files/${id}`)).not.toBeNull();
+    expect(await env.BUCKET.head(`thumbs/${id}.jpg`)).not.toBeNull();
+    expect(await fileRow(id)).not.toBeNull();
   });
 });

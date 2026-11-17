@@ -34,7 +34,20 @@ const postJson = (path: string, body: unknown) => callV(path, { method: 'POST', 
 
 const moveIn = (id: string) => callV(`/files/${id}/vault/in`, { method: 'POST' });
 const moveOut = (id: string) => callV(`/files/${id}/vault/out`, { method: 'POST' });
-const completeIn = (id: string, body: unknown) => postJson(`/files/${id}/vault/in/complete`, body);
+/** Sends the body exactly as given: no etag is added. */
+const completeInRaw = (id: string, body: unknown) => postJson(`/files/${id}/vault/in/complete`, body);
+/**
+ * What a client does: reports the ETag R2 returned for its PUT of vault/<id>. A body without an `etag` key gets the current
+ * etag of the object (R2's own, unquoted); with no object yet it gets a well-formed placeholder, so a file that was never
+ * uploaded is still refused for that reason and not for a missing etag. Use `completeInRaw` to send a body as it is.
+ */
+async function completeIn(id: string, body: unknown) {
+  if (typeof body === 'object' && body !== null && !('etag' in body)) {
+    const object = await env.BUCKET.head(`vault/${id}`);
+    body = { ...body, etag: object ? object.etag : 'no-object-yet' };
+  }
+  return completeInRaw(id, body);
+}
 const completeOut = (id: string, body: unknown) => postJson(`/files/${id}/vault/out/complete`, body);
 
 type VaultState = 'none' | 'ready' | 'wiped';
@@ -107,6 +120,7 @@ type DbRow = {
   has_thumb: number;
   previewed_at: number | null;
   icon_url: string | null;
+  out_started_at: number | null;
 };
 const rowOf = (id: string) => env.DB.prepare('SELECT * FROM files WHERE id = ?').bind(id).first<DbRow>();
 
@@ -364,7 +378,7 @@ describe('POST /files/:id/vault/in/complete', () => {
   it('moves a link in without any upload: size 0 is accepted and vault/<id> is not required', async () => {
     const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0 });
     await env.DB.prepare('UPDATE files SET previewed_at = 5, icon_url = ? WHERE id = ?').bind('https://example.com/i.png', id).run();
-    const res = await completeIn(id, inBody({ size: 0 }));
+    const res = await completeInRaw(id, inBody({ size: 0 }));
     expect(res.status).toBe(200);
     expect(await rowOf(id)).toMatchObject({
       encrypted: 1,
@@ -387,7 +401,7 @@ describe('POST /files/:id/vault/in/complete', () => {
     const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0, hasThumb: 1 });
     await put(`thumbs/${id}.jpg`, 7);
     await put(`vault/${id}.thumb`, 39);
-    const res = await completeIn(id, inBody({ size: 0, hasThumb: true }));
+    const res = await completeInRaw(id, inBody({ size: 0, hasThumb: true }));
     expect(res.status).toBe(200);
     expect(await rowOf(id)).toMatchObject({ encrypted: 1, kind: 'file', url: null, size: 0, has_thumb: 1 });
     expect(await has(`thumbs/${id}.jpg`)).toBe(false);
@@ -448,6 +462,109 @@ describe('POST /files/:id/vault/in/complete', () => {
     });
   });
 
+  describe('etag: two devices moving the same file in (spec 4.7b C1)', () => {
+    /** Puts `fill`-bytes at vault/<id> as a device does and returns the ETag R2 handed back (unquoted). */
+    const putCipher = async (id: string, fill: number, bytes = 40) => (await env.BUCKET.put(`vault/${id}`, new Uint8Array(bytes).fill(fill)))!.etag;
+    const withEtag = (etag: unknown, over: Partial<VaultMoveInComplete> = {}) => ({ ...inBody(over), etag });
+
+    describe('a file needs a well-formed etag: answers 400 and changes nothing', () => {
+      const bad: [string, () => unknown][] = [
+        ['missing etag', () => inBody()],
+        ['empty etag', () => withEtag('')],
+        ['etag that is not a string', () => withEtag(5)],
+        ['null etag', () => withEtag(null)],
+        ['etag over 200 characters', () => withEtag('a'.repeat(201))],
+      ];
+      for (const [label, make] of bad) {
+        it(label, async () => {
+          const id = await plainFile();
+          await putCipher(id, 1);
+          const res = await completeInRaw(id, make());
+          expect(res.status).toBe(400);
+          expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null, enc_key: null });
+          expect(await has(`files/${id}`)).toBe(true);
+          expect(await has(`vault/${id}`)).toBe(true);
+        });
+      }
+    });
+
+    it('accepts the etag R2 reports for vault/<id>', async () => {
+      const id = await plainFile();
+      const etag = await putCipher(id, 1);
+      expect(etag).toBe((await env.BUCKET.head(`vault/${id}`))!.etag);
+      const res = await completeInRaw(id, withEtag(etag));
+      expect(res.status).toBe(200);
+      expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_key: ENC_KEY });
+    });
+
+    it('accepts the etag in the quoted form of the ETag header', async () => {
+      const id = await plainFile();
+      const etag = await putCipher(id, 1);
+      const res = await completeInRaw(id, withEtag(`"${etag}"`));
+      expect(res.status).toBe(200);
+      expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_key: ENC_KEY });
+    });
+
+    it('treats an etag of exactly 200 characters as well-formed: it is a mismatch (409), not a bad request', async () => {
+      const id = await plainFile();
+      await putCipher(id, 1);
+      const res = await completeInRaw(id, withEtag('a'.repeat(200)));
+      expect(res.status).toBe(409);
+      expect(await errorCode(res)).toBe('item_changed');
+    });
+
+    it('answers 409 item_changed when another device overwrote vault/<id> with the same size, and changes nothing', async () => {
+      const id = await plainFile({ thumb: true });
+      const etagA = await putCipher(id, 1); // device A
+      const etagB = await putCipher(id, 2); // device B overwrites with different bytes of the same size
+      expect(etagB).not.toBe(etagA);
+
+      const res = await completeInRaw(id, withEtag(etagA, { encKey: 'QUtFWS1B' }));
+      expect(res.status).toBe(409);
+      expect(await errorCode(res)).toBe('item_changed');
+      expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null, enc_key: null, has_thumb: 1 });
+      expect(await has(`files/${id}`)).toBe(true);
+      expect(await has(`thumbs/${id}.jpg`)).toBe(true);
+      expect(await has(`vault/${id}`)).toBe(true);
+    });
+
+    it('lets the device that wrote the current bytes finish: enc_key is the one of that device', async () => {
+      const id = await plainFile();
+      const etagA = await putCipher(id, 1);
+      const etagB = await putCipher(id, 2);
+      expect((await completeInRaw(id, withEtag(etagA, { encKey: 'QUtFWS1B' }))).status).toBe(409);
+
+      const res = await completeInRaw(id, withEtag(etagB, { encKey: 'QktFWS1C' }));
+      expect(res.status).toBe(200);
+      expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_key: 'QktFWS1C' });
+      expect(await has(`files/${id}`)).toBe(false);
+      expect(await has(`vault/${id}`)).toBe(true);
+    });
+
+    it('does not compare the etag once the row is encrypted: a retry with any well-formed etag answers 200 and sweeps the plain objects', async () => {
+      const id = await plainFile({ thumb: true });
+      const etag = await putCipher(id, 1);
+      expect((await completeInRaw(id, withEtag(etag))).status).toBe(200);
+      // An interrupted move-out left plain objects behind.
+      await put(`files/${id}`, 4);
+      await put(`thumbs/${id}.jpg`, 3);
+
+      const again = await completeInRaw(id, withEtag('some-other-etag'));
+      expect(again.status).toBe(200);
+      expect(await has(`files/${id}`)).toBe(false);
+      expect(await has(`thumbs/${id}.jpg`)).toBe(false);
+      expect(await has(`vault/${id}`)).toBe(true);
+      expect(await rowOf(id)).toMatchObject({ encrypted: 1, enc_key: ENC_KEY });
+    });
+
+    it('lets a link omit the etag: it has no object to compare', async () => {
+      const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0 });
+      const res = await completeInRaw(id, inBody({ size: 0 }));
+      expect(res.status).toBe(200);
+      expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_key: ENC_KEY });
+    });
+  });
+
   it('accepts encMeta of exactly 8192 characters and encKey of exactly 512', async () => {
     const id = await plainFile();
     await put(`vault/${id}`, 40);
@@ -490,6 +607,23 @@ describe('POST /files/:id/vault/out', () => {
     const res = await moveOut(id);
     expect(res.status).toBe(409);
     expect(await errorCode(res)).toBe('not_encrypted');
+  });
+
+  it('stamps out_started_at with the current time, so the cron can find leftovers of an interrupted move', async () => {
+    const id = await vaultedFile();
+    const before = Date.now();
+    expect((await moveOut(id)).status).toBe(200);
+    const stamped = (await rowOf(id))!.out_started_at;
+    expect(stamped).not.toBeNull();
+    expect(stamped!).toBeGreaterThanOrEqual(before);
+    expect(stamped!).toBeLessThanOrEqual(Date.now());
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1 });
+  });
+
+  it('does not stamp out_started_at when it refuses (the item is not encrypted)', async () => {
+    const id = await plainFile();
+    expect((await moveOut(id)).status).toBe(409);
+    expect((await rowOf(id))!.out_started_at).toBeNull();
   });
 
   it('changes nothing: the row and the vault objects stay', async () => {
@@ -547,6 +681,15 @@ describe('POST /files/:id/vault/out/complete', () => {
       expect(item).toMatchObject({ id, name: 'Hà Nội.png', kind: 'image', inVault: false, size: 10 });
       expect(item.encrypted).toBeFalsy();
       expect(keyOf(item.thumbUrl)).toBe(`thumbs/${id}.jpg`);
+    });
+
+    it('clears out_started_at: the move is finished, nothing is left to sweep', async () => {
+      const id = await vaultedFile();
+      expect((await moveOut(id)).status).toBe(200);
+      expect((await rowOf(id))!.out_started_at).not.toBeNull();
+      await put(`files/${id}`, 10);
+      expect((await completeOut(id, outBody())).status).toBe(200);
+      expect((await rowOf(id))!.out_started_at).toBeNull();
     });
 
     it('deletes vault/<id> and vault/<id>.thumb and keeps the plain objects', async () => {
@@ -657,6 +800,14 @@ describe('POST /files/:id/vault/out/complete', () => {
       });
       expect(await has(`files/${id}`)).toBe(false);
       expect(((await res.json()) as FileItem)).toMatchObject({ kind: 'link', url: 'https://example.com/Path?q=1', previewed: false, inVault: false });
+    });
+
+    it('clears out_started_at too', async () => {
+      const id = await encryptedLink();
+      expect((await moveOut(id)).status).toBe(200);
+      expect((await rowOf(id))!.out_started_at).not.toBeNull();
+      expect((await completeOut(id, linkBody())).status).toBe(200);
+      expect((await rowOf(id))!.out_started_at).toBeNull();
     });
 
     it('uses the host as the name when there is no title', async () => {
