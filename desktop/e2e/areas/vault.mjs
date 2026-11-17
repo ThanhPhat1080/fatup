@@ -209,4 +209,24 @@ export async function run(h) {
   await page.locator('.list__row', { hasText: SEEDED }).waitFor();
   assert.equal(await page.locator('.list__row', { hasText: SEEDED }).count(), 1, 'the seeded file is listed inside the Vault');
   await h.shot(page, '13h-vault-contains-moved');
+
+  // The mock holds vault/in/complete for `mock.slowVaultComplete` ms, and this Vault was opened during that wait: the file is pending (faded cloud).
+  // When the move ends, the open Vault refreshes by itself and the file turns into the encrypted tick, with no click.
+  h.log('vault: the moved file is pending, then encrypted');
+  const movedRow = page.locator('.list__row', { hasText: SEEDED });
+  await movedRow.locator('[data-vault-state="pending"]').waitFor({ timeout: 5_000 });
+  await h.shot(page, '14c-vault-state-pending');
+  await movedRow.locator('[data-vault-state="encrypted"]').waitFor({ timeout: 30_000 });
+  assert.equal(await movedRow.locator('[data-vault-state="pending"]').count(), 0, 'no pending mark is left once the file is encrypted');
+
+  h.log('vault: state icons, list and phone');
+  await h.shot(page, '14a-vault-state-icons');
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.locator('.app.vault-mode').waitFor();
+  await movedRow.locator('[data-vault-state="encrypted"]').waitFor();
+  await h.shot(page, '14b-vault-state-icons-phone');
+  await page.setViewportSize({ width: 1180, height: 760 });
 }
+
+/** The seeded move is held in the mock for this long, so the Vault can be opened while the file is still pending. */
+export const mock = { slowVaultComplete: 8000 };

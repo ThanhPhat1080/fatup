@@ -27,7 +27,7 @@ const selected = requested.length ? Object.keys(AREAS).filter((a) => requested.i
 const failed = [];
 for (const name of selected) {
   const started = Date.now();
-  const h = await createHarness(name);
+  const h = await createHarness(name, AREAS[name].mock);
   try {
     await AREAS[name].run(h);
     console.log(`✔ ${name} (${((Date.now() - started) / 1000).toFixed(1)}s)`);

@@ -143,10 +143,13 @@ function vaultJson(v, base) {
 
 /**
  * @param {number} realNow  the clock the seed dates are built from
- * @param {{ vaultLockScale?: number }} options  multiplies the Vault lock lengths (the test shortens them); default: E2E_VAULT_LOCK_SCALE or 1
+ * @param {{ vaultLockScale?: number, slowVaultComplete?: number }} options  vaultLockScale multiplies the Vault lock lengths (the test shortens
+ *   them; default: E2E_VAULT_LOCK_SCALE or 1). slowVaultComplete holds each `vault/in/complete` for that many ms, so a move stays
+ *   "pending" (faded cloud) for a while; default 0.
  */
 export function startMockServer(realNow = Date.now(), options = {}) {
   const lockScale = options.vaultLockScale ?? Number(process.env.E2E_VAULT_LOCK_SCALE ?? 1);
+  const slowVaultComplete = options.slowVaultComplete ?? 0;
   const hour = 3_600_000;
   // The seed dates are "a few hours ago" and "yesterday evening", which only land in the right calendar days when it is already
   // morning. Before 08:00 local time, pretend it is 08:00 so the file list always has a Today and a Yesterday group.
@@ -509,6 +512,7 @@ export function startMockServer(realNow = Date.now(), options = {}) {
       if (!b) return badRequest('Body must be JSON');
       if (!isStr(b.encMeta) || !isStr(b.encKey) || !isInt(b.size)) return badRequest('encMeta, encKey and a non-negative integer size are required');
       const id = m[1];
+      if (slowVaultComplete > 0) await new Promise((resolve) => setTimeout(resolve, slowVaultComplete));
       const existing = vaultItem(id);
       if (existing) {
         // Already encrypted. A body without attempt is the move-out cleanup: sweep the plain copies. A device that lost the race (another attempt

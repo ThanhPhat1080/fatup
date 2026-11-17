@@ -3068,9 +3068,17 @@ body {
   .tile__head > .file-icon {
     display: none;
   }
-  /* List rows: the time stays, the pencil is tighter. */
+  /* List rows: the time stays, the pencil is tighter, and the name cell gives up its wide gaps so the Vault's state icon still leaves room for the name. */
   .list__row {
     gap: 8px;
+  }
+  .list__name {
+    gap: 8px;
+  }
+  .vault-state,
+  .vault-state svg {
+    width: 16px;
+    height: 16px;
   }
 }
 
@@ -4115,18 +4123,21 @@ body {
 .vault-label__icon {
   margin-right: 4px;
 }
-.vault-badge {
+/* A Vault item's state (spec 4.7d): a faded cloud while it is not encrypted yet, a green tick once it is. Its box keeps the width in both states. */
+.vault-state {
   display: inline-flex;
   align-items: center;
-  height: 20px;
-  padding: 0 8px;
-  margin-left: 6px;
-  border: 1px solid var(--vault);
-  border-radius: 10px;
-  color: var(--vault);
-  font-size: 11px;
-  white-space: nowrap;
+  justify-content: center;
   flex: none;
+  width: 18px;
+  height: 18px;
+}
+.vault-state--pending {
+  color: var(--text-2);
+  opacity: 0.5;
+}
+.vault-state--encrypted {
+  color: var(--success);
 }
 .vault-trash-btn {
   color: var(--vault);

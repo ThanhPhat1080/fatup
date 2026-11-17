@@ -101,7 +101,12 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const lastPicked = useRef<string | null>(null);
   const lastRefresh = useRef(0);
   const searchRef = useRef<HTMLInputElement>(null);
+  /** Ids on their way into the Vault: they stay out of the main list until the move ends, even if a refresh that started earlier answers with them. */
+  const enteringVault = useRef(new Set<string>());
+  const inVaultRef = useRef(false);
+  inVaultRef.current = inVault;
 
+  // Reads vaultActiveRef, not the render's value, so a refresh started by a move that ends later still sees a Vault opened meanwhile.
   const refresh = useCallback(async () => {
     lastRefresh.current = Date.now();
     setLoading(true);
@@ -109,7 +114,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       window.fatup.list(),
       window.fatup.listTrash(),
       window.fatup.usage(),
-      vaultActive ? window.fatup.listVault() : Promise.resolve(null),
+      vaultActiveRef.current ? window.fatup.listVault() : Promise.resolve(null),
     ]);
     setLoading(false);
     if (vaultRes) {
@@ -118,8 +123,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       else if (vaultRes.error !== 'locked') setError(errorText(t, vaultRes.error));
     }
     if (res.ok) {
-      setItems(res.value);
-      setTopIds(new Set([...res.value, ...(vaultRes?.ok ? vaultRes.value : [])].filter((it) => it.important).map((it) => it.id)));
+      const shown = res.value.filter((it) => !enteringVault.current.has(it.id));
+      setItems(shown);
+      setTopIds(new Set([...shown, ...(vaultRes?.ok ? vaultRes.value : [])].filter((it) => it.important).map((it) => it.id)));
       if (trashRes.ok) setTrashItems(trashRes.value);
       if (usageRes.ok) setUsage(usageRes.value);
       setError(null);
@@ -128,8 +134,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     } else {
       setError(errorText(t, res.error));
     }
-  }, [onLocked, t, vaultActive]);
+  }, [onLocked, t]);
 
+  // Opening or closing the Vault refreshes at once; polling and focus refresh the Vault list too while it is open (a pending item turns into a tick).
   useEffect(() => {
     refresh();
     const timer = setInterval(refresh, POLL_MS);
@@ -141,7 +148,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       clearInterval(timer);
       window.removeEventListener('focus', onFocus);
     };
-  }, [refresh]);
+  }, [refresh, vaultActive]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -416,20 +423,32 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     try {
       await performMoveIn(targets);
     } finally {
-      leaveVault();
+      // A Vault the user opened during the move stays open.
+      if (!inVaultRef.current) leaveVault();
     }
   }
 
-  /** The move itself: the files leave the list for the Vault, and the toast reports how many. */
+  /**
+   * The move itself: the files leave the main list at once and stay out whatever the call answers (a failed move has already put
+   * them in the Vault as pending, since vault/in sets in_vault). Both lists are refreshed when it ends, so they show in the Vault as
+   * pending or encrypted. The toast reports how many.
+   */
   async function performMoveIn(targets: Item[]) {
-    const moved = await moveBetween(targets, true);
+    const ids = targets.map((it) => it.id);
+    for (const id of ids) enteringVault.current.add(id);
+    setItems((list) => list?.filter((it) => !enteringVault.current.has(it.id)) ?? null);
+    clearSelection();
+    let moved: Awaited<ReturnType<typeof moveBetween>> = null;
+    try {
+      moved = await moveBetween(targets, true);
+    } finally {
+      for (const id of ids) enteringVault.current.delete(id);
+      refresh();
+    }
     if (!moved) return;
     const { done, failed } = moved;
-    setItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
-    clearSelection();
     const endedShare = targets.some((it) => it.shared && done.has(it.id));
     report(done.size, failed, endedShare ? `${t.movedToVault(done.size)}. ${t.shareLinkEnded}` : t.movedToVault(done.size));
-    refresh();
   }
 
   async function removeFromVault(targets: Item[]) {

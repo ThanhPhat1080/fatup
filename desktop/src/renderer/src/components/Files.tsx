@@ -1,9 +1,9 @@
 import { useRef, useState, type MouseEvent, type PointerEvent } from 'react';
-import { ArrowDown, ArrowUp, ChevronRight, Copy, Download, MoreVertical, Pencil, SquareArrowOutUpRight, Users } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronRight, Cloud, CircleCheck, Copy, Download, MoreVertical, Pencil, SquareArrowOutUpRight, Users } from 'lucide-react';
 import type { Item } from '../../../shared-ipc';
 import { cowsay, formatSize, formatTime, type DateGroup, type SortKey, type SortState } from '../lib/format';
 import { useI18n } from '../lib/i18n';
-import { isEncrypting } from '../lib/vault';
+import { vaultItemState } from '../lib/vault';
 import { CowThumb } from './CowThumb';
 import { FileIcon } from './FileIcon';
 import { SiteBadge, siteIcons } from './SiteBadge';
@@ -265,9 +265,33 @@ function KindIcon({ item, size }: { item: Item; size: number }) {
 type ItemProps = Pick<ViewProps, 'selected' | 'onToggle' | 'onOpen' | 'onMenu' | 'onEdit' | 'onShare' | 'onCopyLink' | 'onImportant' | 'onDownload'> & { item: Item };
 type RowProps = ItemProps & { siteColumn: boolean; actions: boolean; /** The list mixes links with files: non-link rows keep an empty slot where a link's copy button is, so every pencil lines up. */ copySlot?: boolean };
 
-/** A Vault item still being encrypted gets a badge; an unreadable one shows a note in place of its name. */
+/** An unreadable Vault item shows a note in place of its name. */
 function vaultLabel(item: Item, t: { vaultUnreadable: string }): string {
   return item.unreadable ? t.vaultUnreadable : item.name;
+}
+
+/**
+ * The state of a Vault item (spec 4.7d): a faded cloud while it is in the Vault but not encrypted yet, a green tick once it is.
+ * Nothing for plain items and unreadable ones. The icon is always the same width, so the name does not move when it changes.
+ */
+function VaultState({ item }: { item: Item }) {
+  const { t } = useI18n();
+  const state = vaultItemState(item);
+  if (state === 'pending') {
+    return (
+      <span className="vault-state vault-state--pending" data-vault-state="pending" role="img" title={t.vaultStatePending} aria-label={t.vaultStatePending}>
+        <Cloud size={18} aria-hidden />
+      </span>
+    );
+  }
+  if (state === 'encrypted') {
+    return (
+      <span className="vault-state vault-state--encrypted" data-vault-state="encrypted" role="img" title={t.vaultStateEncrypted} aria-label={t.vaultStateEncrypted}>
+        <CircleCheck size={18} aria-hidden />
+      </span>
+    );
+  }
+  return null;
 }
 
 function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, onDownload }: ItemProps) {
@@ -290,8 +314,8 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCop
         <span className="tile__name" title={item.name}>
           {vaultLabel(item, t)}
         </span>
+        <VaultState item={item} />
         <TagDots tags={item.tags} />
-        {isEncrypting(item) && <span className="vault-badge">{t.vaultEncrypting}</span>}
         {item.shared && onShare && (
           // Always visible (it is a state), floating over the end of the name like the pencil does; it slides left when the pencil appears.
           <span className="tile__shared">
@@ -349,8 +373,8 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopy
         <span className="ellipsis" title={item.url ?? item.name}>
           {vaultLabel(item, t)}
         </span>
+        <VaultState item={item} />
         <TagDots tags={item.tags} />
-        {isEncrypting(item) && <span className="vault-badge">{t.vaultEncrypting}</span>}
       </span>
       {actions && (
         // The pencil (and copy for links) get their own right-aligned column so they line up on every row, links or files;
