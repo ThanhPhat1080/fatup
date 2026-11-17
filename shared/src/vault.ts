@@ -104,10 +104,8 @@ export type VaultMoveInComplete = {
   encKey: string;
   size: number;
   hasThumb: boolean;
-  /** The ETag R2 returned for the PUT of vault/<id>. Required for anything but a link; a mismatch answers 409 `item_changed`. */
-  etag?: string;
-  /** The `claim` that `vault/in` returned. Required while the row is claimed: a missing, wrong or expired claim answers 409 `item_busy`. Moves out do not send one. */
-  claim?: string;
+  /** The `attempt` that `vault/in` returned: names the objects vault/<id>.<attempt>[.thumb] this device wrote. Required for a row that is not encrypted yet; the move-out cleanup call (an already encrypted row) sends none. */
+  attempt?: string;
 };
 /** `POST /files/:id/vault/out/complete`. */
 export type VaultMoveOutComplete = {
@@ -125,6 +123,6 @@ export type VaultMoveUrls = {
   /** Null for links, which have no file object to download. */
   downloadUrl: string | null;
   thumbUrl: string | null;
-  /** Only `vault/in` sets it: the token that gives this device the sole right to write vault/<id> for 2 hours (shortened to 16 minutes after a refused complete). Send it back to `vault/in/complete`. */
-  claim?: string;
+  /** Only `vault/in` sets it: a fresh name for this try. The PUT addresses are vault/<id>.<attempt>[.thumb]; send it back to `vault/in/complete`. */
+  attempt?: string;
 };

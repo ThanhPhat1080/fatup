@@ -407,7 +407,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     const plan = vaultMoveInPlan(status.value.state, inVault && vaultUnlocked);
     if (plan === 'move') return performMoveIn(targets);
     setPendingMove(targets);
-    if (plan === 'recover') setVaultFlow('recover');
+    // No Vault yet: the setup wizard first; the files move when it is done (vaultFlowDone), as after a recovery.
+    if (plan === 'setup' || plan === 'recover') setVaultFlow(plan);
   }
 
   /** Runs the move into the Vault that was waiting for the PIN or recovery, then closes the Vault again. */

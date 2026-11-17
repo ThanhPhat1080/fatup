@@ -4,8 +4,7 @@ ALTER TABLE files ADD COLUMN enc_meta  TEXT;                         -- base64, 
 ALTER TABLE files ADD COLUMN enc_key   TEXT;                         -- file key wrapped with the Vault key, base64
 ALTER TABLE files ADD COLUMN out_started_at INTEGER;                 -- epoch ms of the last vault/out; cleared by vault/out/complete, the cron sweeps plain leftovers when it stays set
 
-ALTER TABLE files ADD COLUMN in_claim TEXT;                          -- token of the device that may write vault/<id> now (vault/in); cleared by vault/in/complete
-ALTER TABLE files ADD COLUMN in_claim_until INTEGER;                 -- epoch ms; the claim is free again once it passed
+ALTER TABLE files ADD COLUMN enc_object TEXT;                        -- attempt whose objects vault/<id>.<attempt>[.thumb] hold the ciphertext (set by vault/in/complete); NULL = the fixed key vault/<id>
 
 CREATE TABLE vault_keys (
   id                  INTEGER PRIMARY KEY CHECK (id = 1),  -- one user, one Vault

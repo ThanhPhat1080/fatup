@@ -190,14 +190,15 @@ export function vaultText(dict: Record<string, unknown>, message: GateMessage): 
 }
 
 /**
- * Where a move into the Vault starts (spec 4.7b I2). An open Vault moves at once; a set-up Vault that is closed asks for the
- * 6-digit PIN first, a wiped one goes to the recovery screen first. 'none' has nothing to unlock, so it moves as before.
+ * Where a move into the Vault starts (spec 4.7b I2, 4.7d). An open Vault moves at once; a set-up Vault that is closed asks for the
+ * 6-digit PIN first, a wiped one goes to the recovery screen first. A Vault that is not set up opens the setup wizard first, and the files
+ * move once it is done (there is no plain move any more). `none` with an open Vault cannot happen; it moves.
  */
-export function vaultMoveInPlan(status: 'none' | 'ready' | 'wiped', open: boolean): 'move' | 'unlock' | 'recover' {
+export function vaultMoveInPlan(status: 'none' | 'ready' | 'wiped', open: boolean): 'setup' | 'move' | 'unlock' | 'recover' {
   if (open) return 'move';
   if (status === 'ready') return 'unlock';
   if (status === 'wiped') return 'recover';
-  return 'move';
+  return 'setup';
 }
 
 /** Where the recovery screen goes after a failed `vaultRecover`: back to the key, back to the PIN, or stay on the repeat step. */
@@ -217,6 +218,16 @@ export function changePinFailure(result: Extract<VaultUnlockResult, { ok: false 
 /** A file in the Vault whose content is not encrypted yet (put there before the Vault was encrypted): shown with the encrypting badge. */
 export function isEncrypting(item: Item): boolean {
   return item.inVault && !item.encrypted;
+}
+
+/**
+ * What a Vault row shows (spec 4.7d): `pending` (faded cloud) is in the Vault but not encrypted yet, `encrypted` (green tick) is done,
+ * `unreadable` is an encrypted item that cannot be opened (it wins over `encrypted`), `plain` is anything outside the Vault.
+ */
+export function vaultItemState(item: Item): 'pending' | 'encrypted' | 'unreadable' | 'plain' {
+  if (isEncrypting(item)) return 'pending';
+  if (!item.inVault) return 'plain';
+  return item.unreadable ? 'unreadable' : 'encrypted';
 }
 
 /** Whether a Vault item may leave the Vault: it must be readable, and encrypted (not still being converted). */

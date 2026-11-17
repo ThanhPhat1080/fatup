@@ -364,30 +364,16 @@ function registerIpc() {
 
   const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((id): id is string => typeof id === 'string' && id !== '') : []);
   const summary = (res: { done: string[]; failed: string[] }): Result<VaultMoveResult> => ({ ok: true, value: { done: res.done.length, failed: res.failed } });
-  // Putting files in the Vault: encrypted here once the Vault is open. Before the encrypted Vault is set up the server still takes the
-  // old plain move (and refuses it afterwards), so that is the only case where the legacy request is made.
+  // Putting files in the Vault: encrypted here, so the Vault must be open. Not set up or closed answers `vault_locked` and moves nothing: the
+  // renderer opens the setup wizard (or the PIN gate) first and moves afterwards (spec 4.7d).
   ipcMain.handle('vaultMoveIn', async (_e, raw: unknown): Promise<Result<VaultMoveResult>> => {
     if (!unlocked) return { ok: false, error: 'locked' };
     const wanted = ids(raw);
     try {
       const rows = wanted.map((id) => itemCache.get(id)).filter((it): it is FileItem => it !== undefined && !it.encrypted);
       const unknown = wanted.filter((id) => !rows.some((r) => r.id === id));
-      let res: { done: string[]; failed: string[] };
-      if (vaultSession.isOpen()) {
-        res = await mover.moveIn(rows, (p) => sendVaultProgress(p, rows));
-      } else if ((await vaultSession.status()).state === 'none') {
-        res = { done: [], failed: [] };
-        for (const row of rows) {
-          try {
-            await client().setVault(row.id, true);
-            res.done.push(row.id);
-          } catch {
-            res.failed.push(row.id);
-          }
-        }
-      } else {
-        return { ok: false, error: 'vault_locked' };
-      }
+      if (!vaultSession.isOpen()) return { ok: false, error: 'vault_locked' };
+      const res = await mover.moveIn(rows, (p) => sendVaultProgress(p, rows));
       // The Vault leaves no pictures of its links on this device.
       await previews.forget(res.done);
       for (const id of res.done) itemCache.delete(id);

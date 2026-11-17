@@ -20,7 +20,7 @@ import {
 } from '@fatup/shared';
 import type { AppEnv } from './app';
 import { MAX_ENC_KEY, MAX_ENC_META, cleanMime, fail, hostOf, isEncText, itemOf, sanitizeName, sanitizeTitle, type Row } from './app';
-import { fileKey, thumbKey, vaultFileKey, vaultThumbKey } from './presign';
+import { fileKey, objectKeys, thumbKey, vaultFileKey, vaultThumbKey } from './presign';
 import { isUlid } from './ulid';
 
 type VaultRow = {
@@ -197,16 +197,28 @@ async function beginMove<B = null>(
 
 const isSize = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= 0;
 
-type InBody = { encMeta: string; encKey: string; size: number; hasThumb: boolean; etag: unknown; claim: string | null };
+type InBody = { encMeta: string; encKey: string; size: number; hasThumb: boolean; attempt: string | null };
 type OutBody = { link: { url: string; title: string } | null; name: string; mime: string; size: number; hasThumb: boolean };
 
+/** What an attempt looks like: 16 random bytes as base64url (at least 16 characters; no `.` or `/`, so it can neither reach another key nor collide with the `.thumb` suffix). */
+const ATTEMPT = /^[A-Za-z0-9_-]{16,64}$/;
+
+/** A fresh attempt name: 16 random bytes, base64url. It is written nowhere; it only names the R2 objects of one try. */
+function newAttempt(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/** `attempt` may be left out (the move-out cleanup call); when present it must be well formed. `etag` and `claim` of older clients are ignored. */
 function parseIn(c: Ctx) {
   return (b: Record<string, unknown>): InBody | Response => {
     if (!isEncText(b.encMeta, MAX_ENC_META) || !isEncText(b.encKey, MAX_ENC_KEY) || !isSize(b.size)) {
       return badRequest(c, `encMeta (at most ${MAX_ENC_META} characters), encKey (at most ${MAX_ENC_KEY}) and a non-negative integer size are required`);
     }
-    if (b.claim !== undefined && typeof b.claim !== 'string') return badRequest(c, 'claim must be a string');
-    return { encMeta: b.encMeta, encKey: b.encKey, size: b.size, hasThumb: b.hasThumb === true, etag: b.etag, claim: b.claim ?? null };
+    if (b.attempt !== undefined && (typeof b.attempt !== 'string' || !ATTEMPT.test(b.attempt))) {
+      return badRequest(c, 'attempt must be the base64url string vault/in gave');
+    }
+    return { encMeta: b.encMeta, encKey: b.encKey, size: b.size, hasThumb: b.hasThumb === true, attempt: b.attempt ?? null };
   };
 }
 
@@ -228,61 +240,36 @@ function parseOut(c: Ctx) {
 
 const reload = async (c: Ctx, id: string) => (await c.env.DB.prepare('SELECT * FROM files WHERE id = ?').bind(id).first<Row>())!;
 
-const MAX_ETAG = 200;
-
-/** The `etag` of a move-in: a non-empty string of at most `MAX_ETAG` characters; one pair of surrounding quotes (the ETag header form) is dropped. */
-function cleanEtag(v: unknown): string | null {
-  if (typeof v !== 'string' || v.length === 0 || v.length > MAX_ETAG) return null;
-  const bare = v.length >= 2 && v.startsWith('"') && v.endsWith('"') ? v.slice(1, -1) : v;
-  return bare.length > 0 ? bare : null;
-}
-
-const busy = (c: Ctx) => fail(c, 409, 'item_busy', 'Another device is moving this item in; try again later');
-
-/**
- * How long a device keeps the right to write vault/<id>. Far longer than the 15 minutes its presigned URLs live (UPLOAD_URL_TTL in presign.ts),
- * because a signature is only checked when a PUT starts: a slow PUT may run on well after the URL expired.
- */
-const CLAIM_MS = 2 * 60 * 60 * 1000;
-/** After a refused complete the claim is cut to (issue time + this): the URLs of that round (15 minutes) are dead by then, plus a minute of slack. */
-const KEPT_MS = 16 * 60 * 1000;
-
-/** A random token, 16 bytes as base64url. */
-function newClaim(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(16));
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
 const changed = (c: Ctx) => fail(c, 409, 'item_changed', 'The item changed while moving it; try again');
 
 function registerMoveRoutes(app: Hono<AppEnv>): void {
-  // Moving in: the client downloads the plain file, encrypts it and PUTs it to vault/<id>; only `complete` changes anything.
+  // Moving in (spec 4.7d): the client downloads the plain file, encrypts it and PUTs it to its own object vault/<id>.<attempt>; only `complete` makes it encrypted.
+  // Nothing about the attempt is recorded, so devices never wait for each other. The item enters the Vault at once (still plain, shown as pending).
   app.post('/files/:id/vault/in', async (c) => {
     const begun = await beginMove(c, undefined, true);
     if (begun instanceof Response) return begun;
     const { row } = begun;
     if (row.encrypted === 1) return fail(c, 409, 'already_encrypted', 'The item is already encrypted');
-    // One writer at a time: the presigned PUT cannot be revoked, so no second URL is handed out while a claim lives.
-    // The check and the claim are one statement, so two devices asking together cannot both get one.
-    const now = Date.now();
-    const claimed = await c.env.DB.prepare(
-      `UPDATE files SET in_claim = ?, in_claim_until = ?
-       WHERE id = ? AND encrypted = 0 AND (in_claim IS NULL OR in_claim_until <= ?)
-       RETURNING in_claim`,
-    )
-      .bind(newClaim(), now + CLAIM_MS, row.id, now)
-      .first<{ in_claim: string }>();
-    if (!claimed) return busy(c);
+    // The share trigger (in_vault -> 1) kills the item's share link in this statement. deleted_at is left alone.
+    const put = await c.env.DB.prepare(`UPDATE files SET in_vault = 1 WHERE id = ? AND encrypted = 0 AND status = 'ready' AND (deleted_at IS NULL OR in_vault = 1)`)
+      .bind(row.id)
+      .run();
+    if (!put.meta.changes) {
+      // Another device encrypted it (or removed it) since the row was read.
+      const now = await c.env.DB.prepare('SELECT encrypted FROM files WHERE id = ?').bind(row.id).first<{ encrypted: number }>();
+      return now?.encrypted === 1 ? fail(c, 409, 'already_encrypted', 'The item is already encrypted') : fail(c, 404, 'not_found', 'File not found');
+    }
+    const attempt = newAttempt();
     const presigner = c.get('presigner');
     // A link has no file object in R2 (its address travels in encMeta alone), but it may have a preview picture, which moves in too.
     const hasObjects = row.kind !== 'link';
     const withThumb = row.has_thumb === 1;
     const res: VaultMoveUrls = {
-      uploadUrl: await presigner.put(vaultFileKey(row.id)),
-      thumbUploadUrl: withThumb ? await presigner.put(vaultThumbKey(row.id)) : null,
+      uploadUrl: await presigner.put(vaultFileKey(row.id, attempt)),
+      thumbUploadUrl: withThumb ? await presigner.put(vaultThumbKey(row.id, attempt)) : null,
       downloadUrl: hasObjects ? await presigner.get(fileKey(row.id)) : null,
       thumbUrl: withThumb ? await presigner.get(thumbKey(row.id)) : null,
-      claim: claimed.in_claim,
+      attempt,
     };
     return c.json(res);
   });
@@ -292,71 +279,52 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
     if (begun instanceof Response) return begun;
     const { row, body } = begun;
     const plainKeys = [fileKey(row.id), thumbKey(row.id)];
-    const vaultKeys = [vaultFileKey(row.id), vaultThumbKey(row.id)];
+    const { attempt } = body;
+    const own = (a: string) => [vaultFileKey(row.id, a), vaultThumbKey(row.id, a)];
 
-    // Already encrypted (a retry, or an item uploaded straight into the Vault). Sweep plain objects an interrupted run may have left.
+    // Already encrypted: a retry, an item uploaded straight into the Vault, a device that lost the race, or the move-out cleanup call (no attempt).
     if (row.encrypted === 1) {
-      await c.env.BUCKET.delete(plainKeys);
+      if (attempt !== null && attempt !== row.enc_object) await c.env.BUCKET.delete(own(attempt)); // a loser: its objects are garbage, the winner's key and metadata stay
+      else await c.env.BUCKET.delete(plainKeys); // sweep plain objects an interrupted run left
       return c.json(await itemOf(c, row));
     }
+    if (attempt === null) return badRequest(c, 'attempt is required');
 
-    // The row is claimed: only the holder of a live claim may go on. Anyone else changes and deletes nothing.
-    const now = Date.now();
-    if (row.in_claim !== null && (body.claim !== row.in_claim || row.in_claim_until === null || row.in_claim_until <= now)) return busy(c);
-    /**
-     * The caller's claim was valid, but a refusal means vault/<id> may still be written through a URL of that round (it cannot be revoked).
-     * So the claim is kept, not freed: it is only cut to issue time + 16 minutes, when those URLs are dead. Until then every vault/in answers item_busy.
-     * The issue time is the old expiry minus CLAIM_MS. A claim whose expiry is less than KEPT_MS away is already cut (or nearly over) and is left alone:
-     * cutting it again would count back from the wrong issue time and free it too early.
-     */
-    const shorten = async () => {
-      if (row.in_claim === null || row.in_claim_until === null || row.in_claim_until - now <= KEPT_MS) return;
-      await c.env.DB.prepare('UPDATE files SET in_claim_until = MIN(in_claim_until, ?) WHERE id = ? AND in_claim = ?')
-        .bind(row.in_claim_until - CLAIM_MS + KEPT_MS, row.id, row.in_claim)
-        .run();
-    };
-
+    const [fileObject, thumbObject] = own(attempt);
     const isLink = row.kind === 'link';
-    // A file must say which bytes it encrypted (the ETag of its PUT), so two devices moving the same file in cannot mix one's key with the other's ciphertext.
-    const etag = isLink ? null : cleanEtag(body.etag);
-    if (!isLink && etag === null) return badRequest(c, `etag (the ETag of the uploaded encrypted file, at most ${MAX_ETAG} characters) is required`);
     if (!isLink) {
       if (body.size > vaultCiphertextSize(MAX_FILE_SIZE)) {
-        await c.env.BUCKET.delete(vaultKeys);
+        await c.env.BUCKET.delete([fileObject, thumbObject]);
         return fail(c, 413, 'too_large', `Files are limited to ${vaultCiphertextSize(MAX_FILE_SIZE)} bytes`);
       }
-      const object = await c.env.BUCKET.head(vaultFileKey(row.id));
+      const object = await c.env.BUCKET.head(fileObject);
       if (!object) return fail(c, 409, 'not_uploaded', 'The encrypted file has not been uploaded yet');
       if (object.size !== body.size) {
-        await c.env.BUCKET.delete(vaultKeys);
-        await shorten();
+        await c.env.BUCKET.delete([fileObject, thumbObject]);
         return fail(c, 409, 'size_mismatch', 'Uploaded size does not match');
       }
-      // Another device overwrote vault/<id> since this one's PUT: nothing is written or deleted, the client starts over.
-      if (object.etag !== etag) {
-        await shorten();
-        return changed(c);
-      }
     }
-    const keepThumb = body.hasThumb && (await c.env.BUCKET.head(vaultThumbKey(row.id))) !== null;
+    const keepThumb = body.hasThumb && (await c.env.BUCKET.head(thumbObject)) !== null;
 
-    // The encrypted object exists, so D1 may point at it. One statement writes every column, so no plaintext metadata survives.
-    // deleted_at is left alone, so an item in the Vault's trash stays there. The share trigger (in_vault -> 1) kills the item's share link in the same statement.
+    // The attempt's object exists, so D1 may point at it. One statement writes every column, so no plaintext metadata survives, and only the first
+    // attempt to get here wins: the key in D1 always belongs to the object enc_object names. deleted_at is left alone, so an item in the Vault's trash stays there.
     const res = await c.env.DB.prepare(
-      `UPDATE files SET encrypted = 1, in_vault = 1, enc_meta = ?, enc_key = ?, name = '', mime = 'application/octet-stream', kind = 'file',
-         url = NULL, size = ?, has_thumb = ?, previewed_at = NULL, icon_url = NULL, title_set = 0, in_claim = NULL, in_claim_until = NULL
-       WHERE id = ? AND encrypted = 0 AND status = 'ready' AND (deleted_at IS NULL OR in_vault = 1)
-         AND in_claim IS ? AND (in_claim IS NULL OR in_claim_until > ?)`,
+      `UPDATE files SET encrypted = 1, in_vault = 1, enc_object = ?, enc_meta = ?, enc_key = ?, name = '', mime = 'application/octet-stream', kind = 'file',
+         url = NULL, size = ?, has_thumb = ?, previewed_at = NULL, icon_url = NULL, title_set = 0
+       WHERE id = ? AND encrypted = 0 AND status = 'ready' AND (deleted_at IS NULL OR in_vault = 1)`,
     )
-      .bind(body.encMeta, body.encKey, isLink ? 0 : body.size, keepThumb ? 1 : 0, row.id, row.in_claim, now)
+      .bind(attempt, body.encMeta, body.encKey, isLink ? 0 : body.size, keepThumb ? 1 : 0, row.id)
       .run();
     if (!res.meta.changes) {
-      await shorten();
-      return changed(c);
+      const now = await c.env.DB.prepare('SELECT * FROM files WHERE id = ?').bind(row.id).first<Row>();
+      if (now?.encrypted !== 1) return changed(c);
+      // Another device won: it is not an error, the file is encrypted (with that device's key). Only this attempt's own objects go.
+      if (now.enc_object !== attempt) await c.env.BUCKET.delete([fileObject, thumbObject]);
+      return c.json(await itemOf(c, now));
     }
 
     // Only now are the plain objects (and an encrypted thumbnail nobody will reference) safe to remove.
-    await c.env.BUCKET.delete(keepThumb ? plainKeys : [...plainKeys, vaultKeys[1]]);
+    await c.env.BUCKET.delete(keepThumb ? plainKeys : [...plainKeys, thumbObject]);
     return c.json(await itemOf(c, await reload(c, row.id)));
   });
 
@@ -370,11 +338,12 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
     await c.env.DB.prepare('UPDATE files SET out_started_at = ? WHERE id = ?').bind(Date.now(), row.id).run();
     const presigner = c.get('presigner');
     const withThumb = row.has_thumb === 1;
+    const [vaultFile, vaultThumb] = objectKeys(row);
     const res: VaultMoveUrls = {
       uploadUrl: await presigner.put(fileKey(row.id)),
       thumbUploadUrl: withThumb ? await presigner.put(thumbKey(row.id)) : null,
-      downloadUrl: await presigner.get(vaultFileKey(row.id)),
-      thumbUrl: withThumb ? await presigner.get(vaultThumbKey(row.id), { contentType: 'application/octet-stream' }) : null,
+      downloadUrl: await presigner.get(vaultFile),
+      thumbUrl: withThumb ? await presigner.get(vaultThumb, { contentType: 'application/octet-stream' }) : null,
     };
     return c.json(res);
   });
@@ -384,7 +353,8 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
     if (begun instanceof Response) return begun;
     const { row, body } = begun;
     const plainKeys = [fileKey(row.id), thumbKey(row.id)];
-    const vaultKeys = [vaultFileKey(row.id), vaultThumbKey(row.id)];
+    // The row's own Vault objects (its enc_object, or the fixed pair); a plain row has no enc_object, so a retry sweeps the fixed pair and the cron the rest.
+    const vaultKeys = [vaultFileKey(row.id, row.enc_object), vaultThumbKey(row.id, row.enc_object)];
 
     if (row.encrypted !== 1) {
       // A retry of a move that already went through: the same plain item, outside the Vault. Sweep leftovers of an interrupted run.
@@ -402,7 +372,7 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
       const dup = await c.env.DB.prepare(`SELECT id FROM files WHERE kind = 'link' AND url = ? AND deleted_at IS NULL AND id != ?`).bind(url, row.id).first();
       if (dup) return fail(c, 409, 'duplicate_url', 'This link is already saved');
       res = await c.env.DB.prepare(
-        `UPDATE files SET encrypted = 0, in_vault = 0, enc_meta = NULL, enc_key = NULL, name = ?, mime = ?, kind = 'link', url = ?,
+        `UPDATE files SET encrypted = 0, in_vault = 0, enc_meta = NULL, enc_key = NULL, enc_object = NULL, name = ?, mime = ?, kind = 'link', url = ?,
            size = 0, has_thumb = 0, previewed_at = NULL, icon_url = NULL, title_set = ?, out_started_at = NULL
          WHERE id = ? AND encrypted = 1 AND out_started_at IS NOT NULL AND status = 'ready' AND deleted_at IS NULL`,
       )
@@ -423,7 +393,7 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
       const kind = kindFromMime(body.mime);
       const keepThumb = body.hasThumb && kind === 'image' && (await c.env.BUCKET.head(thumbKey(row.id))) !== null;
       res = await c.env.DB.prepare(
-        `UPDATE files SET encrypted = 0, in_vault = 0, enc_meta = NULL, enc_key = NULL, name = ?, mime = ?, kind = ?, url = NULL,
+        `UPDATE files SET encrypted = 0, in_vault = 0, enc_meta = NULL, enc_key = NULL, enc_object = NULL, name = ?, mime = ?, kind = ?, url = NULL,
            size = ?, has_thumb = ?, previewed_at = NULL, icon_url = NULL, title_set = 0, out_started_at = NULL
          WHERE id = ? AND encrypted = 1 AND out_started_at IS NOT NULL AND status = 'ready' AND deleted_at IS NULL`,
       )

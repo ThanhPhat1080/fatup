@@ -46,11 +46,14 @@ export function contentDisposition(filename: string): string {
 export const fileKey = (id: string) => `files/${id}`;
 export const thumbKey = (id: string) => `thumbs/${id}.jpg`;
 
-/** Encrypted Vault objects live under `vault/`; the row's `encrypted` flag tells which pair of keys applies. */
-export const vaultFileKey = (id: string) => `vault/${id}`;
-export const vaultThumbKey = (id: string) => `vault/${id}.thumb`;
+/**
+ * Encrypted Vault objects live under `vault/`. An item encrypted by a move in (vault/in) is stored at `vault/<id>.<attempt>[.thumb]`, one
+ * object per attempt so two devices never write the same name; an item uploaded straight into the Vault has no attempt and keeps the fixed `vault/<id>[.thumb]`.
+ */
+export const vaultFileKey = (id: string, attempt?: string | null) => (attempt ? `vault/${id}.${attempt}` : `vault/${id}`);
+export const vaultThumbKey = (id: string, attempt?: string | null) => `${vaultFileKey(id, attempt)}.thumb`;
 
-/** The R2 keys `[file, thumbnail]` of a row. */
-export function objectKeys(row: { id: string; encrypted: number }): [string, string] {
-  return row.encrypted === 1 ? [vaultFileKey(row.id), vaultThumbKey(row.id)] : [fileKey(row.id), thumbKey(row.id)];
+/** The R2 keys `[file, thumbnail]` of a row: the plain pair, or the Vault pair of its `enc_object` once encrypted. */
+export function objectKeys(row: { id: string; encrypted: number; enc_object?: string | null }): [string, string] {
+  return row.encrypted === 1 ? [vaultFileKey(row.id, row.enc_object), vaultThumbKey(row.id, row.enc_object)] : [fileKey(row.id), thumbKey(row.id)];
 }

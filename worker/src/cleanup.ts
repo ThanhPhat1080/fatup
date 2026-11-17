@@ -7,14 +7,35 @@ const BATCH = 100;
 const DAY = 24 * 60 * 60 * 1000;
 /** A move out of the Vault older than this is dead, not running. */
 const OUT_MOVE_GRACE_MS = 60 * 60 * 1000;
+/** A Vault object younger than this may belong to an attempt that is still uploading (its URL lives 15 minutes). */
+const VAULT_GARBAGE_GRACE_MS = 60 * 60 * 1000;
+const R2_DELETE_MAX = 1000;
+
+/** Deletes R2 keys in calls of at most 1000 (the R2 limit). */
+async function deleteKeys(env: Env, keys: string[]): Promise<void> {
+  for (let i = 0; i < keys.length; i += R2_DELETE_MAX) await env.BUCKET.delete(keys.slice(i, i + R2_DELETE_MAX));
+}
 
 /** Deletes the R2 objects and database rows for the given file ids. */
 export async function purge(env: Env, ids: string[]): Promise<void> {
   for (let i = 0; i < ids.length; i += BATCH) {
     const chunk = ids.slice(i, i + BATCH);
     const marks = chunk.map(() => '?').join(',');
+    // The attempt that encrypted each row names its current vault objects (spec 4.7d).
+    const { results: attempts } = await env.DB.prepare(`SELECT id, enc_object FROM files WHERE id IN (${marks}) AND enc_object IS NOT NULL`)
+      .bind(...chunk)
+      .all<{ id: string; enc_object: string }>();
+    const attemptOf = new Map(attempts.map((r) => [r.id, r.enc_object]));
     // Every key of every row, whatever `encrypted` says: a move between plain and encrypted may have left either pair behind.
-    await env.BUCKET.delete(chunk.flatMap((id) => [fileKey(id), thumbKey(id), vaultFileKey(id), vaultThumbKey(id)]));
+    // Other attempts' leftovers are the cron's to find.
+    await deleteKeys(
+      env,
+      chunk.flatMap((id) => {
+        const keys = [fileKey(id), thumbKey(id), vaultFileKey(id), vaultThumbKey(id)];
+        const attempt = attemptOf.get(id);
+        return attempt ? [...keys, vaultFileKey(id, attempt), vaultThumbKey(id, attempt)] : keys;
+      }),
+    );
     await env.DB.prepare(`DELETE FROM shares WHERE file_id IN (${marks})`)
       .bind(...chunk)
       .run();
@@ -22,6 +43,42 @@ export async function purge(env: Env, ids: string[]): Promise<void> {
       .bind(...chunk)
       .run();
   }
+}
+
+/** `vault/<id>`, `vault/<id>.thumb`, `vault/<id>.<attempt>` or `vault/<id>.<attempt>.thumb`. */
+const VAULT_KEY = /^vault\/([0-9A-Z]{26})(?:\.([A-Za-z0-9_-]{16,64}))?(?:\.thumb)?$/;
+
+/**
+ * Removes the garbage under `vault/` (spec 4.7d): objects older than an hour whose row is gone or whose attempt is not the row's `enc_object`
+ * (a key without an attempt is the row's only when `enc_object` is NULL). Younger objects may belong to an attempt that is still uploading.
+ * Keys of another shape are left alone.
+ */
+async function sweepVaultGarbage(env: Env, now: number): Promise<void> {
+  const cutoff = now - VAULT_GARBAGE_GRACE_MS;
+  let cursor: string | undefined;
+  do {
+    const page = await env.BUCKET.list({ prefix: 'vault/', cursor, limit: R2_DELETE_MAX });
+    cursor = page.truncated ? page.cursor : undefined;
+    const old: { key: string; id: string; attempt: string | null }[] = [];
+    for (const o of page.objects) {
+      const m = VAULT_KEY.exec(o.key);
+      if (m && o.uploaded.getTime() < cutoff) old.push({ key: o.key, id: m[1], attempt: m[2] ?? null });
+    }
+    const ids = [...new Set(old.map((o) => o.id))];
+    // id -> the row's enc_object (null when the row has none); absent when the row is gone.
+    const rows = new Map<string, string | null>();
+    for (let i = 0; i < ids.length; i += BATCH) {
+      const chunk = ids.slice(i, i + BATCH);
+      const { results } = await env.DB.prepare(`SELECT id, enc_object FROM files WHERE id IN (${chunk.map(() => '?').join(',')})`)
+        .bind(...chunk)
+        .all<{ id: string; enc_object: string | null }>();
+      for (const r of results) rows.set(r.id, r.enc_object);
+    }
+    await deleteKeys(
+      env,
+      old.filter((o) => !rows.has(o.id) || rows.get(o.id) !== o.attempt).map((o) => o.key),
+    );
+  } while (cursor);
 }
 
 /**
@@ -49,7 +106,7 @@ export async function cleanup(env: Env, now = Date.now()): Promise<number> {
     .bind(outCutoff)
     .all<{ id: string }>();
   for (let i = 0; i < released.length; i += BATCH) {
-    await env.BUCKET.delete(released.slice(i, i + BATCH).flatMap((r) => [fileKey(r.id), thumbKey(r.id)]));
+    await deleteKeys(env, released.slice(i, i + BATCH).flatMap((r) => [fileKey(r.id), thumbKey(r.id)]));
   }
 
   for (;;) {
@@ -67,5 +124,7 @@ export async function cleanup(env: Env, now = Date.now()): Promise<number> {
     total += results.length;
     if (results.length < BATCH) break;
   }
+
+  await sweepVaultGarbage(env, now);
   return total;
 }

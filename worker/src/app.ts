@@ -62,10 +62,8 @@ export type Row = {
   enc_meta: string | null;
   /** Base64 file key wrapped with the Vault key, or null for plain rows. */
   enc_key: string | null;
-  /** Token of the device that may write vault/<id> now (vault/in); null when nobody holds the item. */
-  in_claim: string | null;
-  /** Epoch ms until which `in_claim` holds. */
-  in_claim_until: number | null;
+  /** The attempt whose objects (vault/<id>.<attempt>[.thumb]) hold the ciphertext; null = the fixed key vault/<id>, or not encrypted. */
+  enc_object: string | null;
 };
 
 export type AppEnv = { Bindings: Env; Variables: { presigner: Presigner } };
@@ -135,7 +133,7 @@ export async function toItem(row: Row, presigner: Presigner, shared = false): Pr
     size: row.size,
     kind: row.kind,
     thumbUrl: row.has_thumb
-      ? await presigner.get(row.encrypted === 1 ? vaultThumbKey(row.id) : thumbKey(row.id), { contentType: row.encrypted === 1 ? 'application/octet-stream' : 'image/jpeg' })
+      ? await presigner.get(objectKeys(row)[1], { contentType: row.encrypted === 1 ? 'application/octet-stream' : 'image/jpeg' })
       : null,
     device: row.device,
     createdAt: row.created_at,
@@ -343,8 +341,7 @@ export function createApp(options: AppOptions = {}) {
       encrypted: 0,
       enc_meta: null,
       enc_key: null,
-      in_claim: null,
-      in_claim_until: null,
+      enc_object: null,
     };
     await c.env.DB.prepare(
       `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, device, created_at, url, title_set)
@@ -431,7 +428,7 @@ export function createApp(options: AppOptions = {}) {
     if (!row) return fail(c, 404, 'not_found', 'File not found');
     if (row.kind === 'link') return fail(c, 400, 'not_a_file', 'Links have nothing to download');
     // An encrypted row has no readable name or type; the client decrypts and names the file itself.
-    const url = row.encrypted === 1 ? await c.get('presigner').get(vaultFileKey(id)) : await c.get('presigner').get(fileKey(id), { filename: row.name, contentType: row.mime });
+    const url = row.encrypted === 1 ? await c.get('presigner').get(objectKeys(row)[0]) : await c.get('presigner').get(fileKey(id), { filename: row.name, contentType: row.mime });
     return c.json({ url });
   });
 
