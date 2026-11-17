@@ -239,8 +239,13 @@ function cleanEtag(v: unknown): string | null {
 
 const busy = (c: Ctx) => fail(c, 409, 'item_busy', 'Another device is moving this item in; try again later');
 
-/** How long a device keeps the right to write vault/<id>: longer than the 15 minutes its presigned URLs live. */
-const CLAIM_MS = 30 * 60 * 1000;
+/**
+ * How long a device keeps the right to write vault/<id>. Far longer than the 15 minutes its presigned URLs live (UPLOAD_URL_TTL in presign.ts),
+ * because a signature is only checked when a PUT starts: a slow PUT may run on well after the URL expired.
+ */
+const CLAIM_MS = 2 * 60 * 60 * 1000;
+/** After a refused complete the claim is cut to (issue time + this): the URLs of that round (15 minutes) are dead by then, plus a minute of slack. */
+const KEPT_MS = 16 * 60 * 1000;
 
 /** A random token, 16 bytes as base64url. */
 function newClaim(): string {
@@ -298,10 +303,17 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
     // The row is claimed: only the holder of a live claim may go on. Anyone else changes and deletes nothing.
     const now = Date.now();
     if (row.in_claim !== null && (body.claim !== row.in_claim || row.in_claim_until === null || row.in_claim_until <= now)) return busy(c);
-    /** The caller's claim was valid, so a refusal that lets the client start over frees it at once. */
-    const release = async () => {
-      if (row.in_claim === null) return;
-      await c.env.DB.prepare('UPDATE files SET in_claim = NULL, in_claim_until = NULL WHERE id = ? AND in_claim = ?').bind(row.id, row.in_claim).run();
+    /**
+     * The caller's claim was valid, but a refusal means vault/<id> may still be written through a URL of that round (it cannot be revoked).
+     * So the claim is kept, not freed: it is only cut to issue time + 16 minutes, when those URLs are dead. Until then every vault/in answers item_busy.
+     * The issue time is the old expiry minus CLAIM_MS. A claim whose expiry is less than KEPT_MS away is already cut (or nearly over) and is left alone:
+     * cutting it again would count back from the wrong issue time and free it too early.
+     */
+    const shorten = async () => {
+      if (row.in_claim === null || row.in_claim_until === null || row.in_claim_until - now <= KEPT_MS) return;
+      await c.env.DB.prepare('UPDATE files SET in_claim_until = MIN(in_claim_until, ?) WHERE id = ? AND in_claim = ?')
+        .bind(row.in_claim_until - CLAIM_MS + KEPT_MS, row.id, row.in_claim)
+        .run();
     };
 
     const isLink = row.kind === 'link';
@@ -317,12 +329,12 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
       if (!object) return fail(c, 409, 'not_uploaded', 'The encrypted file has not been uploaded yet');
       if (object.size !== body.size) {
         await c.env.BUCKET.delete(vaultKeys);
-        await release();
+        await shorten();
         return fail(c, 409, 'size_mismatch', 'Uploaded size does not match');
       }
       // Another device overwrote vault/<id> since this one's PUT: nothing is written or deleted, the client starts over.
       if (object.etag !== etag) {
-        await release();
+        await shorten();
         return changed(c);
       }
     }
@@ -339,7 +351,7 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
       .bind(body.encMeta, body.encKey, isLink ? 0 : body.size, keepThumb ? 1 : 0, row.id, row.in_claim, now)
       .run();
     if (!res.meta.changes) {
-      await release();
+      await shorten();
       return changed(c);
     }
 
