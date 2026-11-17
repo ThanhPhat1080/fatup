@@ -1129,3 +1129,50 @@ describe('VaultSession: close() while an opening call is in flight stays closed 
     expect(session.isOpen()).toBe(true);
   });
 });
+
+describe('VaultSession: close() while recover waits for the app PIN check stays closed (review N5)', () => {
+  /** A session whose app-PIN check answers only after `release()`; the check is what `recover` awaits first. */
+  function gatedAppPin(server: FakeVaultServer, answer = false) {
+    let release!: () => void;
+    let entered!: () => void;
+    const released = new Promise<void>((r) => (release = r));
+    const reached = new Promise<void>((r) => (entered = r));
+    const session = new VaultSession({
+      client: () => server.client as unknown as Client,
+      appPinMatches: async () => {
+        entered();
+        await released;
+        return answer;
+      },
+      iterations: ITERATIONS,
+    });
+    return { session, release, reached };
+  }
+
+  it('returns error "closed", stays closed, and never calls vaultRecover', async () => {
+    const { server, recoveryKey } = await setUp();
+    server.calls.length = 0;
+    const { session, release, reached } = gatedAppPin(server);
+    const pending = session.recover(recoveryKey, PIN2);
+    await reached;
+    session.close();
+    release();
+
+    expect(await pending).toEqual({ ok: false, error: 'closed' });
+    expect(session.isOpen()).toBe(false);
+    expect(server.calls).not.toContain('vaultRecover');
+    expect(server.calls).not.toContain('vaultSetPin');
+    await lockedError(session.decryptList([item()]));
+    await lockedError(session.encryptMetaFor(fileMeta));
+  });
+
+  it('without a close() in between, the same gated check still lets recover open the vault', async () => {
+    const { server, recoveryKey } = await setUp();
+    const { session, release, reached } = gatedAppPin(server);
+    const pending = session.recover(recoveryKey, PIN2);
+    await reached;
+    release();
+    expect(await pending).toEqual({ ok: true });
+    expect(session.isOpen()).toBe(true);
+  });
+});

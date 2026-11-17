@@ -184,6 +184,9 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
   const created: { id: string; req: CreateUploadRequest }[] = [];
   const updates: { id: string; patch: Patch }[] = [];
   const completesIn: { id: string; req: VaultMoveInComplete }[] = [];
+  /** Ids whose claim another device holds (vault/in answers 409 item_busy), and the claims handed out per id. */
+  const busy = new Set<string>();
+  const claims = new Map<string, string[]>();
   const completesOut: { id: string; req: VaultMoveOutComplete }[] = [];
   const find = (id: string) => {
     const row = rows.find((r) => r.id === id);
@@ -221,14 +224,13 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
     addLink: vi.fn(async (): Promise<FileItem> => {
       throw new Error('the plain /links route must never be used for the Vault');
     }),
-    moveIn: vi.fn(
-      async (id: string): Promise<VaultMoveUrls> => ({
-        uploadUrl: `${R2}/put/vault/${id}`,
-        thumbUploadUrl: null,
-        downloadUrl: `${R2}/files/${id}`,
-        thumbUrl: null,
-      }),
-    ),
+    moveIn: vi.fn(async (id: string): Promise<VaultMoveUrls> => {
+      if (busy.has(id)) throw new ApiError('item_busy', 'Another device is moving this item', 409, { error: { code: 'item_busy', message: 'busy' } });
+      // Every successful vault/in hands out a new claim (spec 4.7c).
+      const claim = `claim-${id}-${(claims.get(id)?.length ?? 0) + 1}-AAAAAAAAAAAA`;
+      claims.set(id, [...(claims.get(id) ?? []), claim]);
+      return { uploadUrl: `${R2}/put/vault/${id}`, thumbUploadUrl: null, downloadUrl: `${R2}/files/${id}`, thumbUrl: null, claim };
+    }),
     moveInComplete: vi.fn(async (id: string, req: VaultMoveInComplete): Promise<FileItem> => {
       completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
       const row = find(id);
@@ -325,7 +327,7 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
     return row;
   }
 
-  return { server, vault, client, fetchImpl, objects, puts, etags, rows, created, updates, completesIn, completesOut, made, revoked, saved, state, deps: baseDeps, readDeps, masterKey, addItem, addPlain, recoveryKey };
+  return { server, vault, client, fetchImpl, objects, puts, etags, busy, claims, rows, created, updates, completesIn, completesOut, made, revoked, saved, state, deps: baseDeps, readDeps, masterKey, addItem, addPlain, recoveryKey };
 }
 
 const PDF_META: VaultMeta = { name: 'Hợp đồng.pdf', mime: 'application/pdf', kind: 'file' };
@@ -866,6 +868,50 @@ describe('web Vault: moving in and out', () => {
     expect(w.completesIn[1].req.etag).toBe(w.etags.get(`${R2}/put/vault/A`));
     expect(w.completesIn[1].req.etag).not.toBe(w.completesIn[0].req.etag);
     expect(w.completesIn[1].req.encKey).not.toBe(w.completesIn[0].req.encKey);
+  });
+
+  it('sends the claim vault/in handed out with the completion (spec 4.7c)', async () => {
+    const w = await world();
+    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
+    expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
+    expect(w.claims.get('A')).toHaveLength(1);
+    expect(w.completesIn[0].req.claim).toBe(w.claims.get('A')![0]);
+  });
+
+  it('completes the retry after 409 item_changed with the NEW claim', async () => {
+    const w = await world();
+    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
+    w.client.moveInComplete.mockImplementationOnce(async (id: string, req: VaultMoveInComplete) => {
+      w.completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
+      throw new ApiError('item_changed', 'The item changed', 409, { error: { code: 'item_changed', message: 'changed' } });
+    });
+    expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
+    const [claim1, claim2] = w.claims.get('A')!;
+    expect(claim1).not.toBe(claim2);
+    expect(w.completesIn[0].req.claim).toBe(claim1);
+    expect(w.completesIn[1].req.claim).toBe(claim2);
+  });
+
+  it('reports an item another device is moving (409 item_busy) as failed, without download, upload or retry, and moves the rest', async () => {
+    const w = await world();
+    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
+    w.addPlain('B', { name: 'b.txt', mime: 'text/plain' }, enc('b'));
+    w.busy.add('A');
+    expect(await w.vault.vaultMoveIn(['A', 'B'])).toEqual({ ok: true, value: { done: 1, failed: ['A'] } });
+    expect(w.client.moveIn.mock.calls.filter(([id]) => id === 'A')).toHaveLength(1);
+    expect(w.puts.map((p) => p.url)).toEqual([`${R2}/put/vault/B`]);
+    expect(w.completesIn.map((c) => c.id)).toEqual(['B']);
+    expect(w.completesIn[0].req.claim).toBe(w.claims.get('B')![0]);
+  });
+
+  it('sends no claim in the cleanup call after a failed move out (the row is already encrypted)', async () => {
+    const w = await world();
+    await w.addItem('E', PDF_META, PDF);
+    await w.vault.listVault();
+    w.client.moveOutComplete.mockRejectedValueOnce(new ApiError('network', 'down'));
+    await w.vault.vaultMoveOut(['E']);
+    expect(w.completesIn).toHaveLength(1);
+    expect(w.completesIn[0].req).not.toHaveProperty('claim');
   });
 
   it('cleans up the plain copy when a move out fails after the plain upload (review C3)', async () => {

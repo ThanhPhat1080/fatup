@@ -11,6 +11,8 @@ import {
   vaultLockMs,
   type CreateUploadRequest,
   type FileItem,
+  type VaultMoveInComplete,
+  type VaultMoveUrls,
 } from '@fatup/shared';
 
 const MiB = 1024 * 1024;
@@ -118,5 +120,17 @@ describe('vault fields on the shared types', () => {
       vault: { encMeta: 'bWV0YQ==', encKey: 'a2V5' },
     };
     expect(req.vault).toEqual({ encMeta: 'bWV0YQ==', encKey: 'a2V5' });
+  });
+  it('lets VaultMoveUrls carry the claim that vault/in hands out (spec 4.7c)', () => {
+    const urls: VaultMoveUrls = { uploadUrl: 'u', thumbUploadUrl: null, downloadUrl: 'd', thumbUrl: null, claim: 'abc_DEF-0123456789xyz' };
+    expect(urls.claim).toBe('abc_DEF-0123456789xyz');
+    const out: VaultMoveUrls = { uploadUrl: 'u', thumbUploadUrl: null, downloadUrl: 'd', thumbUrl: null }; // move out has none
+    expect(out.claim).toBeUndefined();
+  });
+  it('lets VaultMoveInComplete carry the claim back, and stay valid without one (cleanup of an encrypted row)', () => {
+    const body: VaultMoveInComplete = { encMeta: 'm', encKey: 'k', size: 1, hasThumb: false, etag: 'e', claim: 'abc_DEF-0123456789xyz' };
+    expect(body.claim).toBe('abc_DEF-0123456789xyz');
+    const bare: VaultMoveInComplete = { encMeta: 'm', encKey: 'k', size: 1, hasThumb: false };
+    expect(bare.claim).toBeUndefined();
   });
 });

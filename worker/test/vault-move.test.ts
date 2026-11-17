@@ -121,6 +121,8 @@ type DbRow = {
   previewed_at: number | null;
   icon_url: string | null;
   out_started_at: number | null;
+  in_claim: string | null;
+  in_claim_until: number | null;
 };
 const rowOf = (id: string) => env.DB.prepare('SELECT * FROM files WHERE id = ?').bind(id).first<DbRow>();
 
@@ -171,6 +173,27 @@ async function vaultedFile(f: NewRow & { thumb?: boolean; withObjects?: boolean 
   }
   return id;
 }
+
+/**
+ * An encrypted vault row in the middle of a move out: vault/out stamped `out_started_at` and the cron has not swept it. Since spec 4.7c
+ * the two UPDATEs of vault/out/complete only apply to such a row, so tests of that route start from here.
+ */
+async function vaultedOut(f: NewRow & { thumb?: boolean; withObjects?: boolean } = {}) {
+  const id = await vaultedFile(f);
+  await env.DB.prepare('UPDATE files SET out_started_at = ? WHERE id = ?').bind(Date.now(), id).run();
+  return id;
+}
+
+/** What `vault/in` stored for the claim, and helpers to read and age it. */
+const claimRow = (id: string) => env.DB.prepare('SELECT in_claim, in_claim_until FROM files WHERE id = ?').bind(id).first<{ in_claim: string | null; in_claim_until: number | null }>();
+const claimOf = async (res: Response) => {
+  expect(res.status).toBe(200);
+  const { claim } = (await res.json()) as VaultMoveUrls;
+  expect(typeof claim).toBe('string');
+  return claim as string;
+};
+const expireClaim = (id: string) => env.DB.prepare('UPDATE files SET in_claim_until = ? WHERE id = ?').bind(Date.now() - 1000, id).run();
+const CLAIM_MS = 30 * 60 * 1000;
 
 beforeEach(async () => {
   await env.DB.prepare('DELETE FROM vault_keys').run();
@@ -637,7 +660,7 @@ describe('POST /files/:id/vault/out', () => {
 describe('POST /files/:id/vault/out/complete', () => {
   describe('a file', () => {
     it('answers 409 not_uploaded when files/<id> does not exist, and changes nothing', async () => {
-      const id = await vaultedFile({ thumb: true });
+      const id = await vaultedOut({ thumb: true });
       const res = await completeOut(id, outBody());
       expect(res.status).toBe(409);
       expect(await errorCode(res)).toBe('not_uploaded');
@@ -646,7 +669,7 @@ describe('POST /files/:id/vault/out/complete', () => {
     });
 
     it('answers 409 size_mismatch, deletes only files/<id> and thumbs/<id>.jpg, and keeps the encrypted item intact', async () => {
-      const id = await vaultedFile({ thumb: true });
+      const id = await vaultedOut({ thumb: true });
       await put(`files/${id}`, 11);
       await put(`thumbs/${id}.jpg`, 3);
       const res = await completeOut(id, outBody({ size: 10, hasThumb: true }));
@@ -659,7 +682,7 @@ describe('POST /files/:id/vault/out/complete', () => {
     });
 
     it('writes the real metadata back, clears the encryption columns and leaves the vault', async () => {
-      const id = await vaultedFile({ thumb: true });
+      const id = await vaultedOut({ thumb: true });
       await put(`files/${id}`, 10);
       await put(`thumbs/${id}.jpg`, 3);
       const res = await completeOut(id, outBody({ name: 'Hà Nội.png', mime: 'image/png', size: 10, hasThumb: true }));
@@ -693,7 +716,7 @@ describe('POST /files/:id/vault/out/complete', () => {
     });
 
     it('deletes vault/<id> and vault/<id>.thumb and keeps the plain objects', async () => {
-      const id = await vaultedFile({ thumb: true });
+      const id = await vaultedOut({ thumb: true });
       await put(`files/${id}`, 10);
       await put(`thumbs/${id}.jpg`, 3);
       await completeOut(id, outBody({ mime: 'image/png', hasThumb: true }));
@@ -703,7 +726,7 @@ describe('POST /files/:id/vault/out/complete', () => {
     });
 
     it('shows the item in the main list again and not in the vault list', async () => {
-      const id = await vaultedFile();
+      const id = await vaultedOut();
       await put(`files/${id}`, 10);
       await completeOut(id, outBody());
       const ids = async (path: string) => ((await (await callV(path)).json()) as ListFilesResponse).items.map((i) => i.id);
@@ -712,40 +735,40 @@ describe('POST /files/:id/vault/out/complete', () => {
     });
 
     it('sanitises the name like an upload does: no directory parts, no control characters', async () => {
-      const id = await vaultedFile();
+      const id = await vaultedOut();
       await put(`files/${id}`, 10);
       await completeOut(id, outBody({ name: '../../etc/pass\u0000wd.txt' }));
       expect((await rowOf(id))?.name).toBe('passwd.txt');
     });
 
     it('cleans the mime like an upload does: lower-cased, and an invalid one becomes application/octet-stream', async () => {
-      const a = await vaultedFile();
+      const a = await vaultedOut();
       await put(`files/${a}`, 10);
       await completeOut(a, outBody({ mime: 'Application/PDF' }));
       expect(await rowOf(a)).toMatchObject({ mime: 'application/pdf', kind: 'file' });
 
-      const b = await vaultedFile();
+      const b = await vaultedOut();
       await put(`files/${b}`, 10);
       await completeOut(b, outBody({ mime: 'not a mime' }));
       expect(await rowOf(b)).toMatchObject({ mime: 'application/octet-stream', kind: 'file' });
     });
 
     it('takes the kind from the mime, not from anything stored', async () => {
-      const id = await vaultedFile();
+      const id = await vaultedOut();
       await put(`files/${id}`, 10);
       await completeOut(id, outBody({ mime: 'image/jpeg' }));
       expect((await rowOf(id))?.kind).toBe('image');
     });
 
     it('records no thumbnail when hasThumb is true but thumbs/<id>.jpg was never uploaded', async () => {
-      const id = await vaultedFile({ thumb: true });
+      const id = await vaultedOut({ thumb: true });
       await put(`files/${id}`, 10);
       await completeOut(id, outBody({ mime: 'image/png', hasThumb: true }));
       expect((await rowOf(id))?.has_thumb).toBe(0);
     });
 
     it('is idempotent: a second complete answers 200 and keeps the plain file', async () => {
-      const id = await vaultedFile();
+      const id = await vaultedOut();
       await put(`files/${id}`, 10);
       expect((await completeOut(id, outBody())).status).toBe(200);
       const again = await completeOut(id, outBody());
@@ -764,7 +787,7 @@ describe('POST /files/:id/vault/out/complete', () => {
       ];
       for (const [label, body] of bad) {
         it(label, async () => {
-          const id = await vaultedFile();
+          const id = await vaultedOut();
           await put(`files/${id}`, 10);
           const res = await completeOut(id, body);
           expect(res.status).toBe(400);
@@ -777,7 +800,7 @@ describe('POST /files/:id/vault/out/complete', () => {
 
   describe('a link', () => {
     // An encrypted link is stored like any encrypted item, with no object of its own.
-    const encryptedLink = () => vaultedFile({ withObjects: false, size: 0 });
+    const encryptedLink = () => vaultedOut({ withObjects: false, size: 0 });
     const linkBody = (over: Partial<VaultMoveOutComplete> = {}): VaultMoveOutComplete =>
       outBody({ name: 'ignored', mime: LINK_MIME, size: 0, url: 'https://example.com/a', ...over });
 
@@ -803,7 +826,7 @@ describe('POST /files/:id/vault/out/complete', () => {
     });
 
     it('clears out_started_at too', async () => {
-      const id = await encryptedLink();
+      const id = await vaultedFile({ withObjects: false, size: 0 });
       expect((await moveOut(id)).status).toBe(200);
       expect((await rowOf(id))!.out_started_at).not.toBeNull();
       expect((await completeOut(id, linkBody())).status).toBe(200);
@@ -817,7 +840,7 @@ describe('POST /files/:id/vault/out/complete', () => {
     });
 
     it('deletes the vault objects it had', async () => {
-      const id = await vaultedFile({ thumb: true, size: 0 });
+      const id = await vaultedOut({ thumb: true, size: 0 });
       expect((await completeOut(id, linkBody())).status).toBe(200);
       expect(await vaultObjects()).toEqual([]);
     });
@@ -831,7 +854,7 @@ describe('POST /files/:id/vault/out/complete', () => {
 
     it('answers 400 bad_url for an address that is not http(s), and changes nothing', async () => {
       for (const url of ['javascript:alert(1)', 'ftp://example.com/x', 'not a url', 'https://']) {
-        const id = await vaultedFile({ size: 0 });
+        const id = await vaultedOut({ size: 0 });
         const res = await completeOut(id, linkBody({ url }));
         expect(res.status, url).toBe(400);
         expect(await errorCode(res), url).toBe('bad_url');
@@ -842,7 +865,7 @@ describe('POST /files/:id/vault/out/complete', () => {
 
     it('answers 409 duplicate_url when another live link has the same address, and keeps the vault item intact', async () => {
       await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'example.com', size: 0 });
-      const id = await vaultedFile({ thumb: true, size: 0 });
+      const id = await vaultedOut({ thumb: true, size: 0 });
       const res = await completeOut(id, linkBody({ url: 'https://EXAMPLE.com/a#section' }));
       expect(res.status).toBe(409);
       expect(await errorCode(res)).toBe('duplicate_url');
@@ -867,6 +890,292 @@ describe('POST /files/:id/vault/out/complete', () => {
   });
 });
 
+describe('vault/in claim: one device at a time may write vault/<id> (spec 4.7c, review N1)', () => {
+  it('gives a non-empty base64url claim of at least 16 characters and stores it with an expiry 30 minutes ahead', async () => {
+    const id = await plainFile();
+    const before = Date.now();
+    const claim = await claimOf(await moveIn(id));
+    expect(claim).toMatch(/^[A-Za-z0-9_-]{16,}$/);
+    const stored = (await claimRow(id))!;
+    expect(stored.in_claim).toBe(claim);
+    expect(stored.in_claim_until!).toBeGreaterThanOrEqual(before + CLAIM_MS - 5000);
+    expect(stored.in_claim_until!).toBeLessThanOrEqual(Date.now() + CLAIM_MS + 5000);
+  });
+
+  it('answers 409 item_busy to a second vault/in while the claim is live: no addresses, and the stored claim is unchanged', async () => {
+    const id = await plainFile({ thumb: true });
+    const claim = await claimOf(await moveIn(id));
+    const stored = await claimRow(id);
+
+    const second = await moveIn(id);
+    expect(second.status).toBe(409);
+    const body = (await second.json()) as Record<string, unknown> & { error: { code: string } };
+    expect(body.error.code).toBe('item_busy');
+    for (const k of ['uploadUrl', 'thumbUploadUrl', 'downloadUrl', 'thumbUrl', 'claim']) expect(body).not.toHaveProperty(k);
+    expect(JSON.stringify(body)).not.toContain('r2.test');
+    expect(await claimRow(id)).toEqual(stored);
+    expect((await claimRow(id))!.in_claim).toBe(claim);
+  });
+
+  it('gives a new claim once the old one has expired', async () => {
+    const id = await plainFile();
+    const first = await claimOf(await moveIn(id));
+    await expireClaim(id);
+
+    const second = await claimOf(await moveIn(id));
+    expect(second).not.toBe(first);
+    const stored = (await claimRow(id))!;
+    expect(stored.in_claim).toBe(second);
+    expect(stored.in_claim_until!).toBeGreaterThan(Date.now() + CLAIM_MS - 5000);
+  });
+
+  it('claims two different items independently', async () => {
+    const a = await plainFile();
+    const b = await plainFile();
+    expect(await claimOf(await moveIn(a))).not.toBe(await claimOf(await moveIn(b)));
+  });
+
+  it('claims a legacy vault item, a legacy item in the vault trash and a link too, because they all go through vault/in', async () => {
+    const legacy = await plainFile({ inVault: 1 });
+    const trashed = await plainFile({ inVault: 1, deletedAt: Date.now() - 1000 });
+    const link = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'example.com', size: 0 });
+    for (const id of [legacy, trashed, link]) {
+      const claim = await claimOf(await moveIn(id));
+      expect((await claimRow(id))!.in_claim).toBe(claim);
+      expect((await moveIn(id)).status).toBe(409);
+    }
+  });
+
+  it('still answers 409 already_encrypted for an encrypted row, and claims nothing', async () => {
+    const id = await vaultedFile();
+    const res = await moveIn(id);
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('already_encrypted');
+    expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
+  });
+
+  it('claims nothing when the Vault is not ready', async () => {
+    const id = await plainFile();
+    await setState('none');
+    expect((await moveIn(id)).status).toBe(409);
+    expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
+  });
+});
+
+describe('vault/in/complete and the claim (spec 4.7c)', () => {
+  /** A plain row claimed by vault/in, with its ciphertext uploaded. */
+  async function claimed(f: NewRow & { thumb?: boolean } = {}) {
+    const id = await plainFile(f);
+    const claim = await claimOf(await moveIn(id));
+    await put(`vault/${id}`, 40);
+    return { id, claim };
+  }
+  /** Nothing about the item moved: still plain, still claimed, objects as they were. */
+  async function untouched(id: string, claim: string | null) {
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null, enc_key: null });
+    expect((await claimRow(id))!.in_claim).toBe(claim);
+    expect(await has(`files/${id}`)).toBe(true);
+    expect(await has(`vault/${id}`)).toBe(true);
+  }
+
+  it('completes with the matching, unexpired claim, and clears the claim columns', async () => {
+    const { id, claim } = await claimed();
+    const res = await completeIn(id, inBody({ claim }));
+    expect(res.status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_key: ENC_KEY });
+    expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
+  });
+
+  it('answers 409 item_busy with a wrong claim, and changes nothing', async () => {
+    const { id, claim } = await claimed();
+    const res = await completeIn(id, inBody({ claim: `${claim}x` }));
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('item_busy');
+    await untouched(id, claim);
+  });
+
+  it('answers 409 item_busy with no claim while the row has one, and changes nothing', async () => {
+    const { id, claim } = await claimed({ thumb: true });
+    await put(`thumbs/${id}.jpg`, 3);
+    const res = await completeIn(id, inBody());
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('item_busy');
+    await untouched(id, claim);
+    expect(await has(`thumbs/${id}.jpg`)).toBe(true);
+  });
+
+  it('answers 409 item_busy with the matching claim once it expired, and changes nothing', async () => {
+    const { id, claim } = await claimed();
+    await expireClaim(id);
+    const res = await completeIn(id, inBody({ claim }));
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('item_busy');
+    await untouched(id, claim);
+  });
+
+  it('lets a row with no claim at all complete without one (items that never went through vault/in)', async () => {
+    const id = await plainFile();
+    await put(`vault/${id}`, 40);
+    expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
+    const res = await completeIn(id, inBody());
+    expect(res.status).toBe(200);
+    expect((await rowOf(id))?.encrypted).toBe(1);
+  });
+
+  it('answers 400 when the claim is not a string, and changes nothing', async () => {
+    const { id, claim } = await claimed();
+    const res = await completeIn(id, { ...inBody(), claim: 5 });
+    expect(res.status).toBe(400);
+    await untouched(id, claim);
+  });
+
+  it('asks a link for the claim too, and clears it when the link moves in', async () => {
+    const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0 });
+    const claim = await claimOf(await moveIn(id));
+
+    const wrong = await completeInRaw(id, inBody({ size: 0 }));
+    expect(wrong.status).toBe(409);
+    expect(await errorCode(wrong)).toBe('item_busy');
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, kind: 'link', url: 'https://example.com/a' });
+
+    const right = await completeInRaw(id, inBody({ size: 0, claim }));
+    expect(right.status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1 });
+    expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
+  });
+
+  describe('a refusal that lets the client start over releases the claim', () => {
+    it('409 item_changed releases it: vault/in answers again at once, with a new claim', async () => {
+      const id = await plainFile();
+      const claim = await claimOf(await moveIn(id));
+      const etagA = (await env.BUCKET.put(`vault/${id}`, new Uint8Array(40).fill(1)))!.etag;
+      await env.BUCKET.put(`vault/${id}`, new Uint8Array(40).fill(2)); // overwritten, as by a device whose URL still lived
+      const res = await completeInRaw(id, { ...inBody({ claim }), etag: etagA });
+      expect(res.status).toBe(409);
+      expect(await errorCode(res)).toBe('item_changed');
+      expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
+      expect((await rowOf(id))?.encrypted).toBe(0);
+
+      expect(await claimOf(await moveIn(id))).not.toBe(claim);
+    });
+
+    it('409 size_mismatch releases it too (and still deletes vault/<id>*)', async () => {
+      const id = await plainFile();
+      const claim = await claimOf(await moveIn(id));
+      await put(`vault/${id}`, 41);
+      const res = await completeIn(id, inBody({ size: 40, claim }));
+      expect(res.status).toBe(409);
+      expect(await errorCode(res)).toBe('size_mismatch');
+      expect(await vaultObjects()).toEqual([]);
+      expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
+      expect(await claimOf(await moveIn(id))).not.toBe(claim);
+    });
+
+    it('a request with a WRONG claim gets item_busy and does not release the holder', async () => {
+      const id = await plainFile();
+      const claim = await claimOf(await moveIn(id));
+      const etagA = (await env.BUCKET.put(`vault/${id}`, new Uint8Array(40).fill(1)))!.etag;
+      await env.BUCKET.put(`vault/${id}`, new Uint8Array(40).fill(2));
+      const res = await completeInRaw(id, { ...inBody({ claim: 'somebody-elses-claim-000' }), etag: etagA });
+      expect(await errorCode(res)).toBe('item_busy');
+      expect((await claimRow(id))!.in_claim).toBe(claim);
+      expect((await moveIn(id)).status).toBe(409);
+    });
+
+    it('the wrong size of a request with a wrong claim does not release it either', async () => {
+      const id = await plainFile();
+      const claim = await claimOf(await moveIn(id));
+      await put(`vault/${id}`, 41);
+      const res = await completeIn(id, inBody({ size: 40, claim: 'somebody-elses-claim-000' }));
+      expect(await errorCode(res)).toBe('item_busy');
+      expect((await claimRow(id))!.in_claim).toBe(claim);
+      expect(await has(`vault/${id}`)).toBe(true);
+    });
+  });
+
+  describe('two devices moving the same file in (review N1)', () => {
+    it('B gets no upload address while A holds the claim; A completes; B then finds the row encrypted and its late complete changes nothing', async () => {
+      const id = await plainFile();
+      const claimA = await claimOf(await moveIn(id)); // device A
+      const b = await moveIn(id); // device B
+      expect(b.status).toBe(409);
+      expect(await errorCode(b)).toBe('item_busy');
+
+      await put(`vault/${id}`, 40); // A's PUT
+      expect((await completeIn(id, inBody({ encKey: 'S0VZLUE=', claim: claimA }))).status).toBe(200);
+      expect((await rowOf(id))?.enc_key).toBe('S0VZLUE=');
+
+      // B never got a URL, but could still send a complete of its own: the row is encrypted, so it is the idempotent answer.
+      const late = await completeIn(id, inBody({ encKey: 'S0VZLUI=', encMeta: 'bWV0YS1C', claim: 'device-b-claim-0000000' }));
+      expect(late.status).toBe(200);
+      expect(await rowOf(id)).toMatchObject({ encrypted: 1, enc_key: 'S0VZLUE=', enc_meta: ENC_META });
+      expect(await has(`vault/${id}`)).toBe(true);
+    });
+
+    it('with no claim and an etag that does not match, a complete on an encrypted row is still the idempotent 200 and keeps the key', async () => {
+      const id = await plainFile();
+      const claim = await claimOf(await moveIn(id));
+      await put(`vault/${id}`, 40);
+      expect((await completeIn(id, inBody({ claim }))).status).toBe(200);
+      const again = await completeInRaw(id, { ...inBody({ encKey: 'T1RIRVI=' }), etag: 'some-other-etag' });
+      expect(again.status).toBe(200);
+      expect((await rowOf(id))?.enc_key).toBe(ENC_KEY);
+    });
+
+    it('after A\'s claim expired, B can claim and move the file in; A\'s late complete then answers item_busy', async () => {
+      const id = await plainFile();
+      const claimA = await claimOf(await moveIn(id));
+      await expireClaim(id);
+      const claimB = await claimOf(await moveIn(id));
+      await put(`vault/${id}`, 40);
+      const late = await completeIn(id, inBody({ claim: claimA }));
+      expect(late.status).toBe(409);
+      expect(await errorCode(late)).toBe('item_busy');
+      expect((await completeIn(id, inBody({ claim: claimB }))).status).toBe(200);
+    });
+  });
+});
+
+describe('vault/out/complete after the cron released the row (spec 4.7c, review N3)', () => {
+  it('answers 409 item_changed for a file whose out_started_at is NULL (the cron swept it), and the row stays encrypted', async () => {
+    const id = await vaultedFile({ thumb: true });
+    await put(`files/${id}`, 10);
+    expect((await rowOf(id))!.out_started_at).toBeNull();
+    const res = await completeOut(id, outBody());
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('item_changed');
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_meta: 'TUVUQQ==', enc_key: 'S0VZ', name: '' });
+    expect((await vaultObjects()).sort()).toEqual([`vault/${id}`, `vault/${id}.thumb`]);
+  });
+
+  it('answers 409 item_changed for a link whose out_started_at is NULL, and the row stays encrypted', async () => {
+    const id = await vaultedFile({ withObjects: false, size: 0 });
+    const res = await completeOut(id, outBody({ name: 'ignored', mime: LINK_MIME, size: 0, url: 'https://example.com/a' }));
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('item_changed');
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, kind: 'file', url: null });
+  });
+
+  it('keeps vault/<id> for a later vault/out after refusing', async () => {
+    const id = await vaultedFile();
+    await put(`files/${id}`, 10);
+    expect((await completeOut(id, outBody())).status).toBe(409);
+    expect((await moveOut(id)).status).toBe(200);
+    await put(`files/${id}`, 10);
+    expect((await completeOut(id, outBody())).status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, out_started_at: null });
+  });
+
+  it('works as before when out_started_at is set, by vault/out itself', async () => {
+    const id = await vaultedFile();
+    expect((await moveOut(id)).status).toBe(200);
+    await put(`files/${id}`, 10);
+    const res = await completeOut(id, outBody());
+    expect(res.status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, out_started_at: null });
+  });
+});
+
 describe('a legacy item in the vault trash', () => {
   // Deleted in the vault before encryption was set up: it sits in the vault trash in plain form and must be encrypted too.
   it('can be moved in, stays in the vault trash, and loses its plain objects', async () => {
@@ -874,9 +1183,10 @@ describe('a legacy item in the vault trash', () => {
     const id = await plainFile({ inVault: 1, deletedAt, thumb: true });
     const urls = await moveIn(id);
     expect(urls.status).toBe(200);
+    const claim = ((await urls.json()) as VaultMoveUrls).claim; // vault/in claimed the row, so complete has to send it (spec 4.7c)
     await put(`vault/${id}`, 40);
     await put(`vault/${id}.thumb`, 20);
-    const res = await completeIn(id, inBody({ size: 40, hasThumb: true }));
+    const res = await completeIn(id, inBody({ size: 40, hasThumb: true, claim }));
     expect(res.status).toBe(200);
     expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, deleted_at: deletedAt, name: '' });
     expect(await has(`files/${id}`)).toBe(false);
@@ -900,7 +1210,7 @@ describe('guards on all four routes', () => {
     } },
     { name: 'vault/out', call: moveOut, make: (f) => vaultedFile(f) },
     { name: 'vault/out/complete', call: (id) => completeOut(id, outBody()), make: async (f) => {
-      const id = await vaultedFile(f);
+      const id = await vaultedOut(f);
       await put(`files/${id}`, 10);
       return id;
     } },

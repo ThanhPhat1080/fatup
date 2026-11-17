@@ -199,7 +199,8 @@ describe('the mock Vault routes', () => {
     const into = await api(base, 'POST', `/files/${id}/vault/in`);
     expect(into.json.uploadUrl).toContain(`/put/vault/${id}`);
     const stored = await putBytes(into.json.uploadUrl, 'cipher');
-    const moved = await api(base, 'POST', `/files/${id}/vault/in/complete`, { encMeta: 'm', encKey: 'k', size: 6, hasThumb: false, etag: stored.headers.get('etag') });
+    expect(typeof into.json.claim).toBe('string'); // vault/in hands out the claim (spec 4.7c)
+    const moved = await api(base, 'POST', `/files/${id}/vault/in/complete`, { encMeta: 'm', encKey: 'k', size: 6, hasThumb: false, etag: stored.headers.get('etag'), claim: into.json.claim });
     expect(moved).toMatchObject({ status: 200, json: { id, encrypted: true, inVault: true } });
     expect((await api(base, 'GET', '/files')).json.items.some((i: { id: string }) => i.id === id)).toBe(false);
 
@@ -222,7 +223,7 @@ describe('the mock Vault routes', () => {
       await api(base, 'POST', '/vault/setup', setupBody());
       const into = await api(base, 'POST', `/files/${id}/vault/in`);
       const res = await putBytes(into.json.uploadUrl, bytes);
-      return { into, put: res, etag: res.headers.get('etag') };
+      return { into, put: res, etag: res.headers.get('etag'), claim: into.json.claim as string };
     }
 
     it('answers a PUT of a stored object with a non-empty ETag header', async () => {
@@ -252,13 +253,13 @@ describe('the mock Vault routes', () => {
 
     it('completes a move in with the ETag of the last PUT, quoted or not', async () => {
       const base = await start();
-      const { etag } = await stage(base, firstId);
+      const { etag, claim } = await stage(base, firstId);
       const bare = etag!.replace(/^"|"$/g, '');
-      expect((await complete(base, firstId, { etag: bare })).status).toBe(200);
+      expect((await complete(base, firstId, { etag: bare, claim })).status).toBe(200);
 
       const base2 = await start();
       const second = await stage(base2, firstId);
-      expect((await complete(base2, firstId, { etag: second.etag })).status).toBe(200);
+      expect((await complete(base2, firstId, { etag: second.etag, claim: second.claim })).status).toBe(200);
     });
 
     it.each([
@@ -268,8 +269,8 @@ describe('the mock Vault routes', () => {
       ['over 200 characters', { etag: 'a'.repeat(201) }],
     ])('refuses a move in of a file whose etag is %s with 400 and changes nothing', async (_name, extra) => {
       const base = await start();
-      await stage(base, firstId);
-      const res = await complete(base, firstId, extra);
+      const { claim } = await stage(base, firstId);
+      const res = await complete(base, firstId, { claim, ...extra });
       expect(res.status).toBe(400);
       expect(res.json.error.code).toBe('bad_request');
       expect((await api(base, 'GET', '/files')).json.items.some((i: { id: string }) => i.id === firstId)).toBe(true);
@@ -278,9 +279,9 @@ describe('the mock Vault routes', () => {
 
     it('answers 409 item_changed when another PUT replaced the object, and then neither writes the row nor removes the plain file', async () => {
       const base = await start();
-      const { into, etag } = await stage(base, firstId, 'cipher');
+      const { into, etag, claim } = await stage(base, firstId, 'cipher');
       await putBytes(into.json.uploadUrl, 'CIPHER'); // the other device
-      const res = await complete(base, firstId, { etag });
+      const res = await complete(base, firstId, { etag, claim });
       expect(res.status).toBe(409);
       expect(res.json.error.code).toBe('item_changed');
       expect((await api(base, 'GET', '/files?vault=1', undefined, VAULT_HEADERS)).json.items.map((i: { id: string }) => i.id)).not.toContain(firstId);
@@ -290,27 +291,135 @@ describe('the mock Vault routes', () => {
 
     it('lets the client start over after a 409: a new PUT and its own ETag complete the move in', async () => {
       const base = await start();
-      const { into, etag } = await stage(base, firstId, 'cipher');
+      const { into, etag, claim } = await stage(base, firstId, 'cipher');
       await putBytes(into.json.uploadUrl, 'CIPHER');
-      expect((await complete(base, firstId, { etag })).status).toBe(409);
-      const mine = await putBytes(into.json.uploadUrl, 'second');
-      const done = await complete(base, firstId, { etag: mine.headers.get('etag'), size: 6 });
+      expect((await complete(base, firstId, { etag, claim })).status).toBe(409);
+      // The 409 released the claim, so the client asks vault/in again and completes with the new claim.
+      const again = await api(base, 'POST', `/files/${firstId}/vault/in`);
+      expect(again.status).toBe(200);
+      const mine = await putBytes(again.json.uploadUrl, 'second');
+      const done = await complete(base, firstId, { etag: mine.headers.get('etag'), size: 6, claim: again.json.claim });
       expect(done).toMatchObject({ status: 200, json: { id: firstId, encrypted: true, inVault: true } });
     });
 
     it('does not compare the etag again once the row is encrypted (a retry answers 200)', async () => {
       const base = await start();
-      const { etag } = await stage(base, firstId);
-      expect((await complete(base, firstId, { etag })).status).toBe(200);
+      const { etag, claim } = await stage(base, firstId);
+      expect((await complete(base, firstId, { etag, claim })).status).toBe(200);
       expect((await complete(base, firstId, { etag: 'some-other-etag' })).status).toBe(200);
     });
 
     it('still reports an object that was never uploaded as 409 not_uploaded', async () => {
       const base = await start();
       await api(base, 'POST', '/vault/setup', setupBody());
-      await api(base, 'POST', `/files/${firstId}/vault/in`);
-      const res = await complete(base, firstId, { etag: '"whatever"' });
+      const into = await api(base, 'POST', `/files/${firstId}/vault/in`);
+      const res = await complete(base, firstId, { etag: '"whatever"', claim: into.json.claim });
       expect(res).toMatchObject({ status: 409, json: { error: { code: 'not_uploaded' } } });
+    });
+  });
+  describe('the per-item write claim of vault/in (like worker/src/vault.ts, spec 4.7c)', () => {
+    const firstId = String(0).padStart(26, '0'); // a seeded plain file
+    const complete = (base: string, id: string, extra: Record<string, unknown> = {}) =>
+      api(base, 'POST', `/files/${id}/vault/in/complete`, { encMeta: 'm', encKey: 'k', size: 6, hasThumb: false, ...extra });
+    const into = (base: string, id = firstId) => api(base, 'POST', `/files/${id}/vault/in`);
+    const isPlain = async (base: string, id = firstId) => (await api(base, 'GET', '/files')).json.items.some((i: { id: string }) => i.id === id);
+    const vaultKey = async (base: string, id = firstId) =>
+      (await api(base, 'GET', '/files?vault=1', undefined, VAULT_HEADERS)).json.items.find((i: { id: string }) => i.id === id)?.encKey;
+
+    async function ready() {
+      const base = await start();
+      await api(base, 'POST', '/vault/setup', setupBody());
+      return base;
+    }
+
+    it('hands out a claim of at least 16 base64url characters with the addresses', async () => {
+      const base = await ready();
+      const res = await into(base);
+      expect(res.status).toBe(200);
+      expect(res.json.claim).toMatch(/^[A-Za-z0-9_-]{16,}$/);
+      expect(res.json.uploadUrl).toContain(`/put/vault/${firstId}`);
+    });
+
+    it('refuses a second vault/in while the claim is held: 409 item_busy and no address', async () => {
+      const base = await ready();
+      const first = await into(base);
+      const second = await into(base);
+      expect(second.status).toBe(409);
+      expect(second.json.error.code).toBe('item_busy');
+      expect(second.json.uploadUrl).toBeUndefined();
+      expect(second.json.claim).toBeUndefined();
+      // The holder still completes with its own claim.
+      const stored = await putBytes(first.json.uploadUrl, 'cipher');
+      expect((await complete(base, firstId, { etag: stored.headers.get('etag'), claim: first.json.claim })).status).toBe(200);
+    });
+
+    it('claims different items independently', async () => {
+      const base = await ready();
+      const other = String(1).padStart(26, '0');
+      expect((await into(base, firstId)).status).toBe(200);
+      expect((await into(base, other)).status).toBe(200);
+    });
+
+    it('needs the claim to complete: without it, or with another one, answers 409 item_busy and changes nothing', async () => {
+      const base = await ready();
+      const first = await into(base);
+      const stored = await putBytes(first.json.uploadUrl, 'cipher');
+      const etag = stored.headers.get('etag');
+      for (const extra of [{ etag }, { etag, claim: 'not-the-claim-0123456789' }]) {
+        const res = await complete(base, firstId, extra);
+        expect(res.status).toBe(409);
+        expect(res.json.error.code).toBe('item_busy');
+      }
+      expect(await isPlain(base)).toBe(true);
+      expect((await fetch(`${base}/raw/${firstId}`)).status).toBe(200);
+      expect(await vaultKey(base)).toBeUndefined();
+      // A wrong claim does not release it: the item is still busy, and the right claim still completes.
+      expect((await into(base)).status).toBe(409);
+      expect((await complete(base, firstId, { etag, claim: first.json.claim })).status).toBe(200);
+    });
+
+    it('refuses a claim that is not a string with 400', async () => {
+      const base = await ready();
+      const first = await into(base);
+      const stored = await putBytes(first.json.uploadUrl, 'cipher');
+      const res = await complete(base, firstId, { etag: stored.headers.get('etag'), claim: 5 });
+      expect(res.status).toBe(400);
+      expect(await isPlain(base)).toBe(true);
+    });
+
+    it('releases the claim on 409 item_changed, so the client can ask vault/in again at once, for a new claim', async () => {
+      const base = await ready();
+      const first = await into(base);
+      const stored = await putBytes(first.json.uploadUrl, 'cipher');
+      await putBytes(first.json.uploadUrl, 'CIPHER'); // another device overwrote it
+      expect((await complete(base, firstId, { etag: stored.headers.get('etag'), claim: first.json.claim })).json.error.code).toBe('item_changed');
+      const again = await into(base);
+      expect(again.status).toBe(200);
+      expect(again.json.claim).not.toBe(first.json.claim);
+    });
+
+    it('releases the claim on 409 size_mismatch too', async () => {
+      const base = await ready();
+      const first = await into(base);
+      const stored = await putBytes(first.json.uploadUrl, 'cipher');
+      const res = await complete(base, firstId, { etag: stored.headers.get('etag'), claim: first.json.claim, size: 99 });
+      expect(res.json.error.code).toBe('size_mismatch');
+      expect((await into(base)).status).toBe(200);
+    });
+
+    it('two devices: B is refused its addresses while A holds the claim; A completes; B\'s late complete is an idempotent 200 that keeps A\'s key', async () => {
+      const base = await ready();
+      const a = await into(base);
+      const b = await into(base);
+      expect(b.status).toBe(409);
+      expect(b.json.error.code).toBe('item_busy');
+      const stored = await putBytes(a.json.uploadUrl, 'cipher');
+      expect((await complete(base, firstId, { encKey: 'key-of-A', etag: stored.headers.get('etag'), claim: a.json.claim })).status).toBe(200);
+
+      const late = await complete(base, firstId, { encKey: 'key-of-B', etag: '"whatever"', claim: 'b-has-no-claim-0123456789' });
+      expect(late.status).toBe(200);
+      expect(late.json).toMatchObject({ id: firstId, encrypted: true });
+      expect(await vaultKey(base)).toBe('key-of-A');
     });
   });
 });
