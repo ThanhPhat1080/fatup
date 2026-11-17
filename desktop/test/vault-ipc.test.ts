@@ -8,7 +8,7 @@
 //
 //   export type VaultHandlerDeps = {
 //     session: VaultSession;                                   // the one session of the main process
-//     client(): Pick<ApiClient, 'listEverything' | 'downloadUrl'>; // throws ApiError('not_configured') when there is no server
+//     client(): Pick<ApiClient, 'listEverything' | 'downloadUrl' | 'update' | 'createUpload' | 'complete' | 'addLink'>; // throws ApiError('not_configured') when there is no server
 //     isUnlocked(): boolean;                                   // the app (PIN) lock; false = every handler refuses
 //     downloadsDir: string;                                    // where `download` saves
 //     writeFile(path: string, bytes: Uint8Array): Promise<void>;
@@ -29,6 +29,16 @@
 //     previewUrl(id): Result<string>                           // `fatup-vault://file/<id>`
 //     vaultProtocol(url: string): Promise<{ status: number; body?: Uint8Array; type?: string }>
 //
+// Task 9 adds (the client Pick above grows by `update`, `createUpload`, `complete`; `addLink` is in the Pick only so the tests can
+// prove the plain `/links` route is never used):
+//     updateFile(id, patch: { name?, url?, tags?, important? }): Result<Item>
+//         for an owned encrypted item: PATCH { encMeta } (from session.reencryptMeta; only when name or url is in the patch)
+//         plus tags / important when given; NEVER name or url. Answers the decrypted item.
+//     addLink(url, title?): Result<Item>
+//         into the Vault, encrypted: createUpload({ name: '', mime: 'application/octet-stream', size: 32, hasThumb: false,
+//         vault: { encMeta, encKey } }) -> PUT a 32-byte FUV1 body (encryption of 0 bytes) -> complete(id). Meta:
+//         { kind: 'link', url, title, name: title || host, mime: LINK_MIME }. The new item is owned afterwards.
+//
 // Refusals: while the app is locked every handler except vaultClose answers `{ ok: false, error: 'locked' }`; the PIN-check ones
 // (vaultUnlock, vaultChangePin) answer `{ ok: false, reason: 'error', error: 'locked' }` instead, because that is their result shape.
 // In both cases the session is not touched. While the session is closed, the file handlers answer `{ ok: false, error: 'vault_locked' }`
@@ -37,10 +47,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  LINK_MIME,
+  decryptBytes,
+  decryptMeta,
   derivePinKeys,
   encryptBytes,
   kekFrom,
   unwrapMasterKey,
+  type CreateUploadRequest,
+  type CreateUploadResponse,
   type FileItem,
   type VaultMeta,
   type VaultSetupRequest,
@@ -90,14 +105,53 @@ async function world(opts: { unlocked?: boolean } = {}) {
   if (!setup.ok) throw new Error(`setup failed: ${setup.error}`);
 
   const objects = new Map<string, Uint8Array>();
-  const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+  /** Everything in order: `createUpload`, `PUT <url>`, `complete`, `update`, `addLink`. */
+  const events: string[] = [];
+  const puts: { url: string; body: Uint8Array }[] = [];
+  const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    if (init?.method === 'PUT') {
+      const sent = init.body as unknown;
+      const body = sent instanceof Blob ? new Uint8Array(await sent.arrayBuffer()) : new Uint8Array(sent as ArrayBufferLike);
+      events.push(`PUT ${String(input)}`);
+      puts.push({ url: String(input), body });
+      objects.set(String(input), body);
+      return new Response(null, { status: 200 });
+    }
     const body = objects.get(String(input));
     return body ? new Response(body as unknown as BodyInit) : new Response('missing', { status: 404 });
   });
   const raw: FileItem[] = [];
+  type Patch = { encMeta?: string; name?: string; url?: string; tags?: string[]; important?: boolean };
+  const created: { id: string; req: CreateUploadRequest }[] = [];
   const client = {
     listEverything: vi.fn(async (_opts?: { trash?: boolean; vault?: boolean }) => raw.map((r) => ({ ...r }))),
     downloadUrl: vi.fn(async (id: string) => `https://r2.test/vault/${id}`),
+    update: vi.fn(async (id: string, patch: Patch): Promise<FileItem> => {
+      events.push('update');
+      const row = raw.find((r) => r.id === id);
+      if (!row) throw new ApiError('not_found', 'no such file', 404);
+      if (patch.encMeta) row.encMeta = patch.encMeta;
+      if (patch.tags) row.tags = patch.tags as FileItem['tags'];
+      if (patch.important !== undefined) row.important = patch.important;
+      return { ...row };
+    }),
+    createUpload: vi.fn(async (req: CreateUploadRequest): Promise<CreateUploadResponse> => {
+      events.push('createUpload');
+      const id = `N${created.length + 1}`;
+      created.push({ id, req: JSON.parse(JSON.stringify(req)) as CreateUploadRequest });
+      return { id, uploadUrl: `https://r2.test/put/vault/${id}`, thumbUploadUrl: null };
+    }),
+    complete: vi.fn(async (id: string): Promise<FileItem> => {
+      events.push('complete');
+      const made = created.find((c) => c.id === id)!;
+      const row = storedItem({ id, size: made.req.size, encMeta: made.req.vault!.encMeta, encKey: made.req.vault!.encKey });
+      raw.push(row);
+      return { ...row };
+    }),
+    addLink: vi.fn(async (): Promise<FileItem> => {
+      events.push('addLink');
+      throw new Error('the plain /links route must never be used for the Vault');
+    }),
   };
   const written: Written[] = [];
   const downloaded = new Set<string>();
@@ -132,7 +186,13 @@ async function world(opts: { unlocked?: boolean } = {}) {
     }
     raw.push(storedItem({ id, encMeta, encKey, thumbUrl, size: cipher.length }));
   }
-  return { server, session, handlers, deps, client, fetchImpl, written, writeFile, markDownloaded, raw, state, addItem, recoveryKey: setup.recoveryKey };
+  /** The master key, derived from what the server stores, to open `encMeta`/`encKey` the way only the owner can. */
+  async function masterKey() {
+    const req = server.state.req!;
+    const { wrapBase } = await derivePinKeys(PIN, req.kdfSalt, req.kdfIterations);
+    return unwrapMasterKey(req.wrappedMkPin, await kekFrom(wrapBase, req.serverSecret));
+  }
+  return { server, session, handlers, deps, client, fetchImpl, written, writeFile, markDownloaded, raw, state, addItem, masterKey, events, puts, created, recoveryKey: setup.recoveryKey };
 }
 
 function storedItem(over: Partial<FileItem> = {}): FileItem {
@@ -177,7 +237,14 @@ function stubbed(unlocked = true) {
   const session = stubSession();
   const handlers = createVaultHandlers({
     session: session as unknown as VaultSession,
-    client: () => ({ listEverything: vi.fn(async () => []), downloadUrl: vi.fn(async () => 'x') }),
+    client: () => ({
+      listEverything: vi.fn(async () => []),
+      downloadUrl: vi.fn(async () => 'x'),
+      update: vi.fn(async () => storedItem()),
+      createUpload: vi.fn(async () => ({ id: 'N', uploadUrl: 'x', thumbUploadUrl: null })),
+      complete: vi.fn(async () => storedItem()),
+      addLink: vi.fn(async () => storedItem()),
+    }),
     isUnlocked: () => unlocked,
     downloadsDir: DOWNLOADS,
     writeFile: vi.fn(async () => undefined),
@@ -595,5 +662,203 @@ describe('Vault handlers keep their secrets', () => {
 
     const text = results.map((r) => JSON.stringify(r)).join('\n');
     for (const secret of forbidden) expect(text).not.toContain(secret);
+  });
+});
+
+// ---------- Task 9: encrypted rename, and links added straight into the Vault ----------
+
+type Shown = { id: string; name: string; url: string | null; kind: string; mime: string; tags: string[]; important?: boolean };
+const LINK: VaultMeta = { name: 'Trang chủ', title: 'Trang chủ', mime: LINK_MIME, kind: 'link', url: 'https://example.com/cu' };
+
+/** The body of the one `update` call, as the server would see it. */
+const patchSent = (w: Awaited<ReturnType<typeof world>>) => w.client.update.mock.calls[0]![1] as Record<string, unknown>;
+
+describe('updateFile on an encrypted item', () => {
+  it('renames by sending a new encMeta, never the name, and answers the item with its new name', async () => {
+    const w = await world();
+    await w.addItem('I1', PDF, enc('contents'));
+    await w.handlers.listVault({});
+    const res = await w.handlers.updateFile('I1', { name: 'Tên mới – bản sửa.pdf' });
+    expect(res.ok).toBe(true);
+    expect((res as { ok: true; value: Shown }).value).toMatchObject({ id: 'I1', name: 'Tên mới – bản sửa.pdf', mime: 'application/pdf', kind: 'file' });
+
+    expect(w.client.update).toHaveBeenCalledTimes(1);
+    expect(w.client.update.mock.calls[0]![0]).toBe('I1');
+    const patch = patchSent(w);
+    expect(Object.keys(patch)).toEqual(['encMeta']);
+    expect(await decryptMeta(patch.encMeta as string, await w.masterKey())).toMatchObject({ name: 'Tên mới – bản sửa.pdf', mime: 'application/pdf', kind: 'file' });
+    expect(JSON.stringify(w.client.update.mock.calls)).not.toContain('Tên mới');
+  });
+
+  it('keeps the new name on the next listing', async () => {
+    const w = await world();
+    await w.addItem('I1', PDF, enc('contents'));
+    await w.handlers.listVault({});
+    await w.handlers.updateFile('I1', { name: 'đổi.pdf' });
+    const again = await w.handlers.listVault({});
+    expect((again as { ok: true; value: Shown[] }).value[0].name).toBe('đổi.pdf');
+  });
+
+  it('changes the address of an encrypted link through encMeta, never the url', async () => {
+    const w = await world();
+    await w.addItem('L1', LINK, new Uint8Array(0));
+    await w.handlers.listVault({});
+    const res = await w.handlers.updateFile('L1', { url: 'https://example.org/moi' });
+    expect((res as { ok: true; value: Shown }).value).toMatchObject({ kind: 'link', url: 'https://example.org/moi', name: 'Trang chủ' });
+    const patch = patchSent(w);
+    expect(Object.keys(patch)).toEqual(['encMeta']);
+    expect(await decryptMeta(patch.encMeta as string, await w.masterKey())).toMatchObject({ url: 'https://example.org/moi' });
+    expect(JSON.stringify(w.client.update.mock.calls)).not.toContain('example.org');
+  });
+
+  it('sends tags and important next to encMeta when they come with the name', async () => {
+    const w = await world();
+    await w.addItem('I1', PDF, enc('contents'));
+    await w.handlers.listVault({});
+    const res = await w.handlers.updateFile('I1', { name: 'a.pdf', tags: ['red', 'blue'], important: true });
+    const patch = patchSent(w);
+    expect(Object.keys(patch).sort()).toEqual(['encMeta', 'important', 'tags']);
+    expect(patch.tags).toEqual(['red', 'blue']);
+    expect(patch.important).toBe(true);
+    expect((res as { ok: true; value: Shown }).value).toMatchObject({ name: 'a.pdf', tags: ['red', 'blue'], important: true });
+  });
+
+  it('sends only tags or important when there is no name or url to change', async () => {
+    const w = await world();
+    await w.addItem('I1', PDF, enc('contents'));
+    await w.handlers.listVault({});
+    const res = await w.handlers.updateFile('I1', { tags: ['green'] });
+    const patch = patchSent(w);
+    expect(patch).not.toHaveProperty('name');
+    expect(patch).not.toHaveProperty('url');
+    expect(patch.tags).toEqual(['green']);
+    expect((res as { ok: true; value: Shown }).value).toMatchObject({ id: 'I1', name: PDF.name, tags: ['green'] });
+  });
+
+  it('answers vault_locked while the Vault is closed, and sends nothing', async () => {
+    const w = await world();
+    await w.addItem('I1', PDF, enc('contents'));
+    await w.handlers.listVault({});
+    w.handlers.vaultClose();
+    expect(await w.handlers.updateFile('I1', { name: 'x.pdf' })).toMatchObject({ ok: false, error: 'vault_locked' });
+    expect(w.client.update).not.toHaveBeenCalled();
+  });
+
+  it('answers locked while the app is locked, and sends nothing', async () => {
+    const w = await world();
+    await w.addItem('I1', PDF, enc('contents'));
+    await w.handlers.listVault({});
+    w.state.unlocked = false;
+    expect(await w.handlers.updateFile('I1', { name: 'x.pdf' })).toMatchObject({ ok: false, error: 'locked' });
+    expect(w.client.update).not.toHaveBeenCalled();
+  });
+
+  it('answers not_found for an id it never listed, and sends nothing', async () => {
+    const w = await world();
+    expect(await w.handlers.updateFile('ZZ', { name: 'x.pdf' })).toMatchObject({ ok: false, error: 'not_found' });
+    expect(w.client.update).not.toHaveBeenCalled();
+  });
+
+  it('turns a server refusal into a Result error carrying its code', async () => {
+    const w = await world();
+    await w.addItem('I1', PDF, enc('contents'));
+    await w.handlers.listVault({});
+    w.client.update.mockRejectedValueOnce(new ApiError('encrypted', 'no', 409));
+    expect(await w.handlers.updateFile('I1', { name: 'x.pdf' })).toMatchObject({ ok: false, error: 'encrypted' });
+  });
+
+  it('returns no encMeta and no encKey to the renderer', async () => {
+    const w = await world();
+    await w.addItem('I1', PDF, enc('contents'));
+    await w.handlers.listVault({});
+    const res = await w.handlers.updateFile('I1', { name: 'x.pdf' });
+    const text = JSON.stringify(res);
+    expect(text).not.toContain(w.raw[0].encKey!);
+    expect(text).not.toContain(w.raw[0].encMeta!);
+    expect(text).not.toContain('"encMeta"');
+    expect(text).not.toContain('"encKey"');
+  });
+});
+
+describe('addLink into the Vault', () => {
+  it('uploads an encrypted link: metadata only the Vault key opens, size of an empty ciphertext, no thumbnail', async () => {
+    const w = await world();
+    const res = await w.handlers.addLink('https://example.com/trang?q=1', 'Trang chủ bí mật');
+    expect(res.ok).toBe(true);
+
+    expect(w.client.createUpload).toHaveBeenCalledTimes(1);
+    const req = w.created[0].req;
+    expect(req).toMatchObject({ name: '', mime: 'application/octet-stream', size: 32, hasThumb: false });
+    expect(Object.keys(req.vault!).sort()).toEqual(['encKey', 'encMeta']);
+    expect(await decryptMeta(req.vault!.encMeta, await w.masterKey())).toMatchObject({
+      kind: 'link',
+      url: 'https://example.com/trang?q=1',
+      title: 'Trang chủ bí mật',
+      name: 'Trang chủ bí mật',
+      mime: LINK_MIME,
+    });
+    expect(JSON.stringify(w.client.createUpload.mock.calls)).not.toContain('example.com');
+    expect(JSON.stringify(w.client.createUpload.mock.calls)).not.toContain('bí mật');
+  });
+
+  it('names a link without a title after its host', async () => {
+    const w = await world();
+    await w.handlers.addLink('https://www.example.com/a/b', undefined);
+    const meta = await decryptMeta(w.created[0].req.vault!.encMeta, await w.masterKey());
+    expect(meta).toMatchObject({ kind: 'link', url: 'https://www.example.com/a/b', name: 'www.example.com', mime: LINK_MIME });
+    expect(meta.title).toBeFalsy();
+  });
+
+  it('PUTs the encryption of 0 bytes (a 32-byte FUV1 body) that opens with the new file key, then completes', async () => {
+    const w = await world();
+    await w.handlers.addLink('https://example.com/', 'Ví dụ');
+    expect(w.puts.map((p) => p.url)).toEqual(['https://r2.test/put/vault/N1']);
+    const body = w.puts[0].body;
+    expect(body.length).toBe(32);
+    expect(dec(body.subarray(0, 4))).toBe('FUV1');
+    const dek = await w.session.fileKey({ encKey: w.created[0].req.vault!.encKey });
+    expect((await decryptBytes(body, dek)).length).toBe(0);
+    expect(w.events).toEqual(['createUpload', 'PUT https://r2.test/put/vault/N1', 'complete']);
+    expect(w.client.complete).toHaveBeenCalledWith('N1');
+  });
+
+  it('never uses the plain links route', async () => {
+    const w = await world();
+    await w.handlers.addLink('https://example.com/', 'Ví dụ');
+    expect(w.client.addLink).not.toHaveBeenCalled();
+    expect(w.events).not.toContain('addLink');
+  });
+
+  it('returns the decrypted link item, and claims it so it can be opened and renamed', async () => {
+    const w = await world();
+    const res = await w.handlers.addLink('https://example.com/trang', 'Trang chủ');
+    const item = (res as { ok: true; value: Shown }).value;
+    expect(item).toMatchObject({ id: 'N1', kind: 'link', url: 'https://example.com/trang', name: 'Trang chủ', mime: LINK_MIME });
+    expect(JSON.stringify(res)).not.toContain('"encMeta"');
+    expect(JSON.stringify(res)).not.toContain('"encKey"');
+    expect(w.handlers.owns('N1')).toBe(true);
+  });
+
+  it('answers vault_locked while the Vault is closed, and makes no call', async () => {
+    const w = await world();
+    w.handlers.vaultClose();
+    expect(await w.handlers.addLink('https://example.com/', 'x')).toMatchObject({ ok: false, error: 'vault_locked' });
+    expect(w.client.createUpload).not.toHaveBeenCalled();
+    expect(w.client.addLink).not.toHaveBeenCalled();
+    expect(w.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('answers locked while the app is locked, and makes no call', async () => {
+    const w = await world({ unlocked: false });
+    expect(await w.handlers.addLink('https://example.com/', 'x')).toMatchObject({ ok: false, error: 'locked' });
+    expect(w.client.createUpload).not.toHaveBeenCalled();
+  });
+
+  it('does not complete when the upload of the body fails, and reports the error', async () => {
+    const w = await world();
+    w.fetchImpl.mockResolvedValueOnce(new Response('boom', { status: 500 }));
+    const res = await w.handlers.addLink('https://example.com/', 'x');
+    expect(res.ok).toBe(false);
+    expect(w.client.complete).not.toHaveBeenCalled();
   });
 });

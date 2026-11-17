@@ -676,6 +676,125 @@ describe('VaultSession.decryptList', () => {
     const { session } = await setUp();
     expect(await session.decryptList([])).toEqual([]);
   });
+
+  // Task 9: one item that cannot be opened must not hide the rest of the Vault.
+  it('marks an item whose metadata is garbage as unreadable and still returns every other item decrypted', async () => {
+    const { session } = await setUp();
+    const { item: first } = await encryptedItem(session, fileMeta, { id: 'G1' });
+    const bad = item({ id: 'BAD', encMeta: 'bm90IGEgcmVhbCBlbmNNZXRh', thumbUrl: picture });
+    const { item: last } = await encryptedItem(session, { name: 'cuối.txt', mime: 'text/plain', kind: 'file' }, { id: 'G2' });
+
+    const result = await session.decryptList([first, bad, last]);
+    expect(result.map((i) => i.id)).toEqual(['G1', 'BAD', 'G2']);
+    expect(result[0]).toMatchObject({ name: fileMeta.name, mime: 'application/pdf' });
+    expect(result[2]).toMatchObject({ name: 'cuối.txt', mime: 'text/plain' });
+    expect(result[1]).toMatchObject({ id: 'BAD', name: '', unreadable: true });
+    expect(result[0]).not.toHaveProperty('unreadable');
+    expect(result[2]).not.toHaveProperty('unreadable');
+    expect('encMeta' in result[1]).toBe(false);
+    expect('encKey' in result[1]).toBe(false);
+  });
+
+  it('marks an item whose metadata is not even base64 as unreadable', async () => {
+    const { session } = await setUp();
+    const bad = item({ id: 'BAD', encMeta: '%%% not base64 %%%' });
+    const [shown] = await session.decryptList([bad]);
+    expect(shown).toMatchObject({ id: 'BAD', name: '', unreadable: true });
+  });
+
+  it('marks an item sealed under another master key as unreadable', async () => {
+    const mine = await setUp();
+    const theirs = await setUp('246810');
+    const { item: foreign } = await encryptedItem(theirs.session, fileMeta, { id: 'FOREIGN' });
+    const { item: own } = await encryptedItem(mine.session, fileMeta, { id: 'OWN' });
+    const result = await mine.session.decryptList([foreign, own]);
+    expect(result[0]).toMatchObject({ id: 'FOREIGN', name: '', unreadable: true });
+    expect(result[1]).toMatchObject({ id: 'OWN', name: fileMeta.name });
+  });
+
+  it('still refuses with vault_locked when closed, whatever the list holds', async () => {
+    const { session } = await setUp();
+    session.close();
+    await lockedError(session.decryptList([item({ encMeta: 'garbage' })]));
+  });
+});
+
+describe('VaultSession.reencryptMeta', () => {
+  const linkMeta: VaultMeta = { name: 'Trang chủ', title: 'Trang chủ', mime: 'text/uri-list', kind: 'link', url: 'https://example.com/cu' };
+
+  /** What the item shows once the server holds `encMeta`. */
+  async function shownWith(session: VaultSession, stored: FileItem, encMeta: string) {
+    return (await session.decryptList([{ ...stored, encMeta }]))[0];
+  }
+
+  it('returns new metadata that shows the new name and keeps the type and kind', async () => {
+    const { session } = await setUp();
+    const { item: stored, encMeta: before } = await encryptedItem(session, fileMeta);
+    const next = await session.reencryptMeta(stored, { name: 'Tên mới – bản sửa.pdf' });
+    expect(typeof next).toBe('string');
+    expect(next).not.toBe(before);
+    expect(await shownWith(session, stored, next)).toMatchObject({ name: 'Tên mới – bản sửa.pdf', mime: 'application/pdf', kind: 'file' });
+  });
+
+  it('changes the address of a link and keeps its title', async () => {
+    const { session } = await setUp();
+    const { item: stored } = await encryptedItem(session, linkMeta);
+    const next = await session.reencryptMeta(stored, { url: 'https://example.org/moi' });
+    expect(await shownWith(session, stored, next)).toMatchObject({ kind: 'link', url: 'https://example.org/moi', name: 'Trang chủ', mime: 'text/uri-list' });
+  });
+
+  it('renames a link so that its shown name (title) is the new one', async () => {
+    const { session } = await setUp();
+    const { item: stored } = await encryptedItem(session, linkMeta);
+    const next = await session.reencryptMeta(stored, { name: 'Tiêu đề mới' });
+    expect(await shownWith(session, stored, next)).toMatchObject({ kind: 'link', name: 'Tiêu đề mới', url: 'https://example.com/cu' });
+  });
+
+  it('applies the name and the address together', async () => {
+    const { session } = await setUp();
+    const { item: stored } = await encryptedItem(session, linkMeta);
+    const next = await session.reencryptMeta(stored, { name: 'Hai thứ', url: 'https://example.net/' });
+    expect(await shownWith(session, stored, next)).toMatchObject({ name: 'Hai thứ', url: 'https://example.net/' });
+  });
+
+  it('contains neither the old nor the new plain name in what it returns', async () => {
+    const { session } = await setUp();
+    const { item: stored } = await encryptedItem(session, fileMeta);
+    const next = await session.reencryptMeta(stored, { name: 'Bí mật mới.pdf' });
+    expect(next).not.toContain('mật');
+    expect(Buffer.from(next, 'base64').toString('utf8')).not.toContain('Bí mật');
+  });
+
+  it('opens with the master key of the Vault and with no other key', async () => {
+    const { session, server } = await setUp();
+    const { item: stored } = await encryptedItem(session, fileMeta);
+    const next = await session.reencryptMeta(stored, { name: 'x.pdf' });
+    const meta = await decryptMeta(next, await masterKeyFor(server, PIN));
+    expect(meta).toMatchObject({ name: 'x.pdf', mime: 'application/pdf', kind: 'file' });
+  });
+
+  it('does not touch the item it was given, and makes no server call', async () => {
+    const { session, server } = await setUp();
+    const { item: stored } = await encryptedItem(session, fileMeta);
+    const snapshot = JSON.stringify(stored);
+    const calls = server.calls.length;
+    await session.reencryptMeta(stored, { name: 'y.pdf' });
+    expect(JSON.stringify(stored)).toBe(snapshot);
+    expect(server.calls.length).toBe(calls);
+    expect(server.fileCalls).toEqual([]);
+  });
+
+  it('refuses with vault_locked while the Vault is closed', async () => {
+    const { session } = await setUp();
+    const { item: stored } = await encryptedItem(session, fileMeta);
+    session.close();
+    await lockedError(session.reencryptMeta(stored, { name: 'z.pdf' }));
+  });
+
+  it('rejects an item whose metadata cannot be opened', async () => {
+    const { session } = await setUp();
+    await expect(session.reencryptMeta(item({ encMeta: 'garbage' }), { name: 'z.pdf' })).rejects.toBeInstanceOf(Error);
+  });
 });
 
 type Key = Awaited<ReturnType<typeof crypto.subtle.generateKey>>;
