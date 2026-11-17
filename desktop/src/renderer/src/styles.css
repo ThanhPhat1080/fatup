@@ -1812,7 +1812,8 @@ h2 {
   font-weight: 500;
 }
 .lockstage .error {
-  margin-top: 98px;
+  /* The wooden board hangs below the scene frame (up to 112 px at full size); keep the line clear of it. */
+  margin-top: 116px;
 }
 .lockheist {
   position: relative;
@@ -2966,30 +2967,40 @@ body {
   min-width: 0;
 }
 @media (max-width: 720px) {
+  /* Row one: the logo and the buttons (up to six in the Vault). Row two: the search box and the storage figures. Each row has its own widths: the figures used to share row one and were squeezed under the buttons. */
   .topbar {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-areas: 'brand meter actions' 'search search search';
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     height: auto;
-    row-gap: 8px;
+    row-gap: 6px;
     column-gap: 8px;
     padding: calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
   }
+  /* An empty full-width item between the rows forces the wrap. */
+  .topbar::after {
+    content: '';
+    flex: 0 0 100%;
+    order: 3;
+    height: 0;
+  }
   .brand {
-    grid-area: brand;
+    order: 1;
+    flex: 1 1 0;
     min-width: 0;
   }
   .topbar > .storage {
-    grid-area: meter;
-    justify-self: start;
+    order: 5;
     min-width: 0;
   }
   .topbar__actions {
-    grid-area: actions;
+    order: 2;
     margin-left: 0;
   }
   .search {
-    grid-area: search;
+    order: 4;
+    flex: 1 1 0;
+    min-width: 0;
     max-width: none;
     height: 44px;
   }
@@ -4009,6 +4020,14 @@ body {
   margin: 0;
   line-height: 1.5;
   color: #c9ccd4;
+}
+/* The default outlined button is blue on white; on the dark card it needs light text and a visible outline. */
+.vault-card .btn--outlined {
+  color: #eaf1ff;
+  border-color: rgba(255, 255, 255, 0.5);
+}
+.vault-card .btn--outlined:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 .vault-card__action {
   align-self: center;
