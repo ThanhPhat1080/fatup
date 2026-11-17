@@ -161,6 +161,18 @@ Review độc lập tìm ra các lỗi sau; cách sửa dưới đây là một 
 - **Đóng két trong lúc đang mở (I3):** `VaultSession` có bộ đếm thế hệ; `close()` tăng nó, và các thao tác mở chỉ giữ khóa nếu thế hệ không đổi.
 - **Chuỗi lỗi (I4):** mọi mã lỗi mới có chuỗi `en`/`vi` riêng.
 
+### 4.7c Sửa sau review lần hai (2026-11-17)
+
+Presigned URL ghi lên R2 không thu hồi được và sống 15 phút, nên chỉ so ETag lúc `complete` (4.7b) không đủ: máy B vẫn ghi đè `vault/<id>` **sau khi** máy A đã `complete`, làm khóa trong D1 lệch với bản mã. Cách sửa là để **mỗi lúc chỉ một máy được xin URL ghi** cho một mục:
+
+- **Giữ chỗ (claim).** `vault/in` trên mục chưa mã hóa ghi `in_claim` (token ngẫu nhiên 16 byte, base64url) và `in_claim_until = now + 30 phút` bằng một câu `UPDATE ... WHERE id = ? AND (in_claim IS NULL OR in_claim_until <= now) RETURNING`. Không cập nhật được dòng nào (đã bị máy khác giữ) → 409 `item_busy`, không cấp URL. 30 phút > thời hạn 15 phút của URL nên URL của lượt giữ chỗ cũ đã hết hạn trước khi lượt mới bắt đầu. Response `VaultMoveUrls` thêm `claim`.
+- **`vault/in/complete`** (mục chưa mã hóa, không phải liên kết): nếu hàng có `in_claim` thì body phải gửi đúng `claim` và `in_claim_until > now`, nếu không → 409 `item_busy` và không đổi gì. Hàng không có `in_claim` (chưa từng qua `vault/in`) thì không bị ràng buộc. Complete thành công xóa `in_claim`/`in_claim_until`. 409 `item_changed` và `size_mismatch` cũng nhả chỗ để client thử lại ngay.
+- **Client:** mover gửi `claim` nhận được; `item_busy` → mục vào `failed` (không phải lỗi, lần mở két sau `migrateLegacy` làm lại).
+- **Hệ quả:** máy B không thể có URL ghi hợp lệ cùng lúc với máy A, và không PUT được sau khi A complete, vì URL của B chỉ được cấp khi A không giữ chỗ.
+- **Cột mới** `in_claim TEXT`, `in_claim_until INTEGER` trong `0009_vault_e2ee.sql` (chưa áp dụng ở đâu).
+- Nhỏ, làm chung đợt: (N3) cron nhả `out_started_at` bằng `UPDATE ... SET out_started_at = NULL WHERE encrypted = 1 AND out_started_at < ? RETURNING id` **trước** khi xóa object, và hai câu UPDATE chuyển hàng sang bản rõ của `vault/out/complete` thêm điều kiện `out_started_at IS NOT NULL` (hàng đã được cron nhả thì không chuyển nữa, trả 409 `item_changed`); (N5) `recover` lấy thế hệ trước khi chờ kiểm tra PIN app; (N7) truy vấn `IN (...)` của `purge`/cron dùng lô ≤ 100 id (giới hạn tham số của D1), lô xóa object R2 giữ ≤ 1000 key.
+- Không sửa lần này (ghi Nợ kỹ thuật): thumbnail không có ETag (N2), lệch thứ tự hai lần `prepareSetup` chồng nhau (N6, giao diện đã chặn), reset D1 local sau khi `0009` đổi (N8), `vault_exists` lặp ở màn khởi đầu (N10).
+
 ### 4.8 Giới hạn bảo mật còn lại
 
 - **Mở két trên máy bị soi** thì admin bắt được `S` và `wrapped_mk_pin`, sau đó thử 1 triệu PIN offline trong vài phút. Quy tắc: không mở két trên máy công ty (chưa có công tắc chặn, xem Nợ kỹ thuật).
