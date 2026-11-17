@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, ChevronRight, Copy, Download, MoreVertical, Pencil,
 import type { Item } from '../../../shared-ipc';
 import { cowsay, formatSize, formatTime, type DateGroup, type SortKey, type SortState } from '../lib/format';
 import { useI18n } from '../lib/i18n';
+import { isEncrypting } from '../lib/vault';
 import { CowThumb } from './CowThumb';
 import { FileIcon } from './FileIcon';
 import { SiteBadge, siteIcons } from './SiteBadge';
@@ -264,6 +265,11 @@ function KindIcon({ item, size }: { item: Item; size: number }) {
 type ItemProps = Pick<ViewProps, 'selected' | 'onToggle' | 'onOpen' | 'onMenu' | 'onEdit' | 'onShare' | 'onCopyLink' | 'onImportant' | 'onDownload'> & { item: Item };
 type RowProps = ItemProps & { siteColumn: boolean; actions: boolean; /** The list mixes links with files: non-link rows keep an empty slot where a link's copy button is, so every pencil lines up. */ copySlot?: boolean };
 
+/** A Vault item still being encrypted gets a badge; an unreadable one shows a note in place of its name. */
+function vaultLabel(item: Item, t: { vaultUnreadable: string }): string {
+  return item.unreadable ? t.vaultUnreadable : item.name;
+}
+
 function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, onDownload }: ItemProps) {
   const { t } = useI18n();
   const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
@@ -282,9 +288,10 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCop
         <ImportantButton on={!!item.important} onToggle={onImportant && (() => onImportant(item))} />
         <KindIcon item={item} size={18} />
         <span className="tile__name" title={item.name}>
-          {item.name}
+          {vaultLabel(item, t)}
         </span>
         <TagDots tags={item.tags} />
+        {isEncrypting(item) && <span className="vault-badge">{t.vaultEncrypting}</span>}
         {item.shared && onShare && (
           // Always visible (it is a state), floating over the end of the name like the pencil does; it slides left when the pencil appears.
           <span className="tile__shared">
@@ -322,6 +329,7 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCop
 }
 
 function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, siteColumn, actions, copySlot }: RowProps) {
+  const { t } = useI18n();
   const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
   return (
     <div className={`list__row${selected.has(item.id) ? ' list__row--selected' : ''}`} role="row" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen(item)} {...press}>
@@ -339,9 +347,10 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopy
       <span className="list__name" role="cell">
         {!siteColumn && <MiniThumb item={item} />}
         <span className="ellipsis" title={item.url ?? item.name}>
-          {item.name}
+          {vaultLabel(item, t)}
         </span>
         <TagDots tags={item.tags} />
+        {isEncrypting(item) && <span className="vault-badge">{t.vaultEncrypting}</span>}
       </span>
       {actions && (
         // The pencil (and copy for links) get their own right-aligned column so they line up on every row, links or files;

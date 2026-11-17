@@ -4,6 +4,7 @@ import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shar
 import { DEFAULT_QUOTA_BYTES, isShareable, type TagColor } from '@fatup/shared';
 import { DEFAULT_SORT, groupByDay, groupByDomain, inTab, matchesLink, matchesQuery, matchesSite, matchesTags, singleGroup, siteCounts, sortItems, type SiteFilter, type SortKey, type SortState } from '../lib/format';
 import { errorText, useI18n } from '../lib/i18n';
+import { canMoveOut, undoVaultDelete } from '../lib/vault';
 import { AddLinkDialog } from './AddLinkDialog';
 import { ConfirmDialog } from './Dialog';
 import { EmptyState, FileGrid, FileList } from './Files';
@@ -18,6 +19,8 @@ import { ContextMenu, type MenuState } from './Menu';
 import { Settings } from './Settings';
 import { ShareDialog, ShareListDialog, SharePopover } from './ShareForm';
 import { VaultIcon } from './VaultIcon';
+import { VaultTrash } from './VaultTrash';
+import { VaultTrashIcon } from './VaultTrashIcon';
 import { TrashIcon } from './TrashIcon';
 import { InfoPopover } from './InfoPopover';
 import { VaultGate } from './VaultGate';
@@ -70,6 +73,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const [vaultUnlocked, setVaultUnlocked] = useState(false);
   const [vaultItems, setVaultItems] = useState<Item[] | null>(null);
   const [vaultFlow, setVaultFlow] = useState<'setup' | 'recover' | null>(null); // the Vault's setup or recovery screen, over the list
+  const [vaultTrashOpen, setVaultTrashOpen] = useState(false); // the trash of the open Vault: a sidebar, or a full-screen page on phones
+  /** True while this window moves files in or out of the Vault, so their progress shows as a toast (not the conversion's). */
+  const movingRef = useRef(false);
   const [shiver, setShiver] = useState(0);
   const [trashKick, setTrashKick] = useState(0); // bumped when the trash opens, to replay its lid animation
   const [trashInfoOpen, setTrashInfoOpen] = useState(false);
@@ -149,6 +155,15 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [refresh]);
+
+  // Moves into or out of the Vault report progress while they run; the toast shows it. Conversion events are for the setup screen.
+  useEffect(
+    () =>
+      window.fatup.onVaultProgress((p) => {
+        if (movingRef.current && p.current !== undefined) toast(t.vaultMoving({ done: p.done, total: p.total }));
+      }),
+    [toast, t],
+  );
 
   // In the trash the "time" shown and sorted on is when a file was deleted, so we feed it through createdAt.
   const source = useMemo(
@@ -235,6 +250,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     setInVault(false);
     setVaultUnlocked(false);
     setVaultItems(null);
+    setVaultTrashOpen(false);
   }, []);
   useEffect(() => () => void window.fatup.vaultClose(), []);
 
@@ -294,7 +310,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   };
 
   /** Runs `fn` over the targets four at a time; returns the ids that succeeded. "Already gone" counts as success. */
-  async function batch(targets: Item[], fn: (id: string) => Promise<{ ok: boolean; error?: string }>, limit = 4) {
+  async function batch(targets: { id: string }[], fn: (id: string) => Promise<{ ok: boolean; error?: string }>, limit = 4) {
     const done = new Set<string>();
     let locked = false;
     let cursor = 0;
@@ -311,21 +327,12 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     return { done, failed: targets.length - done.size, locked };
   }
 
-  /** One item into or out of the Vault; a move the main process reports as failed (`failed` non-empty) counts as an error. */
-  const moveVault = async (id: string, into: boolean): Promise<{ ok: boolean; error?: string }> => {
-    const res = await (into ? window.fatup.vaultMoveIn([id]) : window.fatup.vaultMoveOut([id]));
-    if (!res.ok) return res;
-    return res.value.failed.length > 0 ? { ok: false, error: 'move_failed' } : { ok: true };
-  };
-
   const report = (ok: number, failed: number, success: string, action?: { label: string; onClick: () => void }) =>
     failed === 0 ? toast(success, false, action) : toast(t.partialFail(ok, failed), true);
 
-  async function restoreMany(targets: Item[], backToVault = false) {
+  async function restoreMany(targets: { id: string }[]) {
     const { done, failed, locked } = await batch(targets, (id) => window.fatup.restore(id));
     if (locked) return;
-    // Deleting takes a file out of the Vault, so an "Undo" has to put it back.
-    if (backToVault) await batch(targets.filter((it) => done.has(it.id)), (id) => moveVault(id, true));
     setTrashItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
     clearSelection();
     report(done.size, failed, t.restored(done.size));
@@ -349,9 +356,27 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     const endedShare = moved.some((it) => it.shared);
     report(done.size, failed, endedShare ? `${t.movedToTrash(done.size)}. ${t.shareLinkEnded}` : t.movedToTrash(done.size), {
       label: t.undo,
-      onClick: () => void restoreMany(moved, fromVault),
+      // Undo of a delete inside the Vault is a plain restore from the Vault's trash: the file never left the Vault.
+      onClick: () => void restoreMany(fromVault ? undoVaultDelete(moved.map((it) => it.id)) : moved),
     });
     refresh();
+  }
+
+  /** Moves files into or out of the Vault in one call (the main process reports each file's progress). Null when nothing was asked, or the call was refused. */
+  async function moveBetween(targets: Item[], into: boolean): Promise<{ done: Set<string>; failed: number } | null> {
+    if (targets.length === 0) return null;
+    const ids = targets.map((it) => it.id);
+    movingRef.current = true;
+    const res = await (into ? window.fatup.vaultMoveIn(ids) : window.fatup.vaultMoveOut(ids)).finally(() => {
+      movingRef.current = false;
+    });
+    if (!res.ok) {
+      if (res.error === 'locked') onLocked();
+      else toast(errorText(t, res.error), true);
+      return null;
+    }
+    const failed = new Set(res.value.failed);
+    return { done: new Set(ids.filter((id) => !failed.has(id))), failed: failed.size };
   }
 
   async function moveToVault(targets: Item[]) {
@@ -359,8 +384,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     setLightboxId(null);
     setLinkPreviewId(null);
     setPdfId(null);
-    const { done, failed, locked } = await batch(targets, (id) => moveVault(id, true));
-    if (locked) return;
+    const moved = await moveBetween(targets, true);
+    if (!moved) return;
+    const { done, failed } = moved;
     setItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
     clearSelection();
     const endedShare = targets.some((it) => it.shared && done.has(it.id));
@@ -369,15 +395,19 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   }
 
   async function removeFromVault(targets: Item[]) {
-    if (targets.length === 0) return;
+    // A file still being converted, or unreadable, stays where it is.
+    const outable = targets.filter(canMoveOut);
+    if (outable.length === 0) return;
     setLightboxId(null);
     setLinkPreviewId(null);
     setPdfId(null);
-    const { done, failed, locked } = await batch(targets, (id) => moveVault(id, false));
-    if (locked) return;
+    const moved = await moveBetween(outable, false);
+    if (!moved) return;
+    const { done, failed } = moved;
     setVaultItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
     clearSelection();
-    report(done.size, failed, t.removedFromVault(done.size));
+    if (failed > 0) toast(t.movedOutOfVaultFailed({ n: failed }), true);
+    else toast(t.removedFromVault(done.size));
     refresh();
   }
 
@@ -469,6 +499,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const inFlight = useRef(new Set<string>());
 
   async function download(item: Item) {
+    if (item.unreadable) return toast(t.vaultUnreadable, true);
     // A double-click fires two clicks; never start the same download twice.
     if (inFlight.current.has(item.id)) return;
     inFlight.current.add(item.id);
@@ -659,7 +690,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName) && (e.target as HTMLInputElement).type !== 'checkbox';
-      const overlay = lightboxId || linkPreviewId || pdfId || settingsOpen || menu || confirm || vaultFlow || (inVault && !vaultUnlocked);
+      const overlay = lightboxId || linkPreviewId || pdfId || settingsOpen || menu || confirm || vaultFlow || vaultTrashOpen || (inVault && !vaultUnlocked);
       if (typing || overlay) return;
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
         e.preventDefault();
@@ -673,12 +704,13 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lightboxId, linkPreviewId, pdfId, settingsOpen, menu, confirm, picked, inTrash, inVault, vaultUnlocked, vaultFlow, selectAll, clearSelection]);
+  }, [lightboxId, linkPreviewId, pdfId, settingsOpen, menu, confirm, picked, inTrash, inVault, vaultUnlocked, vaultFlow, vaultTrashOpen, selectAll, clearSelection]);
 
   // Trashed files can't be opened; restore them first.
   // Links open in the in-app preview; Ctrl/⌘ + click, or a site the person chose to always open directly, goes straight outside.
   const open = (item: Item, outside = false) => {
     if (inTrash) return;
+    if (item.unreadable) return toast(t.vaultUnreadable, true);
     if (item.kind === 'link') {
       if (outside || opensDirect(item.url)) void window.fatup.openExternal(item.url ?? '');
       else setLinkPreviewId(item.id);
@@ -720,6 +752,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       <>
         <VaultIcon size={22} />
         {t.vault}
+        <span className="vault-label">{t.vaultEncryptedBadge}</span>
         {tab !== 'all' && <span className="view-title__sub">· {tabLabel}</span>}
         {filterTags}
       </>
@@ -751,7 +784,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   ];
 
   return (
-    <div className="app">
+    <div className={`app${inVault ? ' vault-mode' : ''}`}>
       <header className="topbar">
         <button className="brand" onClick={goHome} title={t.goHome} aria-label={`${t.appName} – ${t.goHome}`}>
           <Logo />
@@ -783,6 +816,11 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           <button key={shiver} className={`icon-btn${inVault ? ' is-active' : ''}${shiver > 0 ? ' vault-btn--shiver' : ''}`} onClick={toggleVault} title={inVault ? t.closeVault : t.vault} aria-label={inVault ? t.closeVault : t.vault} aria-pressed={inVault}>
             <VaultIcon size={26} />
           </button>
+          {inVault && vaultUnlocked && (
+            <button className={`icon-btn vault-trash-btn${vaultTrashOpen ? ' is-active' : ''}`} onClick={() => setVaultTrashOpen((v) => !v)} title={t.vaultTrashOpen} aria-label={t.vaultTrashOpen} aria-pressed={vaultTrashOpen}>
+              <VaultTrashIcon size={22} />
+            </button>
+          )}
           <button key={`trash${trashKick}`} className={`icon-btn${inTrash ? ' is-active trash-btn--active' : ''}${trashKick > 0 && inTrash ? ' trash-btn--open' : ''}`} onClick={toggleTrash} title={inTrash ? t.backToFiles : t.trash} aria-label={inTrash ? t.backToFiles : t.trash} aria-pressed={inTrash}>
             <TrashIcon size={20} />
           </button>
@@ -824,9 +862,11 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               </>
             ) : (
               <>
-                <button className="btn btn--text" onClick={() => void (vaultActive ? removeFromVault(picked) : moveToVault(picked))}>
-                  <VaultIcon size={18} /> {vaultActive ? t.removeFromVault : t.moveToVault}
-                </button>
+                {(!vaultActive || picked.some(canMoveOut)) && (
+                  <button className="btn btn--text" onClick={() => void (vaultActive ? removeFromVault(picked) : moveToVault(picked))}>
+                    <VaultIcon size={18} /> {vaultActive ? t.removeFromVault : t.moveToVault}
+                  </button>
+                )}
                 {picked.some(isShareable) && (
                   <button className="btn btn--text" onClick={() => void shareMany(picked)}>
                     <Share2 size={18} /> {t.sharePicked}
@@ -996,6 +1036,10 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           </>
         )}
       </main>
+
+      {vaultTrashOpen && inVault && vaultUnlocked && (
+        <VaultTrash onClose={() => setVaultTrashOpen(false)} onChanged={refresh} onLocked={onLocked} />
+      )}
 
       {menu && (
         <ContextMenu

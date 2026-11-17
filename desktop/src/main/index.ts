@@ -20,7 +20,7 @@ import { FilePreviewStore, PREVIEW_SCHEME } from './previews';
 import { UploadManager } from './uploader';
 import { VaultSession } from '../vault-session';
 import { VAULT_SCHEME, createVaultHandlers, type VaultHandlers } from './vault-ipc';
-import { createVaultMover, type MoveProgress, type VaultMover } from './vault-mover';
+import { createVaultMover, toVaultProgress, type MoveProgress, type VaultMover } from './vault-mover';
 import { fetchLatestRelease, isNewer, type ReleaseInfo } from './updater';
 
 if (process.env.FATUP_USER_DATA) app.setPath('userData', process.env.FATUP_USER_DATA);
@@ -138,9 +138,7 @@ async function fetchBytes(url: string): Promise<Buffer> {
 
 /** Tells the renderer how far a batch of moves or the conversion of old Vault files is. `rows` names the item in progress when it is known. */
 function sendVaultProgress(p: MoveProgress, rows: FileItem[]) {
-  const name = rows.find((r) => r.id === p.current)?.name;
-  const progress: VaultProgress = { done: p.done, total: p.total, current: name };
-  mainWindow?.webContents.send('vaultProgress', progress);
+  mainWindow?.webContents.send('vaultProgress', toVaultProgress(p, rows));
 }
 
 /** After a call that opens the Vault (setup, unlock, recovery): convert the old files, without making the caller wait for it. */

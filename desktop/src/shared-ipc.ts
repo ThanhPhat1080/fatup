@@ -58,7 +58,7 @@ export type VaultRecoverResult = { ok: true } | { ok: false; error: string };
 /** Answer of `vaultMoveIn` / `vaultMoveOut`: how many items moved and the ids that did not. */
 export type VaultMoveResult = { done: number; failed: string[] };
 
-/** Progress of a batch of moves or of the conversion of old files (`current` is the real name of the item in progress). */
+/** Progress of a batch of moves or of the conversion of old files. `current` is the real name of the item in progress; the final event of a conversion run has none. */
 export type VaultProgress = { done: number; total: number; current?: string };
 
 export type UpdateCheck =

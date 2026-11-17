@@ -17,6 +17,9 @@
   --on-primary-container: #001d35;
   --danger: #b3261e;
   --on-danger: #ffffff;
+  --vault: #8a6424;
+  --on-vault: #ffffff;
+  --vault-tint: #fbf6ea;
   --success: #146c2e;
   --toast-bg: #313131;
   --toast-text: #f2f2f2;
@@ -58,6 +61,9 @@
     --on-primary-container: #c2e7ff;
     --danger: #f2b8b5;
     --on-danger: #601410;
+    --vault: #d4a95f;
+    --on-vault: #2b1f08;
+    --vault-tint: #241e13;
     --success: #6dd58c;
     --toast-bg: #e3e3e3;
     --toast-text: #1f1f1f;
@@ -93,6 +99,9 @@
   --on-primary-container: #c2e7ff;
   --danger: #f2b8b5;
   --on-danger: #601410;
+  --vault: #d4a95f;
+  --on-vault: #2b1f08;
+  --vault-tint: #241e13;
   --success: #6dd58c;
   --toast-bg: #e3e3e3;
   --toast-text: #1f1f1f;
@@ -4045,4 +4054,148 @@ body {
   height: 100%;
   background: #a8c7fa;
   transition: width 0.2s;
+}
+
+/* ---------- Vault mode and the Vault trash ---------- */
+.vault-mode .topbar {
+  border-top: 3px solid var(--vault);
+}
+.vault-mode .panel {
+  background: var(--vault-tint);
+}
+.vault-label {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 11px;
+  background: var(--vault);
+  color: var(--on-vault);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.vault-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
+  margin-left: 6px;
+  border: 1px solid var(--vault);
+  border-radius: 10px;
+  color: var(--vault);
+  font-size: 11px;
+  white-space: nowrap;
+  flex: none;
+}
+.vault-trash-btn {
+  color: var(--vault);
+}
+.vault-trash-btn.is-active {
+  background: var(--hover);
+}
+
+/* The dimmed backdrop behind the sidebar: a click outside closes it. Hidden on phones, where the trash is a full page. */
+.vault-trash-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 19;
+  background: var(--scrim);
+}
+@media (max-width: 720px) {
+  .vault-trash-scrim {
+    display: none;
+  }
+}
+/* Above 720 px: a sidebar 70% wide. At 720 px and below: a full-screen page (the rule inside the media query). */
+.vault-trash {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: 70%;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+@media (max-width: 720px) {
+  .vault-trash {
+    inset: 0;
+    width: 100%;
+  }
+}
+.vault-trash__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  min-height: 64px;
+  padding: 10px 16px;
+  background: var(--vault);
+  color: var(--on-vault);
+  border-left: 4px solid var(--danger);
+}
+.vault-trash__head .icon-btn {
+  color: var(--on-vault);
+}
+.vault-trash__titles {
+  flex: 1;
+  min-width: 0;
+}
+.vault-trash__titles h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.vault-trash__titles p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.vault-trash__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  min-height: 44px;
+  padding: 0 16px;
+}
+.vault-trash__list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 8px 16px;
+  background: var(--vault-tint);
+}
+.vault-trash__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.vault-trash__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.vault-trash__name {
+  font-weight: 500;
+}
+.vault-trash__empty {
+  padding: 24px 8px;
+  text-align: center;
+}
+.vault-trash .btn {
+  min-height: 40px;
+}
+@media (max-width: 720px) {
+  .vault-trash .btn {
+    min-height: 44px;
+  }
 }

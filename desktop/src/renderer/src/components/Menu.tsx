@@ -4,6 +4,7 @@ import { isShareable } from '@fatup/shared';
 import type { Item } from '../../../shared-ipc';
 import { useI18n } from '../lib/i18n';
 import { VaultIcon } from './VaultIcon';
+import { canMoveOut } from '../lib/vault';
 
 export type MenuState = { item: Item; x: number; y: number };
 
@@ -102,7 +103,7 @@ export function ContextMenu({ state, onClose, onDownload, onCopy, onDelete, onVa
                 <Share2 size={18} /> {state.item.shared ? t.manageShare : t.share}
               </button>
             )}
-            {onVault && (
+            {onVault && (!inVault || canMoveOut(state.item)) && (
               <button role="menuitem" onClick={act(onVault)}>
                 <VaultIcon size={18} /> {inVault ? t.removeFromVault : t.moveToVault}
               </button>

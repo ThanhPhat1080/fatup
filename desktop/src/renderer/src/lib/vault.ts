@@ -2,7 +2,7 @@
  * Pure decision logic of the Vault UI: the setup wizard, the 6-digit gate, recovery and PIN change.
  * No React, no DOM: components call these and only render the result, so the logic is unit-tested (test/vault-ui.test.ts).
  */
-import type { VaultPinRefusal, VaultUnlockResult } from '../../../shared-ipc';
+import type { Item, VaultPinRefusal, VaultUnlockResult } from '../../../shared-ipc';
 
 export const VAULT_PIN_LENGTH = 6;
 
@@ -188,4 +188,31 @@ export function changePinFailure(result: Extract<VaultUnlockResult, { ok: false 
   if (!('reason' in result)) return { stage: 'new', message: { key: vaultErrorKey(result.error) } };
   if (result.reason === 'wiped' || result.reason === 'not_ready') return { stage: 'closed', message: gateMessage(result, now) };
   return { stage: 'old', message: gateMessage(result, now) };
+}
+
+/** A file in the Vault whose content is not encrypted yet (put there before the Vault was encrypted): shown with the encrypting badge. */
+export function isEncrypting(item: Item): boolean {
+  return item.inVault && !item.encrypted;
+}
+
+/** Whether a Vault item may leave the Vault: it must be readable, and encrypted (not still being converted). */
+export function canMoveOut(item: Item): boolean {
+  return !item.unreadable && !isEncrypting(item);
+}
+
+/** The Vault's trash: only deleted items, most recently deleted first; ties by id, descending. Returns a new array. */
+export function vaultTrashSort(items: Item[]): Item[] {
+  return items
+    .filter((it) => it.deletedAt !== null)
+    .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+}
+
+/** The Vault trash is a sidebar above 720 px and a full-screen overlay at 720 px and below. */
+export function vaultTrashLayout(viewportWidth: number): 'sidebar' | 'overlay' {
+  return viewportWidth > 720 ? 'sidebar' : 'overlay';
+}
+
+/** Undoing a delete inside the Vault: one restore per id, in order. The item stays in the Vault, so there is never a move. */
+export function undoVaultDelete(ids: string[]): { op: 'restore'; id: string }[] {
+  return ids.map((id) => ({ op: 'restore' as const, id }));
 }

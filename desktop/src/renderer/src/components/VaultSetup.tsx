@@ -6,9 +6,6 @@ import { nextSetupState, vaultErrorText, VAULT_PIN_LENGTH, type SetupState } fro
 import { PinInput } from './PinInput';
 import { VaultFrame } from './VaultFrame';
 
-/** If the main process reports no migration progress this long after the migrating step starts, there were no old files to convert. */
-const NO_MIGRATION_GRACE_MS = 2000;
-
 type Props = { onDone: () => void; onBack: () => void };
 
 /** First-time setup of the Vault: PIN, recovery key, confirmation, then the conversion of old files. The recovery key lives only in this state. */
@@ -25,15 +22,11 @@ export function VaultSetup({ onDone, onBack }: Props) {
   // The main process converts old files as soon as the Vault opens, which can be during the recovery screen; listen from the start.
   useEffect(() => window.fatup.onVaultProgress(setProgress), []);
 
+  // Every conversion run ends with a progress event that has no `current`, also when there was nothing to convert: that is the done signal.
   useEffect(() => {
-    if (state.step !== 'migrating') return;
-    const finish = () => setState((s) => nextSetupState(s, { type: 'migrationDone' }));
-    if (progress) {
-      if (progress.done >= progress.total) finish();
-      return;
+    if (state.step === 'migrating' && progress && progress.current === undefined) {
+      setState((s) => nextSetupState(s, { type: 'migrationDone' }));
     }
-    const timer = setTimeout(finish, NO_MIGRATION_GRACE_MS);
-    return () => clearTimeout(timer);
   }, [state.step, progress]);
 
   function onPin(pin: string) {

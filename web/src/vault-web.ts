@@ -7,7 +7,7 @@
 import type { FileItem } from '@fatup/shared';
 import type { Result, VaultMoveResult, VaultProgress } from '../../desktop/src/shared-ipc';
 import { ApiError, type ApiClient } from '../../desktop/src/main/api';
-import { createVaultMover, type MoveProgress } from '../../desktop/src/main/vault-mover';
+import { createVaultMover, toVaultProgress, type MoveProgress } from '../../desktop/src/main/vault-mover';
 import { createVaultCore, type VaultViews } from '../../desktop/src/vault-handlers';
 import { VaultSession, type VaultClient } from '../../desktop/src/vault-session';
 
@@ -103,7 +103,7 @@ export function createWebVault(deps: WebVaultDeps) {
 
   /** Tells the page how far a batch of moves or the conversion of old Vault files is. `rows` names the item in progress when it is known. */
   const sendProgress = (p: MoveProgress, rows: FileItem[]) => {
-    const progress: VaultProgress = { done: p.done, total: p.total, current: rows.find((r) => r.id === p.current)?.name };
+    const progress = toVaultProgress(p, rows);
     for (const cb of [...progressListeners]) cb(progress);
   };
 

@@ -4,6 +4,7 @@
 // The Worker only ever sees ciphertext and opaque ids: the real name, type and address travel inside `encMeta`.
 // Interrupted runs are safe to repeat: PUT overwrites the target object and the Worker's complete calls are idempotent.
 import { LINK_MIME, decryptBytes, encryptBytes, type FileItem, type VaultMeta } from '@fatup/shared';
+import type { VaultProgress } from '../shared-ipc';
 import type { VaultSession } from '../vault-session';
 import { ApiError, type ApiClient } from './api';
 
@@ -15,12 +16,24 @@ export type VaultMoverDeps = {
   fetchImpl?: typeof fetch;
 };
 
-/** `current` is the id of the item just handled; `done` counts the items handled so far, failed ones included. */
-export type MoveProgress = { done: number; total: number; current: string };
+/**
+ * `current` is the id of the item just handled; `done` counts the items handled so far, failed ones included.
+ * The last event of a `startMigration` run has no `current`: it says the run is over (`{ done: 0, total: 0 }` when nothing ran).
+ */
+export type MoveProgress = { done: number; total: number; current?: string };
 export type MoveResult = { done: string[]; failed: string[] };
 export type ProgressCallback = (p: MoveProgress) => void;
 
 const TRANSFER_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * The event the renderer gets for a progress call. `current` (the real name of the item) is set only when the call names an item,
+ * so the final event of a run stays without it. `rows` are the items the call handled; an unknown id shows as an empty name.
+ */
+export function toVaultProgress(p: MoveProgress, rows: { id: string; name: string }[]): VaultProgress {
+  if (p.current === undefined) return { done: p.done, total: p.total };
+  return { done: p.done, total: p.total, current: rows.find((r) => r.id === p.current)?.name ?? '' };
+}
 
 export function createVaultMover(deps: VaultMoverDeps) {
   const { session } = deps;
@@ -151,12 +164,25 @@ export function createVaultMover(deps: VaultMoverDeps) {
       return each(legacy, moveInOne, onProgress);
     },
 
-    /** Runs `migrateLegacy` in the background, once at a time, and only while the Vault is open. Errors are swallowed: the next unlock tries again. */
+    /**
+     * Runs `migrateLegacy` in the background, once at a time, and only while the Vault is open. Every run ends with one progress
+     * event without `current` (`{ done, total }`), also when nothing ran, the Vault is closed or listing fails, so callers never wait
+     * for an event that does not come. Errors are not thrown: the next unlock tries again.
+     */
     startMigration(onProgress?: ProgressCallback): void {
-      if (migration || !session.isOpen()) return;
+      if (migration) return;
+      if (!session.isOpen()) {
+        onProgress?.({ done: 0, total: 0 });
+        return;
+      }
       migration = mover.migrateLegacy(onProgress)
-        .then(() => undefined)
-        .catch(() => undefined)
+        .then(
+          (res) => {
+            const n = res.done.length + res.failed.length;
+            onProgress?.({ done: n, total: n });
+          },
+          () => onProgress?.({ done: 0, total: 0 }),
+        )
         .finally(() => {
           migration = null;
         });
