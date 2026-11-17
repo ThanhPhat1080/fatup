@@ -570,3 +570,58 @@ describe('migrateLegacy: encrypting what was put in the Vault before it was encr
     expect(seen.map((p) => p.current).sort()).toEqual(['A', 'B', 'C']);
   });
 });
+
+describe('startMigration: the background run always ends with a final progress event', () => {
+  // startMigration runs in the background and returns at once, so each test waits for the event it looks for.
+  // Every case here uses only fake Worker calls and an in-memory R2, so the wait is for promises, not for real time.
+
+  it('emits { done: 0, total: 0 } as its only event when there is nothing to migrate', async () => {
+    const w = await world();
+    w.listed.live = [];
+    w.listed.trash = [];
+    const onProgress = vi.fn();
+    w.mover.startMigration(onProgress);
+    await vi.waitFor(() => expect(onProgress).toHaveBeenCalledTimes(1));
+    expect(onProgress).toHaveBeenLastCalledWith({ done: 0, total: 0 });
+    expect(w.client.moveIn).not.toHaveBeenCalled();
+  });
+
+  it('ends with the event { done: total, total } after the per-item events', async () => {
+    const w = await world();
+    w.listed.live = [w.legacy('A'), w.legacy('B')];
+    w.listed.trash = [w.legacy('C', { deletedAt: 1_700_000_100_000 })];
+    const onProgress = vi.fn();
+    w.mover.startMigration(onProgress);
+    await vi.waitFor(() => expect(onProgress.mock.lastCall?.[0]).toEqual({ done: 3, total: 3 }));
+    expect(onProgress.mock.calls.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('still ends with { done: total, total } when one of the items fails', async () => {
+    const w = await world();
+    w.listed.live = [w.legacy('A'), w.legacy('B')];
+    w.failGet.add(addr.plain('A'));
+    const onProgress = vi.fn();
+    w.mover.startMigration(onProgress);
+    await vi.waitFor(() => expect(onProgress.mock.lastCall?.[0]).toEqual({ done: 2, total: 2 }));
+  });
+
+  it('still ends with { done: 0, total: 0 } when the Vault is closed, so nobody waits for an event that never comes', async () => {
+    const w = await world();
+    w.listed.live = [w.legacy('A')];
+    w.session.close();
+    const onProgress = vi.fn();
+    w.mover.startMigration(onProgress);
+    await vi.waitFor(() => expect(onProgress).toHaveBeenCalledTimes(1));
+    expect(onProgress).toHaveBeenLastCalledWith({ done: 0, total: 0 });
+    expect(w.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('still ends with { done: 0, total: 0 } when listing the Vault fails', async () => {
+    const w = await world();
+    w.client.listEverything.mockRejectedValueOnce(new ApiError('network', 'down'));
+    const onProgress = vi.fn();
+    w.mover.startMigration(onProgress);
+    await vi.waitFor(() => expect(onProgress).toHaveBeenCalledTimes(1));
+    expect(onProgress).toHaveBeenLastCalledWith({ done: 0, total: 0 });
+  });
+});

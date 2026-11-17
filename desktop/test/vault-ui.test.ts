@@ -16,8 +16,15 @@
  * 5. vaultLockSecondsLeft(lockedUntil: number, now: number): number   (never negative)
  * 6. i18n: every key used above and every setup/recovery/change-PIN string exists in
  *    `dictionaries.en` and `dictionaries.vi`, non-empty; functions work in both languages.
+ * 7. isEncrypting(item): boolean. True for `inVault && !encrypted` (legacy Vault item still shown with the encrypting badge).
+ * 8. vaultTrashSort(items): items with `deletedAt` set, newest deletion first, ties by id descending.
+ * 9. vaultTrashLayout(viewportWidth: number): 'sidebar' | 'overlay'. 'sidebar' above 720 px, 'overlay' at 720 and below.
+ * 10. undoVaultDelete(ids: string[]): { op: 'restore'; id: string }[]. One restore per id; no move call.
+ * 11. canMoveOut(item): boolean. False for an unreadable item and for an item still encrypting; true for other Vault items.
+ * 12. i18n for the Vault mode and Vault trash (en + vi, see the last describe block).
  */
 import { describe, expect, it } from 'vitest';
+import type { Item } from '../src/shared-ipc';
 import { dictionaries } from '../src/renderer/src/lib/i18n';
 
 const lib = () => import('../src/renderer/src/lib/vault');
@@ -319,6 +326,186 @@ describe('vault UI strings', () => {
       expect(typeof short).toBe('string');
       expect(short.trim().length).toBeGreaterThan(0);
       expect(short).not.toBe(long);
+    }
+  });
+});
+
+/** An item with only the fields the Vault rules look at; the rest of `Item` is irrelevant here. */
+const row = (over: Record<string, unknown>) => ({ id: 'X', inVault: false, encrypted: false, deletedAt: null, unreadable: false, ...over }) as unknown as Item;
+
+describe('isEncrypting: legacy Vault items still shown in plain text', () => {
+  it('is true for a Vault item that is not encrypted yet', async () => {
+    const { isEncrypting } = await lib();
+    expect(isEncrypting(row({ inVault: true, encrypted: false }))).toBe(true);
+  });
+
+  it('is false for a Vault item that is already encrypted', async () => {
+    const { isEncrypting } = await lib();
+    expect(isEncrypting(row({ inVault: true, encrypted: true }))).toBe(false);
+  });
+
+  it('is false for an item outside the Vault, whether or not it is marked encrypted', async () => {
+    const { isEncrypting } = await lib();
+    expect(isEncrypting(row({ inVault: false, encrypted: false }))).toBe(false);
+    expect(isEncrypting(row({ inVault: false, encrypted: true }))).toBe(false);
+  });
+});
+
+describe('vaultTrashSort: the Vault trash list', () => {
+  it('keeps only trashed items, most recently deleted first', async () => {
+    const { vaultTrashSort } = await lib();
+    const items = [
+      row({ id: 'a', deletedAt: 100 }),
+      row({ id: 'b', deletedAt: null }),
+      row({ id: 'c', deletedAt: 300 }),
+      row({ id: 'd', deletedAt: 200 }),
+    ];
+    expect(vaultTrashSort(items).map((i: Item) => i.id)).toEqual(['c', 'd', 'a']);
+  });
+
+  it('breaks ties on the same deletion time by id, descending', async () => {
+    const { vaultTrashSort } = await lib();
+    const items = [row({ id: 'm', deletedAt: 100 }), row({ id: 'a', deletedAt: 100 }), row({ id: 'z', deletedAt: 100 })];
+    expect(vaultTrashSort(items).map((i: Item) => i.id)).toEqual(['z', 'm', 'a']);
+  });
+
+  it('gives an empty list when nothing in the Vault is in the trash', async () => {
+    const { vaultTrashSort } = await lib();
+    expect(vaultTrashSort([])).toEqual([]);
+    expect(vaultTrashSort([row({ id: 'live', deletedAt: null })])).toEqual([]);
+  });
+
+  it('does not change the order of the list it was given', async () => {
+    const { vaultTrashSort } = await lib();
+    const items = [row({ id: 'a', deletedAt: 100 }), row({ id: 'b', deletedAt: 300 })];
+    vaultTrashSort(items);
+    expect(items.map((i: Item) => i.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('vaultTrashLayout: sidebar or full-screen overlay', () => {
+  it('uses the 70% sidebar above 720 px', async () => {
+    const { vaultTrashLayout } = await lib();
+    expect(vaultTrashLayout(721)).toBe('sidebar');
+    expect(vaultTrashLayout(1280)).toBe('sidebar');
+  });
+
+  it('uses the full-screen overlay at 720 px and below', async () => {
+    const { vaultTrashLayout } = await lib();
+    expect(vaultTrashLayout(720)).toBe('overlay');
+    expect(vaultTrashLayout(400)).toBe('overlay');
+  });
+});
+
+describe('undoVaultDelete: undoing a delete inside the Vault', () => {
+  it('asks for one restore per id, in order, and never a move out of the Vault', async () => {
+    const { undoVaultDelete } = await lib();
+    expect(undoVaultDelete(['a', 'b'])).toEqual([
+      { op: 'restore', id: 'a' },
+      { op: 'restore', id: 'b' },
+    ]);
+  });
+
+  it('asks for nothing when there is nothing to undo', async () => {
+    const { undoVaultDelete } = await lib();
+    expect(undoVaultDelete([])).toEqual([]);
+  });
+});
+
+describe('canMoveOut: which Vault items may leave the Vault', () => {
+  it('refuses an unreadable item', async () => {
+    const { canMoveOut } = await lib();
+    expect(canMoveOut(row({ inVault: true, encrypted: true, unreadable: true }))).toBe(false);
+  });
+
+  it('refuses an item that is still being encrypted', async () => {
+    const { canMoveOut } = await lib();
+    expect(canMoveOut(row({ inVault: true, encrypted: false }))).toBe(false);
+  });
+
+  it('allows a readable, encrypted item in the Vault', async () => {
+    const { canMoveOut } = await lib();
+    expect(canMoveOut(row({ inVault: true, encrypted: true, unreadable: false }))).toBe(true);
+  });
+});
+
+describe('vault mode and trash strings', () => {
+  const LISTED = [
+    'vaultEncryptedBadge',
+    'vaultEncrypting',
+    'vaultTrashTitle',
+    'vaultTrashSubtitle',
+    'vaultTrashOpen',
+    'vaultTrashEmpty',
+    'vaultTrashRestore',
+    'vaultTrashDeleteForever',
+    'vaultTrashEmptyAll',
+    'vaultTrashConfirmEmpty',
+    'vaultUnreadable',
+  ];
+  const FUNCTIONS = ['vaultMoving', 'movedOutOfVaultFailed'];
+  const en = dictionaries.en as Record<string, unknown>;
+  const vi = dictionaries.vi as Record<string, unknown>;
+
+  it('has every listed string, non-empty, in both English and Vietnamese', () => {
+    for (const key of LISTED) {
+      for (const [lang, dict] of [
+        ['en', en],
+        ['vi', vi],
+      ] as const) {
+        const value = dict[key];
+        expect(typeof value === 'string' && value.trim().length > 0, `${lang}.${key} is a non-empty string`).toBe(true);
+      }
+    }
+  });
+
+  it('has the two argument-taking strings in both languages', () => {
+    for (const key of FUNCTIONS) {
+      expect(typeof en[key], `en.${key}`).toBe('function');
+      expect(typeof vi[key], `vi.${key}`).toBe('function');
+    }
+  });
+
+  it('marks an encrypted Vault as "lock · encrypted" with the lock icon in both languages', () => {
+    expect(String(en.vaultEncryptedBadge)).toContain('🔒');
+    expect(String(vi.vaultEncryptedBadge)).toContain('🔒');
+    expect(String(en.vaultEncryptedBadge).toLowerCase()).toContain('encrypt');
+    expect(String(vi.vaultEncryptedBadge)).toContain('Két sắt');
+    expect(String(vi.vaultEncryptedBadge)).toContain('đã mã hóa');
+  });
+
+  it('labels a legacy item as being encrypted, in Vietnamese with "đang mã hóa"', () => {
+    expect(String(vi.vaultEncrypting)).toContain('đang mã hóa');
+    expect(String(en.vaultEncrypting).toLowerCase()).toContain('encrypt');
+  });
+
+  it('titles the trash of the Vault exactly as the design says in Vietnamese', () => {
+    expect(vi.vaultTrashTitle).toBe('Thùng rác của Két sắt');
+  });
+
+  it('says the Vault trash keeps files for 30 days, in both languages', () => {
+    expect(String(en.vaultTrashSubtitle)).toContain('30');
+    expect(String(vi.vaultTrashSubtitle)).toContain('30');
+  });
+
+  it('shows the count of moved files from its arguments in both languages', () => {
+    for (const dict of [en, vi]) {
+      const fn = dict.vaultMoving as (a: { done: number; total: number }) => string;
+      const text = fn({ done: 2, total: 5 });
+      expect(typeof text).toBe('string');
+      expect(text).toContain('2');
+      expect(text).toContain('5');
+      expect(fn({ done: 4, total: 9 })).not.toBe(text);
+    }
+  });
+
+  it('shows the count of failed files from its argument in both languages', () => {
+    for (const dict of [en, vi]) {
+      const fn = dict.movedOutOfVaultFailed as (a: { n: number }) => string;
+      const text = fn({ n: 3 });
+      expect(typeof text).toBe('string');
+      expect(text).toContain('3');
+      expect(fn({ n: 7 })).not.toBe(text);
     }
   });
 });
