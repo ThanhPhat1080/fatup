@@ -225,3 +225,4 @@ export type DownloadResponse = { url: string };
 export type ApiError = { error: { code: string; message: string } };
 export * from './embed';
 export * from './vault';
+export * from './vault-crypto';

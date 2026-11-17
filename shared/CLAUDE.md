@@ -4,6 +4,7 @@ Type và hằng số dùng chung cho Worker, desktop và web (Android tự viế
 
 - `src/index.ts`: giới hạn (`MAX_FILE_SIZE`, `TRASH_RETENTION_DAYS`, `MAX_URL_LENGTH`…), `FileItem` và type request/response của API, helper URL (`normalizeUrl`, `siteOf`, `extractUrl`, `isPublicUrl`), helper chia sẻ (`isShareable`, `SHARE_EXPIRY_DAYS`).
 - `src/vault.ts`: hằng số, type request/response và helper của Két sắt mã hóa (`vaultCiphertextSize`, `vaultLockMs`, `isWeakVaultPin`); re-export từ `index.ts`.
+- `src/vault-crypto.ts`: lõi mã hóa của Két sắt chỉ dùng WebCrypto (dẫn khóa từ PIN, bọc khóa, recovery key, định dạng `FUV1` mã hóa theo khối, `encryptMeta`); chạy được ở Node, trình duyệt và Worker; re-export từ `index.ts`.
 - `src/embed.ts`: chuyển một link đã lưu thành bản nhúng chính thức của nền tảng (trình phát/bài đăng) để xem trước trong app.
 
 Quy tắc:
