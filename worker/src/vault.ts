@@ -170,8 +170,14 @@ type Move<B> = { row: Row; body: B };
 /**
  * The checks every move route shares, in order: the id is a ULID, the Vault is ready, the body parses (when the route
  * takes one), the item exists, is finished and is not in the trash. Returns a Response when the request must stop.
+ * `allowVaultTrash` also admits an item in the Vault's trash (`in_vault = 1`), for the moves in: a plain item deleted in
+ * the Vault before it was set up still has to be encrypted. The normal trash (`in_vault = 0`) is never admitted.
  */
-async function beginMove<B = null>(c: Ctx, parse?: (body: Record<string, unknown>) => B | Response): Promise<Move<B> | Response> {
+async function beginMove<B = null>(
+  c: Ctx,
+  parse?: (body: Record<string, unknown>) => B | Response,
+  allowVaultTrash = false,
+): Promise<Move<B> | Response> {
   const id = c.req.param('id') ?? '';
   if (!isUlid(id)) return fail(c, 404, 'not_found', 'File not found');
   if ((await vaultState(c.env.DB)) !== 'ready') return notReady(c);
@@ -183,7 +189,8 @@ async function beginMove<B = null>(c: Ctx, parse?: (body: Record<string, unknown
     if (parsed instanceof Response) return parsed;
     body = parsed;
   }
-  const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready' AND deleted_at IS NULL`).bind(id).first<Row>();
+  const live = allowVaultTrash ? '(deleted_at IS NULL OR in_vault = 1)' : 'deleted_at IS NULL';
+  const row = await c.env.DB.prepare(`SELECT * FROM files WHERE id = ? AND status = 'ready' AND ${live}`).bind(id).first<Row>();
   if (!row) return fail(c, 404, 'not_found', 'File not found');
   return { row, body };
 }
@@ -225,7 +232,7 @@ const changed = (c: Ctx) => fail(c, 409, 'item_changed', 'The item changed while
 function registerMoveRoutes(app: Hono<AppEnv>): void {
   // Moving in: the client downloads the plain file, encrypts it and PUTs it to vault/<id>; only `complete` changes anything.
   app.post('/files/:id/vault/in', async (c) => {
-    const begun = await beginMove(c);
+    const begun = await beginMove(c, undefined, true);
     if (begun instanceof Response) return begun;
     const { row } = begun;
     if (row.encrypted === 1) return fail(c, 409, 'already_encrypted', 'The item is already encrypted');
@@ -243,7 +250,7 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
   });
 
   app.post('/files/:id/vault/in/complete', async (c) => {
-    const begun = await beginMove(c, parseIn(c));
+    const begun = await beginMove(c, parseIn(c), true);
     if (begun instanceof Response) return begun;
     const { row, body } = begun;
     const plainKeys = [fileKey(row.id), thumbKey(row.id)];
@@ -271,11 +278,11 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
     const keepThumb = body.hasThumb && (await c.env.BUCKET.head(vaultThumbKey(row.id))) !== null;
 
     // The encrypted object exists, so D1 may point at it. One statement writes every column, so no plaintext metadata survives.
-    // The share trigger (in_vault -> 1) kills the item's share link in the same statement.
+    // deleted_at is left alone, so an item in the Vault's trash stays there. The share trigger (in_vault -> 1) kills the item's share link in the same statement.
     const res = await c.env.DB.prepare(
       `UPDATE files SET encrypted = 1, in_vault = 1, enc_meta = ?, enc_key = ?, name = '', mime = 'application/octet-stream', kind = 'file',
          url = NULL, size = ?, has_thumb = ?, previewed_at = NULL, icon_url = NULL, title_set = 0
-       WHERE id = ? AND encrypted = 0 AND status = 'ready' AND deleted_at IS NULL`,
+       WHERE id = ? AND encrypted = 0 AND status = 'ready' AND (deleted_at IS NULL OR in_vault = 1)`,
     )
       .bind(body.encMeta, body.encKey, isLink ? 0 : body.size, keepThumb ? 1 : 0, row.id)
       .run();
