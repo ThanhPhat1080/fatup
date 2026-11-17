@@ -193,7 +193,10 @@ const claimOf = async (res: Response) => {
   return claim as string;
 };
 const expireClaim = (id: string) => env.DB.prepare('UPDATE files SET in_claim_until = ? WHERE id = ?').bind(Date.now() - 1000, id).run();
-const CLAIM_MS = 30 * 60 * 1000;
+const CLAIM_MS = 2 * 60 * 60 * 1000;
+const URL_MS = 15 * 60 * 1000;
+/** After 409 item_changed / size_mismatch the claim lives until the URLs of that round are dead: issued + 16 minutes. */
+const KEPT_MS = 16 * 60 * 1000;
 
 beforeEach(async () => {
   await env.DB.prepare('DELETE FROM vault_keys').run();
@@ -891,7 +894,7 @@ describe('POST /files/:id/vault/out/complete', () => {
 });
 
 describe('vault/in claim: one device at a time may write vault/<id> (spec 4.7c, review N1)', () => {
-  it('gives a non-empty base64url claim of at least 16 characters and stores it with an expiry 30 minutes ahead', async () => {
+  it('gives a non-empty base64url claim of at least 16 characters and stores it with an expiry 2 hours ahead', async () => {
     const id = await plainFile();
     const before = Date.now();
     const claim = await claimOf(await moveIn(id));
@@ -1044,41 +1047,127 @@ describe('vault/in/complete and the claim (spec 4.7c)', () => {
     expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
   });
 
-  describe('a refusal that lets the client start over releases the claim', () => {
-    it('409 item_changed releases it: vault/in answers again at once, with a new claim', async () => {
+  describe('409 item_changed and size_mismatch keep the claim and shorten it to issued + 16 minutes (spec 4.7c)', () => {
+    /** The claim row as vault/in left it, to compare after a refusal. */
+    async function overwritten() {
       const id = await plainFile();
       const claim = await claimOf(await moveIn(id));
+      const issued = (await claimRow(id))!.in_claim_until! - CLAIM_MS;
       const etagA = (await env.BUCKET.put(`vault/${id}`, new Uint8Array(40).fill(1)))!.etag;
       await env.BUCKET.put(`vault/${id}`, new Uint8Array(40).fill(2)); // overwritten, as by a device whose URL still lived
+      return { id, claim, issued, etagA };
+    }
+    const expectKept = async (id: string, claim: string, issued: number, untilBefore: number) => {
+      const stored = (await claimRow(id))!;
+      expect(stored.in_claim).toBe(claim);
+      expect(stored.in_claim_until!).toBeGreaterThanOrEqual(issued + KEPT_MS - 5000);
+      expect(stored.in_claim_until!).toBeLessThanOrEqual(issued + KEPT_MS + 5000);
+      expect(stored.in_claim_until!).toBeLessThan(untilBefore);
+    };
+
+    it('409 item_changed keeps in_claim and cuts in_claim_until to issued + 16 minutes', async () => {
+      const { id, claim, issued, etagA } = await overwritten();
+      const untilBefore = (await claimRow(id))!.in_claim_until!;
       const res = await completeInRaw(id, { ...inBody({ claim }), etag: etagA });
       expect(res.status).toBe(409);
       expect(await errorCode(res)).toBe('item_changed');
-      expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
       expect((await rowOf(id))?.encrypted).toBe(0);
-
-      expect(await claimOf(await moveIn(id))).not.toBe(claim);
+      await expectKept(id, claim, issued, untilBefore);
     });
 
-    it('409 size_mismatch releases it too (and still deletes vault/<id>*)', async () => {
+    it('409 size_mismatch keeps in_claim and cuts in_claim_until to issued + 16 minutes (and still deletes vault/<id>*)', async () => {
       const id = await plainFile();
       const claim = await claimOf(await moveIn(id));
+      const untilBefore = (await claimRow(id))!.in_claim_until!;
+      const issued = untilBefore - CLAIM_MS;
       await put(`vault/${id}`, 41);
       const res = await completeIn(id, inBody({ size: 40, claim }));
       expect(res.status).toBe(409);
       expect(await errorCode(res)).toBe('size_mismatch');
       expect(await vaultObjects()).toEqual([]);
-      expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
+      await expectKept(id, claim, issued, untilBefore);
+    });
+
+    it('after item_changed a new vault/in answers 409 item_busy with no addresses, until the shortened claim has passed', async () => {
+      const { id, claim, etagA } = await overwritten();
+      await completeInRaw(id, { ...inBody({ claim }), etag: etagA });
+
+      const busy = await moveIn(id);
+      expect(busy.status).toBe(409);
+      const body = (await busy.json()) as Record<string, unknown> & { error: { code: string } };
+      expect(body.error.code).toBe('item_busy');
+      for (const k of ['uploadUrl', 'thumbUploadUrl', 'downloadUrl', 'thumbUrl', 'claim']) expect(body).not.toHaveProperty(k);
+      expect((await claimRow(id))!.in_claim).toBe(claim);
+
+      await expireClaim(id);
+      const next = await claimOf(await moveIn(id));
+      expect(next).not.toBe(claim);
+      expect((await claimRow(id))!.in_claim).toBe(next);
+    });
+
+    it('after size_mismatch a new vault/in answers 409 item_busy, until the shortened claim has passed', async () => {
+      const id = await plainFile();
+      const claim = await claimOf(await moveIn(id));
+      await put(`vault/${id}`, 41);
+      expect(await errorCode(await completeIn(id, inBody({ size: 40, claim })))).toBe('size_mismatch');
+
+      const busy = await moveIn(id);
+      expect(busy.status).toBe(409);
+      expect(await errorCode(busy)).toBe('item_busy');
+      expect((await claimRow(id))!.in_claim).toBe(claim);
+
+      await expireClaim(id);
       expect(await claimOf(await moveIn(id))).not.toBe(claim);
+    });
+
+    it('the holder can still finish with the old claim while the shortened claim lives, when the PUT is fine', async () => {
+      const { id, claim, etagA } = await overwritten();
+      expect(await errorCode(await completeInRaw(id, { ...inBody({ claim }), etag: etagA }))).toBe('item_changed');
+      const etagNow = (await env.BUCKET.head(`vault/${id}`))!.etag;
+      const res = await completeInRaw(id, { ...inBody({ claim }), etag: etagNow });
+      expect(res.status).toBe(200);
+      expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1 });
+      expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
+    });
+
+    it('once the shortened claim has passed, a complete with the old claim answers 409 item_busy and changes nothing', async () => {
+      const { id, claim, etagA } = await overwritten();
+      expect(await errorCode(await completeInRaw(id, { ...inBody({ claim }), etag: etagA }))).toBe('item_changed');
+      await expireClaim(id);
+      const etagNow = (await env.BUCKET.head(`vault/${id}`))!.etag;
+      const res = await completeInRaw(id, { ...inBody({ claim }), etag: etagNow });
+      expect(res.status).toBe(409);
+      expect(await errorCode(res)).toBe('item_busy');
+      await untouched(id, claim);
+    });
+
+    it('a second refusal does not push in_claim_until later than the first cut', async () => {
+      const { id, claim, etagA } = await overwritten();
+      await completeInRaw(id, { ...inBody({ claim }), etag: etagA });
+      const afterFirst = (await claimRow(id))!.in_claim_until!;
+      expect(await errorCode(await completeInRaw(id, { ...inBody({ claim }), etag: etagA }))).toBe('item_changed');
+      const stored = (await claimRow(id))!;
+      expect(stored.in_claim).toBe(claim);
+      expect(stored.in_claim_until!).toBeLessThanOrEqual(afterFirst);
+    });
+
+    it('the cut claim is shorter than the 2 hour claim and not shorter than the 15 minute lifetime of the URLs', async () => {
+      const { id, claim, issued, etagA } = await overwritten();
+      await completeInRaw(id, { ...inBody({ claim }), etag: etagA });
+      const until = (await claimRow(id))!.in_claim_until!;
+      expect(until - issued).toBeGreaterThan(URL_MS);
+      expect(until - issued).toBeLessThan(CLAIM_MS);
     });
 
     it('a request with a WRONG claim gets item_busy and does not release the holder', async () => {
       const id = await plainFile();
       const claim = await claimOf(await moveIn(id));
+      const before = await claimRow(id);
       const etagA = (await env.BUCKET.put(`vault/${id}`, new Uint8Array(40).fill(1)))!.etag;
       await env.BUCKET.put(`vault/${id}`, new Uint8Array(40).fill(2));
       const res = await completeInRaw(id, { ...inBody({ claim: 'somebody-elses-claim-000' }), etag: etagA });
       expect(await errorCode(res)).toBe('item_busy');
-      expect((await claimRow(id))!.in_claim).toBe(claim);
+      expect(await claimRow(id)).toEqual(before);
       expect((await moveIn(id)).status).toBe(409);
     });
 
@@ -1086,9 +1175,11 @@ describe('vault/in/complete and the claim (spec 4.7c)', () => {
       const id = await plainFile();
       const claim = await claimOf(await moveIn(id));
       await put(`vault/${id}`, 41);
+      const before = await claimRow(id);
       const res = await completeIn(id, inBody({ size: 40, claim: 'somebody-elses-claim-000' }));
       expect(await errorCode(res)).toBe('item_busy');
       expect((await claimRow(id))!.in_claim).toBe(claim);
+      expect(await claimRow(id)).toEqual(before);
       expect(await has(`vault/${id}`)).toBe(true);
     });
   });

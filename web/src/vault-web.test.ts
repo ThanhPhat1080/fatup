@@ -187,6 +187,9 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
   /** Ids whose claim another device holds (vault/in answers 409 item_busy), and the claims handed out per id. */
   const busy = new Set<string>();
   const claims = new Map<string, string[]>();
+  /** Ids whose last claim is still alive: the Worker keeps it after 409 item_changed (spec 4.7c), so vault/in answers item_busy until `expireClaim`. */
+  const live = new Set<string>();
+  const expireClaim = (id: string) => void live.delete(id);
   const completesOut: { id: string; req: VaultMoveOutComplete }[] = [];
   const find = (id: string) => {
     const row = rows.find((r) => r.id === id);
@@ -225,7 +228,8 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
       throw new Error('the plain /links route must never be used for the Vault');
     }),
     moveIn: vi.fn(async (id: string): Promise<VaultMoveUrls> => {
-      if (busy.has(id)) throw new ApiError('item_busy', 'Another device is moving this item', 409, { error: { code: 'item_busy', message: 'busy' } });
+      if (busy.has(id) || live.has(id)) throw new ApiError('item_busy', 'Another device is moving this item', 409, { error: { code: 'item_busy', message: 'busy' } });
+      live.add(id);
       // Every successful vault/in hands out a new claim (spec 4.7c).
       const claim = `claim-${id}-${(claims.get(id)?.length ?? 0) + 1}-AAAAAAAAAAAA`;
       claims.set(id, [...(claims.get(id) ?? []), claim]);
@@ -233,6 +237,7 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
     }),
     moveInComplete: vi.fn(async (id: string, req: VaultMoveInComplete): Promise<FileItem> => {
       completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
+      live.delete(id); // a successful complete clears the claim
       const row = find(id);
       Object.assign(row, { name: '', mime: 'application/octet-stream', kind: 'file', inVault: true, encrypted: true, encMeta: req.encMeta, encKey: req.encKey, size: req.size });
       objects.set(`${R2}/vault/${id}`, objects.get(`${R2}/put/vault/${id}`)!);
@@ -327,7 +332,7 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
     return row;
   }
 
-  return { server, vault, client, fetchImpl, objects, puts, etags, busy, claims, rows, created, updates, completesIn, completesOut, made, revoked, saved, state, deps: baseDeps, readDeps, masterKey, addItem, addPlain, recoveryKey };
+  return { server, vault, client, fetchImpl, objects, puts, etags, busy, claims, live, expireClaim, rows, created, updates, completesIn, completesOut, made, revoked, saved, state, deps: baseDeps, readDeps, masterKey, addItem, addPlain, recoveryKey };
 }
 
 const PDF_META: VaultMeta = { name: 'Hợp đồng.pdf', mime: 'application/pdf', kind: 'file' };
@@ -860,6 +865,7 @@ describe('web Vault: moving in and out', () => {
     w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
     w.client.moveInComplete.mockImplementationOnce(async (id: string, req: VaultMoveInComplete) => {
       w.completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
+      w.expireClaim(id); // the kept claim (cut to issued + 16 minutes) has run out by the time of the retry
       throw new ApiError('item_changed', 'The item changed', 409, { error: { code: 'item_changed', message: 'changed' } });
     });
     expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
@@ -868,6 +874,20 @@ describe('web Vault: moving in and out', () => {
     expect(w.completesIn[1].req.etag).toBe(w.etags.get(`${R2}/put/vault/A`));
     expect(w.completesIn[1].req.etag).not.toBe(w.completesIn[0].req.etag);
     expect(w.completesIn[1].req.encKey).not.toBe(w.completesIn[0].req.encKey);
+  });
+
+  it('reports the item as failed when vault/in answers 409 item_busy right after item_changed (the Worker keeps the claim): no second PUT, no second complete', async () => {
+    const w = await world();
+    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
+    w.client.moveInComplete.mockImplementationOnce(async (id: string, req: VaultMoveInComplete) => {
+      w.completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
+      throw new ApiError('item_changed', 'The item changed', 409, { error: { code: 'item_changed', message: 'changed' } }); // claim stays alive
+    });
+    expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 0, failed: ['A'] } });
+    expect(w.client.moveIn).toHaveBeenCalledTimes(2);
+    expect(w.puts.filter((p) => p.url === `${R2}/put/vault/A`)).toHaveLength(1);
+    expect(w.completesIn).toHaveLength(1);
+    expect(w.claims.get('A')).toHaveLength(1);
   });
 
   it('sends the claim vault/in handed out with the completion (spec 4.7c)', async () => {
@@ -883,6 +903,7 @@ describe('web Vault: moving in and out', () => {
     w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
     w.client.moveInComplete.mockImplementationOnce(async (id: string, req: VaultMoveInComplete) => {
       w.completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
+      w.expireClaim(id); // the kept claim (cut to issued + 16 minutes) has run out by the time of the retry
       throw new ApiError('item_changed', 'The item changed', 409, { error: { code: 'item_changed', message: 'changed' } });
     });
     expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 1, failed: [] } });

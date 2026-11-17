@@ -14,6 +14,9 @@ const LOCK_RULES = [
 ];
 const VAULT_HEADER = 'x-fatup-vault'; // Node lower-cases incoming header names
 const VAULT_VERSION = '2';
+/** How long a device keeps the right to write vault/<id>, and how long the claim lives on after item_changed / size_mismatch (issued + 16 minutes). */
+const CLAIM_MS = 2 * 60 * 60 * 1000;
+const KEPT_CLAIM_MS = 16 * 60 * 1000;
 
 const COLORS = [
   ['#4285f4', '#34a853'],
@@ -478,10 +481,10 @@ export function startMockServer(realNow = Date.now(), options = {}) {
       if (!ready()) return notReady();
       const f = files.find((x) => x.id === m[1]);
       if (!f) return fail(404, 'not_found', 'File not found');
-      // One writer at a time, like the Worker: the claim lasts 30 minutes, and nobody else gets addresses while it lives.
+      // One writer at a time, like the Worker: the claim lasts 2 hours, and nobody else gets addresses while it lives.
       if (f.claim && f.claimUntil > Date.now()) return fail(409, 'item_busy', 'Another device is moving this item in; try again later');
       f.claim = randomBytes(16).toString('base64url');
-      f.claimUntil = Date.now() + 30 * 60 * 1000;
+      f.claimUntil = Date.now() + CLAIM_MS;
       const thumb = plainThumbSrc(f, base);
       return {
         status: 200,
@@ -505,11 +508,11 @@ export function startMockServer(realNow = Date.now(), options = {}) {
       if (existing) return { status: 200, body: vaultJson(existing, base) }; // a retry after the move went through: no claim or etag compare
       const f = files.find((x) => x.id === id);
       if (!f) return fail(404, 'not_found', 'File not found');
-      // A claimed row only completes for the holder of a live claim; a refusal that lets the client start over frees it.
+      // A claimed row only completes for the holder of a live claim. 409 item_changed / size_mismatch keep the claim (the PUT URL of that
+      // round may live 15 minutes more) and cut it to issued + 16 minutes, like the Worker (spec 4.7c).
       if (f.claim && (b.claim !== f.claim || f.claimUntil <= Date.now())) return fail(409, 'item_busy', 'Another device is moving this item in; try again later');
       const release = () => {
-        delete f.claim;
-        delete f.claimUntil;
+        if (f.claim) f.claimUntil = f.claimUntil - CLAIM_MS + KEPT_CLAIM_MS; // issued + 16 minutes
       };
       // Like the Worker: a file must say which bytes it encrypted (the ETag of its PUT), quoted or not.
       const etag = typeof b.etag === 'string' && b.etag.length <= 200 ? b.etag.replace(/^"(.*)"$/, '$1') : '';

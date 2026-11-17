@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { groupByDay } from '../src/renderer/src/lib/format';
 import { dictionaries } from '../src/renderer/src/lib/i18n';
 // @ts-ignore -- plain JavaScript test helper, no declarations
@@ -294,12 +294,18 @@ describe('the mock Vault routes', () => {
       const { into, etag, claim } = await stage(base, firstId, 'cipher');
       await putBytes(into.json.uploadUrl, 'CIPHER');
       expect((await complete(base, firstId, { etag, claim })).status).toBe(409);
-      // The 409 released the claim, so the client asks vault/in again and completes with the new claim.
-      const again = await api(base, 'POST', `/files/${firstId}/vault/in`);
-      expect(again.status).toBe(200);
-      const mine = await putBytes(again.json.uploadUrl, 'second');
-      const done = await complete(base, firstId, { etag: mine.headers.get('etag'), size: 6, claim: again.json.claim });
-      expect(done).toMatchObject({ status: 200, json: { id: firstId, encrypted: true, inVault: true } });
+      // The 409 kept the claim (cut to 16 minutes after issue): once that has passed the client asks vault/in again and completes with the new claim.
+      expect((await api(base, 'POST', `/files/${firstId}/vault/in`)).json.error.code).toBe('item_busy');
+      vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 17 * 60 * 1000 });
+      try {
+        const again = await api(base, 'POST', `/files/${firstId}/vault/in`);
+        expect(again.status).toBe(200);
+        const mine = await putBytes(again.json.uploadUrl, 'second');
+        const done = await complete(base, firstId, { etag: mine.headers.get('etag'), size: 6, claim: again.json.claim });
+        expect(done).toMatchObject({ status: 200, json: { id: firstId, encrypted: true, inVault: true } });
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('does not compare the etag again once the row is encrypted (a retry answers 200)', async () => {
@@ -387,24 +393,120 @@ describe('the mock Vault routes', () => {
       expect(await isPlain(base)).toBe(true);
     });
 
-    it('releases the claim on 409 item_changed, so the client can ask vault/in again at once, for a new claim', async () => {
+    const MIN = 60 * 1000;
+    /** Only `Date` is faked, so the real HTTP server and fetch keep working while the clock jumps. */
+    const clock = () => vi.useFakeTimers({ toFake: ['Date'], now: new Date(2026, 10, 14, 12, 0, 0) });
+    const later = (ms: number) => vi.setSystemTime(Date.now() + ms);
+    afterEach(() => vi.useRealTimers());
+
+    it('keeps the claim for 2 hours: busy at 119 minutes, a new claim after 121', async () => {
+      clock();
       const base = await ready();
       const first = await into(base);
-      const stored = await putBytes(first.json.uploadUrl, 'cipher');
-      await putBytes(first.json.uploadUrl, 'CIPHER'); // another device overwrote it
-      expect((await complete(base, firstId, { etag: stored.headers.get('etag'), claim: first.json.claim })).json.error.code).toBe('item_changed');
-      const again = await into(base);
-      expect(again.status).toBe(200);
-      expect(again.json.claim).not.toBe(first.json.claim);
+      later(119 * MIN);
+      expect((await into(base)).json.error.code).toBe('item_busy');
+      later(2 * MIN);
+      const next = await into(base);
+      expect(next.status).toBe(200);
+      expect(next.json.claim).not.toBe(first.json.claim);
     });
 
-    it('releases the claim on 409 size_mismatch too', async () => {
+    it('does not accept a complete of an expired claim (2 hours + 1 minute): 409 item_busy, nothing changes', async () => {
+      clock();
       const base = await ready();
       const first = await into(base);
       const stored = await putBytes(first.json.uploadUrl, 'cipher');
-      const res = await complete(base, firstId, { etag: stored.headers.get('etag'), claim: first.json.claim, size: 99 });
-      expect(res.json.error.code).toBe('size_mismatch');
-      expect((await into(base)).status).toBe(200);
+      later(121 * MIN);
+      const res = await complete(base, firstId, { etag: stored.headers.get('etag'), claim: first.json.claim });
+      expect(res.json.error.code).toBe('item_busy');
+      expect(await isPlain(base)).toBe(true);
+    });
+
+    describe('409 item_changed and size_mismatch keep the claim and cut it to issued + 16 minutes', () => {
+      /** vault/in, then a PUT of A, then another PUT of the same size: A's etag no longer matches. */
+      async function overwritten(base: string) {
+        const first = await into(base);
+        const stored = await putBytes(first.json.uploadUrl, 'cipher');
+        await putBytes(first.json.uploadUrl, 'CIPHER'); // another device overwrote it
+        return { first, etagA: stored.headers.get('etag') };
+      }
+
+      it('item_changed: vault/in answers 409 item_busy with no address for 16 minutes after issue, then gives a new claim', async () => {
+        clock();
+        const base = await ready();
+        const { first, etagA } = await overwritten(base);
+        later(5 * MIN);
+        expect((await complete(base, firstId, { etag: etagA, claim: first.json.claim })).json.error.code).toBe('item_changed');
+
+        later(5 * MIN); // 10 minutes after issue
+        const busy = await into(base);
+        expect(busy.status).toBe(409);
+        expect(busy.json.error.code).toBe('item_busy');
+        expect(busy.json.uploadUrl).toBeUndefined();
+        expect(busy.json.claim).toBeUndefined();
+
+        later(7 * MIN); // 17 minutes after issue, long before the original 2 hours
+        const again = await into(base);
+        expect(again.status).toBe(200);
+        expect(again.json.claim).not.toBe(first.json.claim);
+      });
+
+      it('size_mismatch: the same', async () => {
+        clock();
+        const base = await ready();
+        const first = await into(base);
+        const stored = await putBytes(first.json.uploadUrl, 'cipher');
+        expect((await complete(base, firstId, { etag: stored.headers.get('etag'), claim: first.json.claim, size: 99 })).json.error.code).toBe('size_mismatch');
+        later(10 * MIN);
+        expect((await into(base)).json.error.code).toBe('item_busy');
+        later(7 * MIN);
+        expect((await into(base)).status).toBe(200);
+      });
+
+      it('the cut counts from the issue, not from the refusal: a refusal 14 minutes after issue leaves 2 minutes', async () => {
+        clock();
+        const base = await ready();
+        const { first, etagA } = await overwritten(base);
+        later(14 * MIN);
+        expect((await complete(base, firstId, { etag: etagA, claim: first.json.claim })).json.error.code).toBe('item_changed');
+        later(3 * MIN); // 17 minutes after issue
+        expect((await into(base)).status).toBe(200);
+      });
+
+      it('the holder still completes with the old claim while the cut claim lives, and not after it', async () => {
+        clock();
+        const base = await ready();
+        const { first, etagA } = await overwritten(base);
+        expect((await complete(base, firstId, { etag: etagA, claim: first.json.claim })).json.error.code).toBe('item_changed');
+        const current = await putBytes(first.json.uploadUrl, 'third!');
+        later(10 * MIN);
+        const ok = await complete(base, firstId, { etag: current.headers.get('etag'), claim: first.json.claim });
+        expect(ok).toMatchObject({ status: 200, json: { id: firstId, encrypted: true } });
+      });
+
+      it('after the cut claim passed, a complete with the old claim answers 409 item_busy and the row stays plain', async () => {
+        clock();
+        const base = await ready();
+        const { first, etagA } = await overwritten(base);
+        expect((await complete(base, firstId, { etag: etagA, claim: first.json.claim })).json.error.code).toBe('item_changed');
+        const current = await putBytes(first.json.uploadUrl, 'third!');
+        later(17 * MIN);
+        const res = await complete(base, firstId, { etag: current.headers.get('etag'), claim: first.json.claim });
+        expect(res.status).toBe(409);
+        expect(res.json.error.code).toBe('item_busy');
+        expect(await isPlain(base)).toBe(true);
+      });
+
+      it('a request with a wrong claim reduces nothing: the claim lives its full 2 hours', async () => {
+        clock();
+        const base = await ready();
+        const { etagA } = await overwritten(base);
+        expect((await complete(base, firstId, { etag: etagA, claim: 'not-the-claim-0123456789' })).json.error.code).toBe('item_busy');
+        later(30 * MIN);
+        expect((await into(base)).json.error.code).toBe('item_busy');
+        later(91 * MIN);
+        expect((await into(base)).status).toBe(200);
+      });
     });
 
     it('two devices: B is refused its addresses while A holds the claim; A completes; B\'s late complete is an idempotent 200 that keeps A\'s key', async () => {

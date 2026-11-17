@@ -128,6 +128,14 @@ async function world() {
   const busy = new Set<string>();
   /** Every claim the fake Worker handed out per id, in order. */
   const claims = new Map<string, string[]>();
+  /**
+   * Ids whose last claim is still alive on the fake Worker. Since spec 4.7c a claim is kept after 409 item_changed (cut to issued + 16 minutes),
+   * so vault/in answers 409 item_busy for such an id until the test says the claim ran out (`expireClaim`, or `expireAfterConflict`).
+   */
+  const live = new Set<string>();
+  const expireClaim = (id: string) => void live.delete(id);
+  /** Ids whose claim runs out right after their next item_changed (the 16 minutes pass before the retry). */
+  const expireAfterConflict = new Set<string>();
   /** How many times the next moveOutComplete of an id fails with a network error. */
   const failCompleteOut = new Map<string, number>();
   const completeIn = new Map<string, VaultMoveInComplete[]>();
@@ -179,7 +187,8 @@ async function world() {
     moveIn: vi.fn(async (id: string): Promise<VaultMoveUrls> => {
       events.push(`moveIn:${id}`);
       return record('moveIn', [id], () => {
-        if (busy.has(id)) throw new ApiError('item_busy', 'Another device is moving this item', 409, { error: { code: 'item_busy', message: 'busy' } });
+        if (busy.has(id) || live.has(id)) throw new ApiError('item_busy', 'Another device is moving this item', 409, { error: { code: 'item_busy', message: 'busy' } });
+        live.add(id);
         const s = shape.get(id) ?? { thumb: false, link: false };
         // The Worker gives every successful vault/in a fresh claim (a random token); the fake numbers them.
         const claim = `claim-${id}-${(claims.get(id)?.length ?? 0) + 1}-AAAAAAAAAAAA`;
@@ -205,8 +214,11 @@ async function world() {
       const conflicts = conflictComplete.get(id) ?? 0;
       if (conflicts > 0) {
         conflictComplete.set(id, conflicts - 1);
+        // The Worker keeps the claim after item_changed; it only ends when the test lets the time pass.
+        if (expireAfterConflict.has(id)) live.delete(id);
         throw new ApiError('item_changed', 'The item changed', 409, { error: 'item_changed' });
       }
+      live.delete(id); // a successful complete clears the claim
       return row(id);
     }),
     moveOut: vi.fn(async (id: string): Promise<VaultMoveUrls> => {
@@ -265,7 +277,7 @@ async function world() {
   }
 
   return {
-    server, session, mover, client, fetchImpl, objects, puts, gets, events, calls, failGet, failPut, etags, state, failComplete, conflictComplete, busy, claims,
+    server, session, mover, client, fetchImpl, objects, puts, gets, events, calls, failGet, failPut, etags, state, failComplete, conflictComplete, busy, claims, live, expireClaim, expireAfterConflict,
     failCompleteOut, completeIn, completeOut, listed, masterKey, legacy, sealed,
   };
 }
@@ -436,6 +448,7 @@ describe('moveIn: a plain Vault file becomes an encrypted one', () => {
     expect(first).toEqual({ done: [], failed: ['A'] });
     expect(w.puts).toHaveLength(1); // the upload had happened
 
+    w.expireClaim('A'); // the claim of the interrupted run (2 hours) has run out
     const second = await w.mover.moveIn([item]);
     expect(second).toEqual({ done: ['A'], failed: [] });
     expect(w.puts.map((p) => p.url)).toEqual([addr.vaultPut('A'), addr.vaultPut('A')]); // overwritten
@@ -539,6 +552,7 @@ describe('moveIn: the ETag of the stored ciphertext goes back to the Worker (rev
       const w = await world();
       const item = w.legacy('A', { name: 'a.pdf', mime: 'application/pdf' }, PDF);
       w.conflictComplete.set('A', 1);
+      w.expireAfterConflict.add('A'); // the kept claim has run out by the time of the retry
       expect(await w.mover.moveIn([item])).toEqual({ done: ['A'], failed: [] });
 
       expect(w.client.moveIn).toHaveBeenCalledTimes(2);
@@ -558,6 +572,7 @@ describe('moveIn: the ETag of the stored ciphertext goes back to the Worker (rev
     it('puts the item in failed after a second 409, with no third attempt, and goes on to the next item', async () => {
       const w = await world();
       w.conflictComplete.set('A', 2);
+      w.expireAfterConflict.add('A');
       const res = await w.mover.moveIn([w.legacy('A'), w.legacy('B')]);
       expect(res).toEqual({ done: ['B'], failed: ['A'] });
       expect(w.completeIn.get('A')).toHaveLength(2);
@@ -575,6 +590,7 @@ describe('moveIn: the ETag of the stored ciphertext goes back to the Worker (rev
     it('counts the retried item once in the progress', async () => {
       const w = await world();
       w.conflictComplete.set('A', 1);
+      w.expireAfterConflict.add('A');
       const onProgress = vi.fn();
       await w.mover.moveIn([w.legacy('A'), w.legacy('B')], onProgress);
       expect(onProgress.mock.calls.map(([p]) => [p.done, p.total, p.current])).toEqual([
@@ -682,6 +698,7 @@ describe('moveIn: the claim of vault/in goes back with the completion (spec 4.7c
     it('completes the retry with the NEW claim, not the first one', async () => {
       const w = await world();
       w.conflictComplete.set('A', 1);
+      w.expireAfterConflict.add('A');
       expect(await w.mover.moveIn([w.legacy('A', { name: 'a.pdf', mime: 'application/pdf' }, PDF)])).toEqual({ done: ['A'], failed: [] });
       expect(w.client.moveIn).toHaveBeenCalledTimes(2);
       const [first, second] = w.completeIn.get('A')!;
@@ -689,6 +706,28 @@ describe('moveIn: the claim of vault/in goes back with the completion (spec 4.7c
       expect(claim1).not.toBe(claim2);
       expect(first.claim).toBe(claim1);
       expect(second.claim).toBe(claim2);
+    });
+
+    it('puts the item in failed when the Worker still holds the kept claim (item_busy right after item_changed): no second PUT, no second complete', async () => {
+      const w = await world();
+      w.conflictComplete.set('A', 1); // no expiry: the Worker kept the claim, as it does for 16 minutes
+      expect(await w.mover.moveIn([w.legacy('A', { name: 'a.pdf', mime: 'application/pdf' }, PDF), w.legacy('B')])).toEqual({ done: ['B'], failed: ['A'] });
+      expect(w.client.moveIn.mock.calls.filter(([id]) => id === 'A')).toHaveLength(2);
+      expect(w.puts.filter((p) => p.url === addr.vaultPut('A'))).toHaveLength(1);
+      expect(w.completeIn.get('A')).toHaveLength(1);
+      expect(w.claims.get('A')).toHaveLength(1); // the second vault/in handed out no claim
+    });
+
+    it('moves the item in on a later run, once the kept claim has run out', async () => {
+      const w = await world();
+      w.conflictComplete.set('A', 1);
+      const item = w.legacy('A', { name: 'a.pdf', mime: 'application/pdf' }, PDF);
+      expect(await w.mover.moveIn([item])).toEqual({ done: [], failed: ['A'] });
+      expect(await w.mover.moveIn([item])).toEqual({ done: [], failed: ['A'] }); // still within the 16 minutes
+      w.expireClaim('A');
+      expect(await w.mover.moveIn([item])).toEqual({ done: ['A'], failed: [] });
+      const last = w.completeIn.get('A')!.at(-1)!;
+      expect(last.claim).toBe(w.claims.get('A')!.at(-1));
     });
 
     it('puts the item in failed when the retry meets item_busy, and tries nothing more', async () => {
