@@ -26,7 +26,7 @@ async function columns(table: string): Promise<Col[]> {
 }
 
 /** Inserts a finished file row straight into D1, bypassing the upload flow. */
-async function insertFile(f: { encrypted: 0 | 1; inVault?: 0 | 1; hasThumb?: 0 | 1; name?: string; encMeta?: string | null; encKey?: string | null }) {
+async function insertFile(f: { encrypted: 0 | 1; inVault?: 0 | 1; hasThumb?: 0 | 1; name?: string; encMeta?: string | null; encKey?: string | null; encObject?: string | null; deletedAt?: number | null }) {
   const id = ulid();
   await env.DB.prepare(
     `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, created_at, in_vault, encrypted, enc_meta, enc_key)
@@ -34,6 +34,9 @@ async function insertFile(f: { encrypted: 0 | 1; inVault?: 0 | 1; hasThumb?: 0 |
   )
     .bind(id, f.name ?? 'a.bin', f.hasThumb ?? 0, Date.now(), f.inVault ?? 0, f.encrypted, f.encMeta ?? null, f.encKey ?? null)
     .run();
+  // Only a test that names an attempt touches enc_object, so tests that do not need the column do not depend on it.
+  if (f.encObject) await env.DB.prepare('UPDATE files SET enc_object = ? WHERE id = ?').bind(f.encObject, id).run();
+  if (f.deletedAt) await env.DB.prepare('UPDATE files SET deleted_at = ? WHERE id = ?').bind(f.deletedAt, id).run();
   return id;
 }
 
@@ -99,17 +102,21 @@ describe('schema', () => {
     expect(await env.DB.prepare('SELECT out_started_at FROM files WHERE id = ?').bind(id).first()).toEqual({ out_started_at: null });
   });
 
-  it('adds in_claim (TEXT) and in_claim_until (INTEGER) to files: nullable, no default (spec 4.7c)', async () => {
-    const cols = await columns('files');
-    for (const [name, type] of [['in_claim', 'TEXT'], ['in_claim_until', 'INTEGER']] as const) {
-      const col = cols.find((c) => c.name === name) as (Col & { type: string }) | undefined;
-      expect(col, name).toBeDefined();
-      expect(col!.type, name).toBe(type);
-      expect(col!.notnull, name).toBe(0);
-      expect(col!.dflt_value, name).toBeNull();
-    }
+  it('adds enc_object (TEXT) to files: nullable, no default; NULL means the fixed key vault/<id> (spec 4.7d)', async () => {
+    const col = (await columns('files')).find((c) => c.name === 'enc_object') as (Col & { type: string }) | undefined;
+    expect(col).toBeDefined();
+    expect(col!.type).toBe('TEXT');
+    expect(col!.notnull).toBe(0);
+    expect(col!.dflt_value).toBeNull();
     const id = await insertFile({ encrypted: 0 });
-    expect(await env.DB.prepare('SELECT in_claim, in_claim_until FROM files WHERE id = ?').bind(id).first()).toEqual({ in_claim: null, in_claim_until: null });
+    expect(await env.DB.prepare('SELECT enc_object FROM files WHERE id = ?').bind(id).first()).toEqual({ enc_object: null });
+  });
+
+  it('has no in_claim and no in_claim_until: the claim of 4.7c is gone (spec 4.7d)', async () => {
+    const names = (await columns('files')).map((c) => c.name);
+    expect(names).not.toContain('in_claim');
+    expect(names).not.toContain('in_claim_until');
+    expect(names).toContain('out_started_at');
   });
 
   it('refuses a second vault_keys row (id must be 1)', async () => {
@@ -128,14 +135,34 @@ describe('schema', () => {
 });
 
 describe('R2 keys', () => {
-  it('names encrypted objects vault/<id> and vault/<id>.thumb', () => {
+  it('names encrypted objects without an attempt vault/<id> and vault/<id>.thumb', () => {
     expect(vaultFileKey('abc')).toBe('vault/abc');
     expect(vaultThumbKey('abc')).toBe('vault/abc.thumb');
+    expect(vaultFileKey('abc', null)).toBe('vault/abc');
+    expect(vaultThumbKey('abc', null)).toBe('vault/abc.thumb');
+  });
+
+  it('names the objects of an attempt vault/<id>.<attempt> and vault/<id>.<attempt>.thumb (spec 4.7d)', () => {
+    expect(vaultFileKey('abc', 'AT1')).toBe('vault/abc.AT1');
+    expect(vaultThumbKey('abc', 'AT1')).toBe('vault/abc.AT1.thumb');
   });
 
   it('objectKeys picks the key pair from the encrypted flag', () => {
     expect(objectKeys({ id: 'abc', encrypted: 0 })).toEqual([fileKey('abc'), thumbKey('abc')]);
     expect(objectKeys({ id: 'abc', encrypted: 1 })).toEqual([vaultFileKey('abc'), vaultThumbKey('abc')]);
+  });
+
+  it('objectKeys of an encrypted row with enc_object NULL is the fixed pair', () => {
+    expect(objectKeys({ id: 'abc', encrypted: 1, enc_object: null })).toEqual(['vault/abc', 'vault/abc.thumb']);
+  });
+
+  it('objectKeys of an encrypted row with an enc_object is the attempt\'s pair', () => {
+    expect(objectKeys({ id: 'abc', encrypted: 1, enc_object: 'AT1' })).toEqual(['vault/abc.AT1', 'vault/abc.AT1.thumb']);
+  });
+
+  it('objectKeys of a plain row stays files/ and thumbs/, whatever enc_object says', () => {
+    expect(objectKeys({ id: 'abc', encrypted: 0, enc_object: null })).toEqual(['files/abc', 'thumbs/abc.jpg']);
+    expect(objectKeys({ id: 'abc', encrypted: 0, enc_object: 'AT1' })).toEqual(['files/abc', 'thumbs/abc.jpg']);
   });
 });
 
@@ -182,6 +209,37 @@ describe('purge', () => {
 
     for (const k of ALL_KEYS(id)) expect(await env.BUCKET.head(k)).toBeNull();
     expect(await fileRow(id)).toBeNull();
+  });
+
+  it('deletes the attempt-keyed objects of an item encrypted by an attempt (the row\'s current vault keys, by enc_object)', async () => {
+    const id = await insertFile({ encrypted: 1, inVault: 1, hasThumb: 1, name: '', encMeta: 'M', encKey: 'K', encObject: 'AAAAAAAAAAAAAAAAAAAAAA' });
+    for (const k of [`vault/${id}.AAAAAAAAAAAAAAAAAAAAAA`, `vault/${id}.AAAAAAAAAAAAAAAAAAAAAA.thumb`]) await env.BUCKET.put(k, 'x');
+
+    await purge(env, [id]);
+
+    expect((await env.BUCKET.list({ prefix: 'vault/' })).objects).toEqual([]);
+    expect(await fileRow(id)).toBeNull();
+  });
+
+  it('deletes the fixed keys and the plain keys of such a row too, in one call', async () => {
+    const id = await insertFile({ encrypted: 1, inVault: 1, hasThumb: 1, name: '', encMeta: 'M', encKey: 'K', encObject: 'AAAAAAAAAAAAAAAAAAAAAA' });
+    for (const k of [...ALL_KEYS(id), `vault/${id}.AAAAAAAAAAAAAAAAAAAAAA`, `vault/${id}.AAAAAAAAAAAAAAAAAAAAAA.thumb`]) await env.BUCKET.put(k, 'x');
+
+    await purge(env, [id]);
+
+    expect((await env.BUCKET.list()).objects).toEqual([]);
+    expect(await fileRow(id)).toBeNull();
+  });
+
+  it('leaves the objects of another item alone, attempt-keyed ones included', async () => {
+    const gone = await insertFile({ encrypted: 1, inVault: 1, name: '', encMeta: 'M', encKey: 'K', encObject: 'AAAAAAAAAAAAAAAAAAAAAA' });
+    const keep = await insertFile({ encrypted: 1, inVault: 1, name: '', encMeta: 'M', encKey: 'K', encObject: 'BBBBBBBBBBBBBBBBBBBBBB' });
+    await env.BUCKET.put(`vault/${gone}.AAAAAAAAAAAAAAAAAAAAAA`, 'x');
+    await env.BUCKET.put(`vault/${keep}.BBBBBBBBBBBBBBBBBBBBBB`, 'x');
+
+    await purge(env, [gone]);
+
+    expect((await env.BUCKET.list({ prefix: 'vault/' })).objects.map((o) => o.key)).toEqual([`vault/${keep}.BBBBBBBBBBBBBBBBBBBBBB`]);
   });
 
   it('cleans both kinds in one call and leaves other items alone', async () => {
@@ -505,5 +563,201 @@ describe('cleanup releases out_started_at BEFORE it deletes the plain objects (s
     await cleanup(env, NOW);
 
     expect(await env.BUCKET.head(`files/${id}`)).not.toBeNull();
+  });
+});
+
+/**
+ * Garbage collection of vault/ objects (spec 4.7d). Pinned shape: `cleanup(env, now)` lists `vault/` and deletes an object that is older
+ * than 1 hour (its R2 `uploaded` time against `now`) when
+ *  - its row no longer exists, or
+ *  - the attempt in its key differs from the row's `enc_object` (a key without an attempt differs from any `enc_object`;
+ *    for a row whose `enc_object` is NULL every attempt-keyed object is garbage).
+ * It never deletes a row's current objects (`vault/<id>.<enc_object>` and its `.thumb`, or the fixed `vault/<id>[.thumb]` when `enc_object` is NULL)
+ * and never an object younger than 1 hour (an attempt that may still be uploading).
+ * R2 test bindings stamp `uploaded` with the real time and cannot fake it, so "old" is `now` moved 2 hours ahead and "young" is the real now.
+ */
+describe('cleanup of vault/ objects: garbage of abandoned and losing attempts (spec 4.7d)', () => {
+  const HOUR = 60 * 60 * 1000;
+  const young = () => Date.now();
+  const old = () => Date.now() + 2 * HOUR;
+  const A = 'AAAAAAAAAAAAAAAAAAAAAA';
+  const B = 'BBBBBBBBBBBBBBBBBBBBBB';
+  const C = 'CCCCCCCCCCCCCCCCCCCCCC';
+  const keys = async () => (await env.BUCKET.list({ prefix: 'vault/' })).objects.map((o) => o.key).sort();
+  const putAll = async (list: string[]) => {
+    for (const k of list) await env.BUCKET.put(k, 'x');
+  };
+  const encrypted = (over: { encObject?: string | null; hasThumb?: 0 | 1; deletedAt?: number | null } = {}) =>
+    insertFile({ encrypted: 1, inVault: 1, hasThumb: over.hasThumb ?? 1, name: '', encMeta: 'M', encKey: 'K', encObject: over.encObject, deletedAt: over.deletedAt });
+
+  it('deletes the objects of a row that no longer exists, attempt-keyed or fixed, thumbnails included', async () => {
+    const gone = ulid();
+    await putAll([`vault/${gone}`, `vault/${gone}.thumb`, `vault/${gone}.${A}`, `vault/${gone}.${A}.thumb`]);
+    await cleanup(env, old());
+    expect(await keys()).toEqual([]);
+  });
+
+  it('deletes the objects of a losing attempt (its attempt differs from enc_object) and keeps the live ones', async () => {
+    const id = await encrypted({ encObject: A });
+    await putAll([`vault/${id}.${A}`, `vault/${id}.${A}.thumb`, `vault/${id}.${B}`, `vault/${id}.${B}.thumb`, `vault/${id}.${C}`]);
+    await cleanup(env, old());
+    expect(await keys()).toEqual([`vault/${id}.${A}`, `vault/${id}.${A}.thumb`]);
+  });
+
+  it('never deletes the current object of a row, however old', async () => {
+    const id = await encrypted({ encObject: A });
+    await putAll([`vault/${id}.${A}`, `vault/${id}.${A}.thumb`]);
+    await cleanup(env, old() + 365 * 24 * HOUR);
+    expect(await keys()).toEqual([`vault/${id}.${A}`, `vault/${id}.${A}.thumb`]);
+    expect(await fileRow(id)).not.toBeNull();
+  });
+
+  it('deletes attempt-keyed objects of a row whose enc_object is NULL: an abandoned attempt of a plain row, or the loser next to a straight upload', async () => {
+    const plain = await insertFile({ encrypted: 0, inVault: 1, hasThumb: 1 });
+    const direct = await encrypted();
+    await putAll([`files/${plain}`, `vault/${plain}.${A}`, `vault/${plain}.${A}.thumb`, `vault/${direct}`, `vault/${direct}.thumb`, `vault/${direct}.${B}`]);
+    await cleanup(env, old());
+    expect(await keys()).toEqual([`vault/${direct}`, `vault/${direct}.thumb`]);
+    expect(await env.BUCKET.head(`files/${plain}`)).not.toBeNull(); // a plain row's file is not vault garbage
+  });
+
+  it('keeps the fixed-key objects of a row with enc_object NULL', async () => {
+    const id = await encrypted();
+    await putAll([`vault/${id}`, `vault/${id}.thumb`]);
+    await cleanup(env, old());
+    expect(await keys()).toEqual([`vault/${id}`, `vault/${id}.thumb`].sort());
+  });
+
+  it('keeps objects younger than 1 hour: an attempt may still be uploading (row missing, losing attempt, abandoned plain row)', async () => {
+    const gone = ulid();
+    const live = await encrypted({ encObject: A });
+    const plain = await insertFile({ encrypted: 0, inVault: 1 });
+    const all = [`vault/${gone}.${B}`, `vault/${gone}`, `vault/${live}.${A}`, `vault/${live}.${B}`, `vault/${live}.${B}.thumb`, `vault/${plain}.${C}`];
+    await putAll(all);
+    await cleanup(env, young());
+    expect(await keys()).toEqual([...all].sort());
+  });
+
+  it('keeps an object 30 minutes old and deletes one 2 hours old', async () => {
+    const id = await encrypted({ encObject: A });
+    await putAll([`vault/${id}.${A}`, `vault/${id}.${B}`]);
+    await cleanup(env, Date.now() + 30 * 60 * 1000);
+    expect(await keys()).toEqual([`vault/${id}.${A}`, `vault/${id}.${B}`].sort());
+    await cleanup(env, Date.now() + 2 * HOUR);
+    expect(await keys()).toEqual([`vault/${id}.${A}`]);
+  });
+
+  it('judges each row by its own enc_object: one row\'s live object is another row\'s garbage name only if the ids match', async () => {
+    const one = await encrypted({ encObject: A });
+    const two = await encrypted({ encObject: B });
+    await putAll([`vault/${one}.${A}`, `vault/${two}.${B}`, `vault/${one}.${B}`, `vault/${two}.${A}`]);
+    await cleanup(env, old());
+    expect(await keys()).toEqual([`vault/${one}.${A}`, `vault/${two}.${B}`].sort());
+  });
+
+  it('does not touch the plain objects of anything', async () => {
+    const plain = await insertFile({ encrypted: 0, hasThumb: 1 });
+    const gone = ulid();
+    await putAll([`files/${plain}`, `thumbs/${plain}.jpg`, `files/${gone}`, `thumbs/${gone}.jpg`]);
+    await cleanup(env, old());
+    expect((await env.BUCKET.list()).objects.map((o) => o.key).sort()).toEqual([`files/${gone}`, `files/${plain}`, `thumbs/${gone}.jpg`, `thumbs/${plain}.jpg`].sort());
+  });
+
+  it('keeps the row of a vault trash item and its current object', async () => {
+    const id = await encrypted({ encObject: A, deletedAt: Date.now() - 1000 });
+    await putAll([`vault/${id}.${A}`, `vault/${id}.${B}`]);
+    await cleanup(env, old());
+    expect(await keys()).toEqual([`vault/${id}.${A}`]);
+  });
+
+  it('does not change any row', async () => {
+    const id = await encrypted({ encObject: A });
+    await putAll([`vault/${id}.${B}`]);
+    const before = await env.DB.prepare('SELECT * FROM files WHERE id = ?').bind(id).first();
+    await cleanup(env, old());
+    expect(await env.DB.prepare('SELECT * FROM files WHERE id = ?').bind(id).first()).toEqual(before);
+  });
+
+  it('runs together with the out_started_at sweep and the 30-day trash purge, which keep working', async () => {
+    const NOW = old();
+    const swept = await encrypted({ encObject: A });
+    await env.DB.prepare('UPDATE files SET out_started_at = ? WHERE id = ?').bind(NOW - 2 * HOUR, swept).run();
+    await putAll([`files/${swept}`, `thumbs/${swept}.jpg`, `vault/${swept}.${A}`, `vault/${swept}.${B}`]);
+    const trashed = await encrypted({ encObject: A, deletedAt: NOW - 31 * 24 * HOUR });
+    await putAll([`vault/${trashed}.${A}`, `vault/${trashed}.${A}.thumb`]);
+
+    const purged = await cleanup(env, NOW);
+
+    expect(purged).toBe(1); // rows purged; garbage objects are not counted
+    expect(await fileRow(trashed)).toBeNull();
+    expect(await env.BUCKET.head(`files/${swept}`)).toBeNull();
+    expect(await env.BUCKET.head(`thumbs/${swept}.jpg`)).toBeNull();
+    expect(await keys()).toEqual([`vault/${swept}.${A}`]);
+    expect(await env.DB.prepare('SELECT out_started_at AS t FROM files WHERE id = ?').bind(swept).first()).toEqual({ t: null });
+  });
+
+  it('works on 250 garbage objects and 250 live ones: within the D1 and R2 limits, only the garbage goes', async () => {
+    const w = watched();
+    const live: string[] = [];
+    const garbage: string[] = [];
+    const rows = Array.from({ length: 250 }, () => ulid());
+    for (let i = 0; i < rows.length; i += 10) {
+      const chunk = rows.slice(i, i + 10);
+      await env.DB.prepare(
+        `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, created_at, in_vault, encrypted, enc_meta, enc_key, enc_object)
+         VALUES ${chunk.map(() => `(?, '', 'application/octet-stream', 4, 'file', 0, 'ready', 1, 1, 1, 'M', 'K', ?)`).join(',')}`,
+      )
+        .bind(...chunk.flatMap((id) => [id, A]))
+        .run();
+    }
+    for (const id of rows) {
+      live.push(`vault/${id}.${A}`);
+      garbage.push(`vault/${id}.${B}`);
+    }
+    const orphans = Array.from({ length: 250 }, () => `vault/${ulid()}.${C}`);
+    for (const k of [...live, ...garbage, ...orphans]) await env.BUCKET.put(k, 'x');
+
+    await cleanup(w.env, old());
+
+    expect(await keys()).toEqual([...live].sort());
+    expect(w.seen.maxBound).toBeLessThanOrEqual(100);
+    expect(w.seen.maxKeys).toBeLessThanOrEqual(1000);
+    expect(w.seen.maxKeys).toBeGreaterThan(0);
+  });
+
+  it('lists past the first page of R2 (1000 objects): 1050 orphans are all deleted', async () => {
+    const orphans = Array.from({ length: 1050 }, () => `vault/${ulid()}.${A}`);
+    for (let i = 0; i < orphans.length; i += 50) await Promise.all(orphans.slice(i, i + 50).map((k) => env.BUCKET.put(k, 'x')));
+    const w = watched();
+    await cleanup(w.env, old());
+    expect(await keys()).toEqual([]);
+    expect(w.seen.maxKeys).toBeLessThanOrEqual(1000);
+  });
+});
+
+describe('purge by enc_object in batches (spec 4.7d)', () => {
+  it('purge deletes 250 ids that each have an attempt-keyed object, within the limits (an extra SELECT of enc_object binds at most 100 ids)', async () => {
+    const ids = Array.from({ length: 250 }, () => ulid());
+    for (let i = 0; i < ids.length; i += 10) {
+      const chunk = ids.slice(i, i + 10);
+      await env.DB.prepare(
+        `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, created_at, in_vault, encrypted, enc_meta, enc_key, enc_object)
+         VALUES ${chunk.map(() => `(?, '', 'application/octet-stream', 4, 'file', 1, 'ready', 1, 1, 1, 'M', 'K', 'AAAAAAAAAAAAAAAAAAAAAA')`).join(',')}`,
+      )
+        .bind(...chunk)
+        .run();
+    }
+    for (const id of ids) {
+      await env.BUCKET.put(`vault/${id}.AAAAAAAAAAAAAAAAAAAAAA`, 'x');
+      await env.BUCKET.put(`vault/${id}.AAAAAAAAAAAAAAAAAAAAAA.thumb`, 'x');
+    }
+    const w = watched();
+
+    await purge(w.env, ids);
+
+    expect(((await env.DB.prepare('SELECT COUNT(*) AS n FROM files').first()) as { n: number }).n).toBe(0);
+    expect((await env.BUCKET.list()).objects).toEqual([]);
+    expect(w.seen.maxBound).toBeLessThanOrEqual(100);
+    expect(w.seen.maxKeys).toBeLessThanOrEqual(1000);
   });
 });

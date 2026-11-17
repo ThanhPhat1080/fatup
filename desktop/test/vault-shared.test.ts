@@ -121,16 +121,25 @@ describe('vault fields on the shared types', () => {
     };
     expect(req.vault).toEqual({ encMeta: 'bWV0YQ==', encKey: 'a2V5' });
   });
-  it('lets VaultMoveUrls carry the claim that vault/in hands out (spec 4.7c)', () => {
-    const urls: VaultMoveUrls = { uploadUrl: 'u', thumbUploadUrl: null, downloadUrl: 'd', thumbUrl: null, claim: 'abc_DEF-0123456789xyz' };
-    expect(urls.claim).toBe('abc_DEF-0123456789xyz');
+  it('lets VaultMoveUrls carry the attempt that vault/in hands out, and stay valid without one (move out) (spec 4.7d)', () => {
+    const urls: VaultMoveUrls = { uploadUrl: 'u', thumbUploadUrl: null, downloadUrl: 'd', thumbUrl: null, attempt: 'abc_DEF-0123456789xyz' };
+    expect(urls.attempt).toBe('abc_DEF-0123456789xyz');
     const out: VaultMoveUrls = { uploadUrl: 'u', thumbUploadUrl: null, downloadUrl: 'd', thumbUrl: null }; // move out has none
-    expect(out.claim).toBeUndefined();
+    expect(out.attempt).toBeUndefined();
   });
-  it('lets VaultMoveInComplete carry the claim back, and stay valid without one (cleanup of an encrypted row)', () => {
-    const body: VaultMoveInComplete = { encMeta: 'm', encKey: 'k', size: 1, hasThumb: false, etag: 'e', claim: 'abc_DEF-0123456789xyz' };
-    expect(body.claim).toBe('abc_DEF-0123456789xyz');
+  it('lets VaultMoveInComplete carry the attempt back, and stay valid without one (cleanup of an encrypted row)', () => {
+    const body: VaultMoveInComplete = { encMeta: 'm', encKey: 'k', size: 1, hasThumb: false, attempt: 'abc_DEF-0123456789xyz' };
+    expect(body.attempt).toBe('abc_DEF-0123456789xyz');
     const bare: VaultMoveInComplete = { encMeta: 'm', encKey: 'k', size: 1, hasThumb: false };
-    expect(bare.claim).toBeUndefined();
+    expect(bare.attempt).toBeUndefined();
+  });
+  it('has no claim and no etag on VaultMoveUrls or VaultMoveInComplete any more (type-level: typecheck fails while they exist)', () => {
+    // @ts-expect-error the claim of spec 4.7c is gone
+    const urls: VaultMoveUrls = { uploadUrl: 'u', thumbUploadUrl: null, downloadUrl: 'd', thumbUrl: null, claim: 'x' };
+    // @ts-expect-error the ETag of spec 4.7b is gone
+    const etag: VaultMoveInComplete = { encMeta: 'm', encKey: 'k', size: 1, hasThumb: false, etag: 'e' };
+    // @ts-expect-error the claim of spec 4.7c is gone
+    const claim: VaultMoveInComplete = { encMeta: 'm', encKey: 'k', size: 1, hasThumb: false, claim: 'x' };
+    expect([urls, etag, claim]).toHaveLength(3);
   });
 });

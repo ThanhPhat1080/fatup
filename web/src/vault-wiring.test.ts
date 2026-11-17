@@ -3,6 +3,7 @@
 import { describe, expect, it } from 'vitest';
 // `?raw` gives the file's text (the web tsconfig has no Node types, so no `node:fs`).
 import apiSource from './browser-api.ts?raw';
+import vaultWebSource from './vault-web.ts?raw';
 import viteConfigSource from '../vite.config.ts?raw';
 
 const between = (text: string, from: RegExp, to: RegExp): string => {
@@ -47,5 +48,14 @@ describe('wiring (static checks on files the unit tests cannot load)', () => {
   it('browser-api.ts exposes the two-step Vault setup through the web Vault (review I1)', () => {
     expect(api).toMatch(/vaultSetupPrepare:\s*\(?[^\n]*webVault\.vaultSetupPrepare/);
     expect(api).toMatch(/vaultSetupCommit:\s*\(?[^\n]*webVault\.vaultSetupCommit/);
+  });
+
+  it('neither browser-api.ts nor vault-web.ts moves files into the Vault with the legacy setVault, whatever the Vault state (spec 4.7d: setup first, then move)', () => {
+    const web: string = vaultWebSource;
+    expect(web).not.toMatch(/setVault\(/);
+    expect(api).not.toMatch(/setVault\(/);
+    const moveIn = between(api, /\n    vaultMoveIn: async/, /\n    vaultMoveOut:/);
+    expect(moveIn).not.toContain('setVault');
+    expect(moveIn).not.toContain("'none'");
   });
 });

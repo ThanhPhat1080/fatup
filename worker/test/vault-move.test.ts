@@ -34,20 +34,8 @@ const postJson = (path: string, body: unknown) => callV(path, { method: 'POST', 
 
 const moveIn = (id: string) => callV(`/files/${id}/vault/in`, { method: 'POST' });
 const moveOut = (id: string) => callV(`/files/${id}/vault/out`, { method: 'POST' });
-/** Sends the body exactly as given: no etag is added. */
-const completeInRaw = (id: string, body: unknown) => postJson(`/files/${id}/vault/in/complete`, body);
-/**
- * What a client does: reports the ETag R2 returned for its PUT of vault/<id>. A body without an `etag` key gets the current
- * etag of the object (R2's own, unquoted); with no object yet it gets a well-formed placeholder, so a file that was never
- * uploaded is still refused for that reason and not for a missing etag. Use `completeInRaw` to send a body as it is.
- */
-async function completeIn(id: string, body: unknown) {
-  if (typeof body === 'object' && body !== null && !('etag' in body)) {
-    const object = await env.BUCKET.head(`vault/${id}`);
-    body = { ...body, etag: object ? object.etag : 'no-object-yet' };
-  }
-  return completeInRaw(id, body);
-}
+/** Sends the body exactly as given. Since spec 4.7d there is no etag and no claim: a not-yet-encrypted row is finished by its `attempt`. */
+const completeIn = (id: string, body: unknown) => postJson(`/files/${id}/vault/in/complete`, body);
 const completeOut = (id: string, body: unknown) => postJson(`/files/${id}/vault/out/complete`, body);
 
 type VaultState = 'none' | 'ready' | 'wiped';
@@ -77,6 +65,8 @@ type NewRow = {
   hasThumb?: 0 | 1;
   encMeta?: string | null;
   encKey?: string | null;
+  /** The attempt that encrypted the row: its objects live at vault/<id>.<attempt>[.thumb]. NULL = the fixed key vault/<id>. */
+  encObject?: string | null;
 };
 
 /** Inserts a finished file row straight into D1, bypassing the upload flow. */
@@ -103,6 +93,8 @@ async function insertFile(f: NewRow = {}) {
       f.url ?? null,
     )
     .run();
+  // Only a test that names an attempt touches enc_object, so tests that do not need the column do not depend on it.
+  if (f.encObject) await env.DB.prepare('UPDATE files SET enc_object = ? WHERE id = ?').bind(f.encObject, id).run();
   return id;
 }
 
@@ -121,8 +113,7 @@ type DbRow = {
   previewed_at: number | null;
   icon_url: string | null;
   out_started_at: number | null;
-  in_claim: string | null;
-  in_claim_until: number | null;
+  enc_object: string | null;
 };
 const rowOf = (id: string) => env.DB.prepare('SELECT * FROM files WHERE id = ?').bind(id).first<DbRow>();
 
@@ -153,6 +144,9 @@ const vaultObjects = async () => (await env.BUCKET.list({ prefix: 'vault/' })).o
 
 const ENC_META = 'ZW5jcnlwdGVkLW1ldGE=';
 const ENC_KEY = 'd3JhcHBlZC1maWxlLWtleQ==';
+const ATTEMPT = /^[A-Za-z0-9_-]{16,}$/;
+/** A fresh attempt name as vault/in makes it: 16 random bytes, base64url. It is recorded nowhere, so a test may invent one without calling vault/in. */
+const newAttempt = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const inBody = (over: Partial<VaultMoveInComplete> = {}): VaultMoveInComplete => ({ encMeta: ENC_META, encKey: ENC_KEY, size: 40, hasThumb: false, ...over });
 const outBody = (over: Partial<VaultMoveOutComplete> = {}): VaultMoveOutComplete => ({ name: 'a.bin', mime: 'application/octet-stream', size: 10, hasThumb: false, ...over });
 
@@ -165,13 +159,34 @@ async function plainFile(f: NewRow & { thumb?: boolean } = {}) {
 }
 
 /** An encrypted vault row with its vault objects in R2. */
-async function vaultedFile(f: NewRow & { thumb?: boolean; withObjects?: boolean } = {}) {
-  const id = await insertFile({ ...f, encrypted: 1, inVault: 1, hasThumb: f.thumb ? 1 : 0 });
+async function vaultedFile(f: NewRow & { thumb?: boolean; withObjects?: boolean; attempt?: string } = {}) {
+  const id = await insertFile({ ...f, encrypted: 1, inVault: 1, hasThumb: f.thumb ? 1 : 0, encObject: f.attempt ?? f.encObject });
   if (f.withObjects !== false) {
-    await put(`vault/${id}`, 40);
-    if (f.thumb) await put(`vault/${id}.thumb`, 20);
+    const stem = f.attempt ? `vault/${id}.${f.attempt}` : `vault/${id}`;
+    await put(stem, 40);
+    if (f.thumb) await put(`${stem}.thumb`, 20);
   }
   return id;
+}
+
+/** What a device does after vault/in: PUTs its ciphertext (and thumbnail) at vault/<id>.<attempt>[.thumb]; `fill` tells devices' bytes apart. Returns the attempt. */
+async function stage(id: string, o: { thumb?: boolean; bytes?: number; fill?: number; attempt?: string } = {}) {
+  const attempt = o.attempt ?? newAttempt();
+  await env.BUCKET.put(`vault/${id}.${attempt}`, new Uint8Array(o.bytes ?? 40).fill(o.fill ?? 0));
+  if (o.thumb) await env.BUCKET.put(`vault/${id}.${attempt}.thumb`, new Uint8Array(20).fill(o.fill ?? 0));
+  return attempt;
+}
+
+/** Calls vault/in and returns the attempt it gave with the R2 keys its addresses stand for. */
+async function startIn(id: string) {
+  const res = await moveIn(id);
+  expect(res.status).toBe(200);
+  const u = (await res.json()) as VaultMoveUrls;
+  expect(u.attempt).toMatch(ATTEMPT);
+  return {
+    attempt: u.attempt as string,
+    urls: { download: keyOf(u.downloadUrl), thumb: keyOf(u.thumbUrl), upload: keyOf(u.uploadUrl), thumbUpload: keyOf(u.thumbUploadUrl) },
+  };
 }
 
 /**
@@ -184,20 +199,6 @@ async function vaultedOut(f: NewRow & { thumb?: boolean; withObjects?: boolean }
   return id;
 }
 
-/** What `vault/in` stored for the claim, and helpers to read and age it. */
-const claimRow = (id: string) => env.DB.prepare('SELECT in_claim, in_claim_until FROM files WHERE id = ?').bind(id).first<{ in_claim: string | null; in_claim_until: number | null }>();
-const claimOf = async (res: Response) => {
-  expect(res.status).toBe(200);
-  const { claim } = (await res.json()) as VaultMoveUrls;
-  expect(typeof claim).toBe('string');
-  return claim as string;
-};
-const expireClaim = (id: string) => env.DB.prepare('UPDATE files SET in_claim_until = ? WHERE id = ?').bind(Date.now() - 1000, id).run();
-const CLAIM_MS = 2 * 60 * 60 * 1000;
-const URL_MS = 15 * 60 * 1000;
-/** After 409 item_changed / size_mismatch the claim lives until the URLs of that round are dead: issued + 16 minutes. */
-const KEPT_MS = 16 * 60 * 1000;
-
 beforeEach(async () => {
   await env.DB.prepare('DELETE FROM vault_keys').run();
   await env.DB.prepare('DELETE FROM shares').run();
@@ -207,86 +208,202 @@ beforeEach(async () => {
   await setState('ready');
 });
 
+/**
+ * Moving in with one object per attempt (spec 4.7d, replaces the claim/ETag design of 4.7b and 4.7c). Pinned shapes:
+ *  - `POST /files/:id/vault/in` answers `VaultMoveUrls` plus `attempt` (a fresh base64url string of at least 16 characters on every call,
+ *    written nowhere) and signs the PUTs on `vault/<id>.<attempt>` and `vault/<id>.<attempt>.thumb`. It sets `in_vault = 1` at once.
+ *  - `POST /files/:id/vault/in/complete` takes `{ encMeta, encKey, size, hasThumb, attempt }`. A row that is not encrypted yet needs `attempt`
+ *    (a string of base64url characters, at least 16, no `.` or `/`): anything else is 400. `etag` and `claim` are ignored. It `head()`s
+ *    `vault/<id>.<attempt>` and writes `encrypted = 1, enc_object = attempt` with that attempt's key and metadata.
+ *  - A row that is already encrypted answers 200 and changes nothing; it deletes the attempt's own objects when the attempt is not `enc_object`.
+ *    A body without `attempt` is the move-out cleanup call: it only sweeps files/<id> and thumbs/<id>.jpg.
+ */
 describe('POST /files/:id/vault/in', () => {
-  it('signs a GET for the plain file, a PUT for vault/<id>, and no thumbnail addresses when there is no thumbnail', async () => {
+  it('signs a GET for the plain file, a PUT for vault/<id>.<attempt>, and no thumbnail addresses when there is no thumbnail', async () => {
     const id = await plainFile();
-    expect(await urlsOf(await moveIn(id))).toEqual({
+    const { attempt, urls } = await startIn(id);
+    expect(urls).toEqual({
       download: `files/${id}`,
       thumb: null,
-      upload: `vault/${id}`,
+      upload: `vault/${id}.${attempt}`,
       thumbUpload: null,
     });
   });
 
-  it('also signs the plain thumbnail and a PUT for vault/<id>.thumb when the file has a thumbnail', async () => {
+  it('also signs the plain thumbnail and a PUT for vault/<id>.<attempt>.thumb when the file has a thumbnail', async () => {
     const id = await plainFile({ kind: 'image', mime: 'image/png', thumb: true });
-    expect(await urlsOf(await moveIn(id))).toEqual({
+    const { attempt, urls } = await startIn(id);
+    expect(urls).toEqual({
       download: `files/${id}`,
       thumb: `thumbs/${id}.jpg`,
-      upload: `vault/${id}`,
-      thumbUpload: `vault/${id}.thumb`,
+      upload: `vault/${id}.${attempt}`,
+      thumbUpload: `vault/${id}.${attempt}.thumb`,
     });
   });
 
   it('works on a legacy vault item (in_vault = 1, encrypted = 0) so it can be converted', async () => {
     const id = await plainFile({ inVault: 1, kind: 'image', mime: 'image/png', thumb: true });
-    expect(await urlsOf(await moveIn(id))).toEqual({
+    const { attempt, urls } = await startIn(id);
+    expect(urls).toEqual({
       download: `files/${id}`,
       thumb: `thumbs/${id}.jpg`,
-      upload: `vault/${id}`,
-      thumbUpload: `vault/${id}.thumb`,
+      upload: `vault/${id}.${attempt}`,
+      thumbUpload: `vault/${id}.${attempt}.thumb`,
     });
   });
 
-  it('gives a link no download address, because a link has no file to encrypt', async () => {
+  it('gives a link no download address, because a link has no file to encrypt, but still an attempt', async () => {
     const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'example.com', size: 0 });
     const res = await moveIn(id);
     expect(res.status).toBe(200);
-    const u = (await res.json()) as { downloadUrl: string | null; thumbUrl: string | null };
+    const u = (await res.json()) as VaultMoveUrls;
     expect(u.downloadUrl).toBeNull();
     expect(u.thumbUrl).toBeNull();
+    expect(u.attempt).toMatch(ATTEMPT);
   });
 
-  it('keeps the preview picture of a link that has one: its thumbnail moves to vault/<id>.thumb (spec Q3)', async () => {
+  it('keeps the preview picture of a link that has one: its thumbnail moves to vault/<id>.<attempt>.thumb (spec Q3)', async () => {
     const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'example.com', size: 0, hasThumb: 1 });
     const res = await moveIn(id);
     expect(res.status).toBe(200);
-    const u = (await res.json()) as { downloadUrl: string | null; thumbUrl: string | null; thumbUploadUrl: string | null };
+    const u = (await res.json()) as VaultMoveUrls;
     expect(u.downloadUrl).toBeNull();
     expect(keyOf(u.thumbUrl)).toBe(`thumbs/${id}.jpg`);
-    expect(keyOf(u.thumbUploadUrl)).toBe(`vault/${id}.thumb`);
+    expect(keyOf(u.thumbUploadUrl)).toBe(`vault/${id}.${u.attempt}.thumb`);
   });
 
-  it('changes nothing: no row change and no object is written or removed', async () => {
+  it('gives an attempt of at least 16 base64url characters', async () => {
+    const id = await plainFile();
+    const { attempt } = await startIn(id);
+    expect(attempt).toMatch(ATTEMPT);
+  });
+
+  it('gives a different attempt, and different upload addresses, on every call', async () => {
+    const id = await plainFile({ thumb: true });
+    const calls = [await startIn(id), await startIn(id), await startIn(id)];
+    expect(new Set(calls.map((c) => c.attempt)).size).toBe(3);
+    expect(new Set(calls.map((c) => c.urls.upload)).size).toBe(3);
+    expect(new Set(calls.map((c) => c.urls.thumbUpload)).size).toBe(3);
+  });
+
+  it('answers 200 to a second call right after the first: no item_busy, no claim', async () => {
+    const id = await plainFile();
+    expect((await moveIn(id)).status).toBe(200);
+    const second = await moveIn(id);
+    expect(second.status).toBe(200);
+    const body = (await second.json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty('claim');
+    expect(body).not.toHaveProperty('error');
+  });
+
+  it('writes no state for the attempt: the second call leaves the row exactly as the first did, and the attempt is in no column', async () => {
+    const id = await plainFile();
+    const first = await startIn(id);
+    const afterFirst = await rowOf(id);
+    const second = await startIn(id);
+    expect(await rowOf(id)).toEqual(afterFirst);
+    expect(afterFirst).toMatchObject({ encrypted: 0, enc_object: null, enc_meta: null, enc_key: null });
+    for (const attempt of [first.attempt, second.attempt]) expect(JSON.stringify(await rowOf(id))).not.toContain(attempt);
+  });
+
+  it('has no claim columns any more', async () => {
+    const id = await plainFile();
+    const row = (await rowOf(id)) as Record<string, unknown>;
+    expect(row).not.toHaveProperty('in_claim');
+    expect(row).not.toHaveProperty('in_claim_until');
+  });
+
+  it('writes no object: the plain objects stay and nothing appears under vault/', async () => {
     const id = await plainFile({ thumb: true });
     await moveIn(id);
-    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin' });
     expect(await has(`files/${id}`)).toBe(true);
+    expect(await has(`thumbs/${id}.jpg`)).toBe(true);
     expect(await vaultObjects()).toEqual([]);
   });
 
-  it('answers 409 already_encrypted for an item that is already encrypted', async () => {
+  it('puts a live plain item in the vault at once: in_vault = 1, still not encrypted, plain metadata untouched', async () => {
+    const id = await plainFile({ name: 'holiday.png', kind: 'image', mime: 'image/png' });
+    expect((await moveIn(id)).status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({
+      in_vault: 1,
+      encrypted: 0,
+      enc_object: null,
+      name: 'holiday.png',
+      mime: 'image/png',
+      kind: 'image',
+      deleted_at: null,
+    });
+  });
+
+  it('takes the item off the main list and shows it in the vault list, as a plain item (encrypted false, plain name, with the header)', async () => {
+    const id = await plainFile({ name: 'holiday.png' });
+    expect((await moveIn(id)).status).toBe(200);
+    const list = async (path: string) => ((await (await callV(path)).json()) as ListFilesResponse).items;
+    expect((await list('/files')).map((i) => i.id)).toEqual([]);
+    const inVault = await list('/files?vault=1');
+    expect(inVault.map((i) => i.id)).toEqual([id]);
+    expect(inVault[0]).toMatchObject({ inVault: true, name: 'holiday.png' });
+    expect(inVault[0].encrypted).toBeFalsy();
+  });
+
+  it('kills the share link of the item right away, before anything is uploaded', async () => {
+    const id = await plainFile();
+    await addShare(id);
+    expect(await shareCount(id)).toBe(1);
+    expect((await moveIn(id)).status).toBe(200);
+    expect(await shareCount(id)).toBe(0);
+  });
+
+  it('keeps deleted_at of a legacy item in the vault trash', async () => {
+    const deletedAt = Date.now() - 5000;
+    const id = await plainFile({ inVault: 1, deletedAt });
+    expect((await moveIn(id)).status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ in_vault: 1, encrypted: 0, deleted_at: deletedAt });
+  });
+
+  it('puts a link in the vault at once too', async () => {
+    const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'example.com', size: 0 });
+    expect((await moveIn(id)).status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ in_vault: 1, encrypted: 0, kind: 'link', url: 'https://example.com/a' });
+  });
+
+  it('answers 409 already_encrypted for an item that is already encrypted, and changes nothing', async () => {
     const id = await vaultedFile();
+    const before = await rowOf(id);
+    const res = await moveIn(id);
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('already_encrypted');
+    expect(await rowOf(id)).toEqual(before);
+  });
+
+  it('answers 409 already_encrypted for an item that was encrypted by an attempt, too', async () => {
+    const id = await vaultedFile({ attempt: newAttempt() });
     const res = await moveIn(id);
     expect(res.status).toBe(409);
     expect(await errorCode(res)).toBe('already_encrypted');
   });
+
+  it('answers 404 for an item in the normal trash, and does not put it in the vault', async () => {
+    const id = await plainFile({ deletedAt: Date.now() - 1000 });
+    expect((await moveIn(id)).status).toBe(404);
+    expect(await rowOf(id)).toMatchObject({ in_vault: 0, encrypted: 0 });
+  });
 });
 
 describe('POST /files/:id/vault/in/complete', () => {
-  it('answers 409 not_uploaded before vault/<id> exists, and changes nothing', async () => {
+  it('answers 409 not_uploaded before vault/<id>.<attempt> exists, and changes nothing', async () => {
     const id = await plainFile({ thumb: true });
-    const res = await completeIn(id, inBody());
+    const res = await completeIn(id, inBody({ attempt: newAttempt() }));
     expect(res.status).toBe(409);
     expect(await errorCode(res)).toBe('not_uploaded');
-    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null, enc_key: null });
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null, enc_key: null, enc_object: null });
     expect(await has(`files/${id}`)).toBe(true);
     expect(await has(`thumbs/${id}.jpg`)).toBe(true);
   });
 
   it('does not accept size 0 for a file that has no vault object', async () => {
     const id = await plainFile();
-    const res = await completeIn(id, inBody({ size: 0 }));
+    const res = await completeIn(id, inBody({ size: 0, attempt: newAttempt() }));
     expect(res.status).toBe(409);
     expect(await errorCode(res)).toBe('not_uploaded');
     expect((await rowOf(id))?.encrypted).toBe(0);
@@ -295,34 +412,52 @@ describe('POST /files/:id/vault/in/complete', () => {
   it('does not complete from an object that is only at a plain key', async () => {
     const id = await insertFile();
     await put(`files/${id}`, 40);
-    const res = await completeIn(id, inBody());
+    const res = await completeIn(id, inBody({ attempt: newAttempt() }));
     expect(res.status).toBe(409);
     expect(await errorCode(res)).toBe('not_uploaded');
   });
 
-  it('answers 409 size_mismatch when the size differs from the object, deletes vault/<id>*, and keeps the plain copy', async () => {
+  it('does not complete from the fixed key vault/<id>, nor from another attempt: it looks only at its own attempt', async () => {
+    const id = await plainFile();
+    await put(`vault/${id}`, 40);
+    const other = await stage(id);
+    const res = await completeIn(id, inBody({ attempt: newAttempt() }));
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('not_uploaded');
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, enc_object: null });
+    expect((await vaultObjects()).sort()).toEqual([`vault/${id}`, `vault/${id}.${other}`]);
+  });
+
+  it('answers 409 size_mismatch when the size differs from the object, deletes that attempt\'s objects, and keeps the plain copy', async () => {
     const id = await plainFile({ thumb: true });
-    await put(`vault/${id}`, 41);
-    await put(`vault/${id}.thumb`, 20);
-    const res = await completeIn(id, inBody({ size: 40, hasThumb: true }));
+    const attempt = await stage(id, { bytes: 41, thumb: true });
+    const res = await completeIn(id, inBody({ size: 40, hasThumb: true, attempt }));
     expect(res.status).toBe(409);
     expect(await errorCode(res)).toBe('size_mismatch');
     expect(await vaultObjects()).toEqual([]);
     expect(await has(`files/${id}`)).toBe(true);
     expect(await has(`thumbs/${id}.jpg`)).toBe(true);
-    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null, enc_key: null, has_thumb: 1 });
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null, enc_key: null, enc_object: null, has_thumb: 1 });
   });
 
-  it('turns the row into an encrypted vault item with no plaintext metadata, and stores the ciphertext size', async () => {
+  it('on size_mismatch leaves the objects of another attempt alone', async () => {
+    const id = await plainFile();
+    const other = await stage(id, { thumb: true });
+    const bad = await stage(id, { bytes: 41 });
+    expect((await completeIn(id, inBody({ size: 40, attempt: bad }))).status).toBe(409);
+    expect((await vaultObjects()).sort()).toEqual([`vault/${id}.${other}`, `vault/${id}.${other}.thumb`]);
+  });
+
+  it('turns the row into an encrypted vault item with no plaintext metadata, remembers the attempt, and stores the ciphertext size', async () => {
     const id = await plainFile({ kind: 'image', mime: 'image/png', name: 'holiday.png', size: 4, thumb: true });
-    await put(`vault/${id}`, 40);
-    await put(`vault/${id}.thumb`, 20);
-    const res = await completeIn(id, inBody({ hasThumb: true }));
+    const attempt = await stage(id, { thumb: true });
+    const res = await completeIn(id, inBody({ hasThumb: true, attempt }));
     expect(res.status).toBe(200);
     const row = await rowOf(id);
     expect(row).toMatchObject({
       encrypted: 1,
       in_vault: 1,
+      enc_object: attempt,
       enc_meta: ENC_META,
       enc_key: ENC_KEY,
       name: '',
@@ -339,39 +474,44 @@ describe('POST /files/:id/vault/in/complete', () => {
     expect(JSON.stringify(row)).not.toContain('image/png');
   });
 
-  it('returns the item as an encrypted one, with its thumbnail on the vault key', async () => {
+  it('returns the item as an encrypted one, with its thumbnail on the attempt\'s key', async () => {
     const id = await plainFile({ kind: 'image', mime: 'image/png', thumb: true });
-    await put(`vault/${id}`, 40);
-    await put(`vault/${id}.thumb`, 20);
-    const item = (await (await completeIn(id, inBody({ hasThumb: true }))).json()) as FileItem;
+    const attempt = await stage(id, { thumb: true });
+    const item = (await (await completeIn(id, inBody({ hasThumb: true, attempt }))).json()) as FileItem;
     expect(item).toMatchObject({ id, encrypted: true, inVault: true, encMeta: ENC_META, encKey: ENC_KEY, name: '', kind: 'file', mime: 'application/octet-stream', size: 40, url: null });
-    expect(keyOf(item.thumbUrl)).toBe(`vault/${id}.thumb`);
+    expect(keyOf(item.thumbUrl)).toBe(`vault/${id}.${attempt}.thumb`);
   });
 
-  it('deletes files/<id> and thumbs/<id>.jpg but keeps the vault objects', async () => {
+  it('deletes files/<id> and thumbs/<id>.jpg but keeps the attempt\'s objects', async () => {
     const id = await plainFile({ kind: 'image', mime: 'image/png', thumb: true });
-    await put(`vault/${id}`, 40);
-    await put(`vault/${id}.thumb`, 20);
-    expect((await completeIn(id, inBody({ hasThumb: true }))).status).toBe(200);
+    const attempt = await stage(id, { thumb: true });
+    expect((await completeIn(id, inBody({ hasThumb: true, attempt }))).status).toBe(200);
     expect(await has(`files/${id}`)).toBe(false);
     expect(await has(`thumbs/${id}.jpg`)).toBe(false);
-    expect(await has(`vault/${id}`)).toBe(true);
-    expect(await has(`vault/${id}.thumb`)).toBe(true);
+    expect((await vaultObjects()).sort()).toEqual([`vault/${id}.${attempt}`, `vault/${id}.${attempt}.thumb`]);
+  });
+
+  it('does not touch the objects of other attempts (an abandoned one is left to the cron)', async () => {
+    const id = await plainFile();
+    const abandoned = await stage(id, { thumb: true });
+    const attempt = await stage(id);
+    expect((await completeIn(id, inBody({ attempt }))).status).toBe(200);
+    expect((await vaultObjects()).sort()).toEqual([`vault/${id}.${abandoned}`, `vault/${id}.${abandoned}.thumb`, `vault/${id}.${attempt}`]);
   });
 
   it('kills the share link of the file', async () => {
     const id = await plainFile();
     await addShare(id);
     expect(await shareCount(id)).toBe(1);
-    await put(`vault/${id}`, 40);
-    expect((await completeIn(id, inBody())).status).toBe(200);
+    const attempt = await stage(id);
+    expect((await completeIn(id, inBody({ attempt }))).status).toBe(200);
     expect(await shareCount(id)).toBe(0);
   });
 
   it('moves the item from the main list to the vault list', async () => {
     const id = await plainFile();
-    await put(`vault/${id}`, 40);
-    await completeIn(id, inBody());
+    const attempt = await stage(id);
+    await completeIn(id, inBody({ attempt }));
     const ids = async (path: string) => ((await (await callV(path)).json()) as ListFilesResponse).items.map((i) => i.id);
     expect(await ids('/files')).toEqual([]);
     expect(await ids('/files?vault=1')).toEqual([id]);
@@ -379,36 +519,56 @@ describe('POST /files/:id/vault/in/complete', () => {
 
   it('records no thumbnail when hasThumb is false, even if the plain file had one', async () => {
     const id = await plainFile({ kind: 'image', mime: 'image/png', thumb: true });
-    await put(`vault/${id}`, 40);
-    await completeIn(id, inBody({ hasThumb: false }));
+    const attempt = await stage(id);
+    await completeIn(id, inBody({ hasThumb: false, attempt }));
     expect((await rowOf(id))?.has_thumb).toBe(0);
     expect(await has(`thumbs/${id}.jpg`)).toBe(false);
   });
 
-  it('records no thumbnail when hasThumb is true but vault/<id>.thumb was never uploaded', async () => {
+  it('records no thumbnail when hasThumb is true but the attempt\'s thumbnail was never uploaded', async () => {
     const id = await plainFile({ kind: 'image', mime: 'image/png', thumb: true });
-    await put(`vault/${id}`, 40);
-    const item = (await (await completeIn(id, inBody({ hasThumb: true }))).json()) as FileItem;
+    const attempt = await stage(id);
+    const item = (await (await completeIn(id, inBody({ hasThumb: true, attempt }))).json()) as FileItem;
     expect((await rowOf(id))?.has_thumb).toBe(0);
     expect(item.thumbUrl).toBeNull();
   });
 
+  it('does not take a thumbnail from another attempt', async () => {
+    const id = await plainFile({ kind: 'image', mime: 'image/png', thumb: true });
+    await stage(id, { thumb: true });
+    const attempt = await stage(id);
+    await completeIn(id, inBody({ hasThumb: true, attempt }));
+    expect((await rowOf(id))?.has_thumb).toBe(0);
+  });
+
   it('converts a legacy vault item and leaves it in the vault', async () => {
     const id = await plainFile({ inVault: 1, name: 'old.txt' });
-    await put(`vault/${id}`, 40);
-    expect((await completeIn(id, inBody())).status).toBe(200);
-    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, name: '', enc_meta: ENC_META });
+    const attempt = await stage(id);
+    expect((await completeIn(id, inBody({ attempt }))).status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, name: '', enc_meta: ENC_META, enc_object: attempt });
     expect(await has(`files/${id}`)).toBe(false);
   });
 
-  it('moves a link in without any upload: size 0 is accepted and vault/<id> is not required', async () => {
+  it('finishes an item that vault/in already put in the vault (in_vault = 1, encrypted = 0)', async () => {
+    const id = await plainFile({ thumb: true });
+    const { attempt, urls } = await startIn(id);
+    expect(urls.upload).toBe(`vault/${id}.${attempt}`);
+    await stage(id, { attempt, thumb: true });
+    const res = await completeIn(id, inBody({ hasThumb: true, attempt }));
+    expect(res.status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_object: attempt, has_thumb: 1 });
+  });
+
+  it('moves a link in without any upload: size 0 is accepted, the attempt is remembered, and no file object is required', async () => {
     const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0 });
     await env.DB.prepare('UPDATE files SET previewed_at = 5, icon_url = ? WHERE id = ?').bind('https://example.com/i.png', id).run();
-    const res = await completeInRaw(id, inBody({ size: 0 }));
+    const attempt = newAttempt();
+    const res = await completeIn(id, inBody({ size: 0, attempt }));
     expect(res.status).toBe(200);
     expect(await rowOf(id)).toMatchObject({
       encrypted: 1,
       in_vault: 1,
+      enc_object: attempt,
       enc_meta: ENC_META,
       enc_key: ENC_KEY,
       name: '',
@@ -423,180 +583,285 @@ describe('POST /files/:id/vault/in/complete', () => {
     expect(await vaultObjects()).toEqual([]);
   });
 
-  it('moves a link with a preview picture in, keeping the picture encrypted and removing the plain one (spec Q3)', async () => {
+  it('moves a link with a preview picture in, keeping the picture encrypted on the attempt\'s thumb key and removing the plain one (spec Q3)', async () => {
     const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0, hasThumb: 1 });
     await put(`thumbs/${id}.jpg`, 7);
-    await put(`vault/${id}.thumb`, 39);
-    const res = await completeInRaw(id, inBody({ size: 0, hasThumb: true }));
+    const attempt = newAttempt();
+    await put(`vault/${id}.${attempt}.thumb`, 39);
+    const res = await completeIn(id, inBody({ size: 0, hasThumb: true, attempt }));
     expect(res.status).toBe(200);
-    expect(await rowOf(id)).toMatchObject({ encrypted: 1, kind: 'file', url: null, size: 0, has_thumb: 1 });
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, kind: 'file', url: null, size: 0, has_thumb: 1, enc_object: attempt });
     expect(await has(`thumbs/${id}.jpg`)).toBe(false);
-    expect(await vaultObjects()).toEqual([`vault/${id}.thumb`]);
+    expect(await vaultObjects()).toEqual([`vault/${id}.${attempt}.thumb`]);
+    expect(keyOf(((await res.json()) as FileItem).thumbUrl)).toBe(`vault/${id}.${attempt}.thumb`);
   });
 
-  it('is idempotent: a second complete answers 200 and deletes nothing from vault/', async () => {
+  it('asks a link for an attempt too: answers 400 without one and changes nothing', async () => {
+    const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0 });
+    const res = await completeIn(id, inBody({ size: 0 }));
+    expect(res.status).toBe(400);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, kind: 'link', in_vault: 0, enc_object: null });
+  });
+
+  it('is idempotent for the same attempt: a retry after success answers 200 and deletes nothing from the live object', async () => {
     const id = await plainFile({ thumb: true });
-    await put(`vault/${id}`, 40);
-    await put(`vault/${id}.thumb`, 20);
-    expect((await completeIn(id, inBody({ hasThumb: true }))).status).toBe(200);
-    const again = await completeIn(id, inBody({ hasThumb: true }));
+    const attempt = await stage(id, { thumb: true });
+    expect((await completeIn(id, inBody({ hasThumb: true, attempt }))).status).toBe(200);
+    const again = await completeIn(id, inBody({ hasThumb: true, attempt }));
     expect(again.status).toBe(200);
     expect(((await again.json()) as FileItem).encrypted).toBe(true);
-    expect((await vaultObjects()).sort()).toEqual([`vault/${id}`, `vault/${id}.thumb`]);
-    expect(await rowOf(id)).toMatchObject({ encrypted: 1, enc_meta: ENC_META, size: 40, has_thumb: 1 });
+    expect((await vaultObjects()).sort()).toEqual([`vault/${id}.${attempt}`, `vault/${id}.${attempt}.thumb`]);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, enc_meta: ENC_META, enc_object: attempt, size: 40, has_thumb: 1 });
   });
 
-  it('is idempotent for a row that was uploaded straight into the vault', async () => {
+  it('is idempotent for a row that was uploaded straight into the vault: its fixed-key object stays', async () => {
     const id = await vaultedFile({ thumb: true });
     const res = await completeIn(id, inBody({ hasThumb: true }));
     expect(res.status).toBe(200);
     expect((await vaultObjects()).sort()).toEqual([`vault/${id}`, `vault/${id}.thumb`]);
+    expect((await rowOf(id))?.enc_object).toBeNull();
+  });
+
+  it('ignores etag and claim in the body: they neither help nor hurt', async () => {
+    const id = await plainFile();
+    const attempt = await stage(id);
+    const res = await completeIn(id, { ...inBody({ attempt }), etag: 'whatever', claim: 'whatever-too' });
+    expect(res.status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, enc_object: attempt, enc_key: ENC_KEY });
+  });
+
+  it('needs no etag and no claim: a body of the five fields is enough', async () => {
+    const id = await plainFile();
+    const attempt = await stage(id);
+    const body = inBody({ attempt });
+    expect(Object.keys(body).sort()).toEqual(['attempt', 'encKey', 'encMeta', 'hasThumb', 'size']);
+    expect((await completeIn(id, body)).status).toBe(200);
+  });
+
+  it('answers 404 for a row in the normal trash, and changes nothing', async () => {
+    const id = await plainFile({ deletedAt: Date.now() - 1000 });
+    const attempt = await stage(id);
+    const before = await rowOf(id);
+    expect((await completeIn(id, inBody({ attempt }))).status).toBe(404);
+    expect(await rowOf(id)).toEqual(before);
+    expect(await has(`files/${id}`)).toBe(true);
+  });
+
+  describe('the move-out cleanup call (an already encrypted row, a body without attempt)', () => {
+    it('answers 200 and sweeps files/<id> and thumbs/<id>.jpg that an interrupted move out left, keeping the live object', async () => {
+      const attempt = newAttempt();
+      const id = await vaultedFile({ thumb: true, attempt });
+      await put(`files/${id}`, 4);
+      await put(`thumbs/${id}.jpg`, 3);
+      const res = await completeIn(id, inBody({ hasThumb: true }));
+      expect(res.status).toBe(200);
+      expect(await has(`files/${id}`)).toBe(false);
+      expect(await has(`thumbs/${id}.jpg`)).toBe(false);
+      expect((await vaultObjects()).sort()).toEqual([`vault/${id}.${attempt}`, `vault/${id}.${attempt}.thumb`]);
+      expect(await rowOf(id)).toMatchObject({ encrypted: 1, enc_key: 'S0VZ', enc_object: attempt });
+    });
+
+    it('does the same for a row uploaded straight into the vault (enc_object NULL)', async () => {
+      const id = await vaultedFile({ thumb: true });
+      await put(`files/${id}`, 4);
+      await put(`thumbs/${id}.jpg`, 3);
+      expect((await completeIn(id, inBody({ hasThumb: true }))).status).toBe(200);
+      expect(await has(`files/${id}`)).toBe(false);
+      expect(await has(`thumbs/${id}.jpg`)).toBe(false);
+      expect((await vaultObjects()).sort()).toEqual([`vault/${id}`, `vault/${id}.thumb`]);
+    });
   });
 
   describe('invalid body: answers 400 and changes nothing', () => {
+    const attempt = 'AAAAAAAAAAAAAAAAAAAAAA';
     const bad: [string, unknown][] = [
-      ['missing encMeta', { encKey: ENC_KEY, size: 40, hasThumb: false }],
-      ['missing encKey', { encMeta: ENC_META, size: 40, hasThumb: false }],
-      ['empty encMeta', inBody({ encMeta: '' })],
-      ['encMeta that is not a string', { ...inBody(), encMeta: 5 }],
-      ['encKey that is not a string', { ...inBody(), encKey: ['x'] }],
-      ['encMeta over 8192 characters', inBody({ encMeta: 'A'.repeat(8193) })],
-      ['encKey over 512 characters', inBody({ encKey: 'A'.repeat(513) })],
-      ['missing size', { encMeta: ENC_META, encKey: ENC_KEY, hasThumb: false }],
-      ['non-integer size', inBody({ size: 40.5 })],
-      ['negative size', inBody({ size: -1 })],
-      ['size as a string', { ...inBody(), size: '40' }],
+      ['missing encMeta', { encKey: ENC_KEY, size: 40, hasThumb: false, attempt }],
+      ['missing encKey', { encMeta: ENC_META, size: 40, hasThumb: false, attempt }],
+      ['empty encMeta', inBody({ encMeta: '', attempt })],
+      ['encMeta that is not a string', { ...inBody({ attempt }), encMeta: 5 }],
+      ['encKey that is not a string', { ...inBody({ attempt }), encKey: ['x'] }],
+      ['encMeta over 8192 characters', inBody({ encMeta: 'A'.repeat(8193), attempt })],
+      ['encKey over 512 characters', inBody({ encKey: 'A'.repeat(513), attempt })],
+      ['missing size', { encMeta: ENC_META, encKey: ENC_KEY, hasThumb: false, attempt }],
+      ['non-integer size', inBody({ size: 40.5, attempt })],
+      ['negative size', inBody({ size: -1, attempt })],
+      ['size as a string', { ...inBody({ attempt }), size: '40' }],
+      ['missing attempt', inBody()],
+      ['empty attempt', inBody({ attempt: '' })],
+      ['attempt that is not a string', { ...inBody(), attempt: 5 }],
+      ['null attempt', { ...inBody(), attempt: null }],
+      ['attempt shorter than 16 characters', inBody({ attempt: 'abcdefghijklmno' })],
+      ['attempt with a slash (it must not reach another key)', inBody({ attempt: 'AAAAAAAA/AAAAAAAAAAAAA' })],
+      ['attempt with a dot (it would collide with the .thumb suffix)', inBody({ attempt: 'AAAAAAAAAAAAAAAA.thumb' })],
+      ['attempt with a path climb', inBody({ attempt: '../../files/AAAAAAAAAAAA' })],
+      ['attempt with a space', inBody({ attempt: 'AAAAAAAA AAAAAAAAAAAAA' })],
     ];
     for (const [label, body] of bad) {
       it(label, async () => {
         const id = await plainFile();
-        await put(`vault/${id}`, 40);
+        await put(`vault/${id}.${attempt}`, 40);
         const res = await completeIn(id, body);
         expect(res.status).toBe(400);
-        expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null });
+        expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null, enc_object: null });
         expect(await has(`files/${id}`)).toBe(true);
-        expect(await has(`vault/${id}`)).toBe(true);
+        expect(await has(`vault/${id}.${attempt}`)).toBe(true);
       });
     }
 
     it('a body that is not JSON', async () => {
       const id = await plainFile();
-      await put(`vault/${id}`, 40);
+      await put(`vault/${id}.${attempt}`, 40);
       const res = await callV(`/files/${id}/vault/in/complete`, { method: 'POST', body: 'not json', headers: JSON_HEADERS });
       expect(res.status).toBe(400);
       expect((await rowOf(id))?.encrypted).toBe(0);
     });
   });
 
-  describe('etag: two devices moving the same file in (spec 4.7b C1)', () => {
-    /** Puts `fill`-bytes at vault/<id> as a device does and returns the ETag R2 handed back (unquoted). */
-    const putCipher = async (id: string, fill: number, bytes = 40) => (await env.BUCKET.put(`vault/${id}`, new Uint8Array(bytes).fill(fill)))!.etag;
-    const withEtag = (etag: unknown, over: Partial<VaultMoveInComplete> = {}) => ({ ...inBody(over), etag });
-
-    describe('a file needs a well-formed etag: answers 400 and changes nothing', () => {
-      const bad: [string, () => unknown][] = [
-        ['missing etag', () => inBody()],
-        ['empty etag', () => withEtag('')],
-        ['etag that is not a string', () => withEtag(5)],
-        ['null etag', () => withEtag(null)],
-        ['etag over 200 characters', () => withEtag('a'.repeat(201))],
-      ];
-      for (const [label, make] of bad) {
-        it(label, async () => {
-          const id = await plainFile();
-          await putCipher(id, 1);
-          const res = await completeInRaw(id, make());
-          expect(res.status).toBe(400);
-          expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null, enc_key: null });
-          expect(await has(`files/${id}`)).toBe(true);
-          expect(await has(`vault/${id}`)).toBe(true);
-        });
-      }
-    });
-
-    it('accepts the etag R2 reports for vault/<id>', async () => {
-      const id = await plainFile();
-      const etag = await putCipher(id, 1);
-      expect(etag).toBe((await env.BUCKET.head(`vault/${id}`))!.etag);
-      const res = await completeInRaw(id, withEtag(etag));
-      expect(res.status).toBe(200);
-      expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_key: ENC_KEY });
-    });
-
-    it('accepts the etag in the quoted form of the ETag header', async () => {
-      const id = await plainFile();
-      const etag = await putCipher(id, 1);
-      const res = await completeInRaw(id, withEtag(`"${etag}"`));
-      expect(res.status).toBe(200);
-      expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_key: ENC_KEY });
-    });
-
-    it('treats an etag of exactly 200 characters as well-formed: it is a mismatch (409), not a bad request', async () => {
-      const id = await plainFile();
-      await putCipher(id, 1);
-      const res = await completeInRaw(id, withEtag('a'.repeat(200)));
-      expect(res.status).toBe(409);
-      expect(await errorCode(res)).toBe('item_changed');
-    });
-
-    it('answers 409 item_changed when another device overwrote vault/<id> with the same size, and changes nothing', async () => {
-      const id = await plainFile({ thumb: true });
-      const etagA = await putCipher(id, 1); // device A
-      const etagB = await putCipher(id, 2); // device B overwrites with different bytes of the same size
-      expect(etagB).not.toBe(etagA);
-
-      const res = await completeInRaw(id, withEtag(etagA, { encKey: 'QUtFWS1B' }));
-      expect(res.status).toBe(409);
-      expect(await errorCode(res)).toBe('item_changed');
-      expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null, enc_key: null, has_thumb: 1 });
-      expect(await has(`files/${id}`)).toBe(true);
-      expect(await has(`thumbs/${id}.jpg`)).toBe(true);
-      expect(await has(`vault/${id}`)).toBe(true);
-    });
-
-    it('lets the device that wrote the current bytes finish: enc_key is the one of that device', async () => {
-      const id = await plainFile();
-      const etagA = await putCipher(id, 1);
-      const etagB = await putCipher(id, 2);
-      expect((await completeInRaw(id, withEtag(etagA, { encKey: 'QUtFWS1B' }))).status).toBe(409);
-
-      const res = await completeInRaw(id, withEtag(etagB, { encKey: 'QktFWS1C' }));
-      expect(res.status).toBe(200);
-      expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_key: 'QktFWS1C' });
-      expect(await has(`files/${id}`)).toBe(false);
-      expect(await has(`vault/${id}`)).toBe(true);
-    });
-
-    it('does not compare the etag once the row is encrypted: a retry with any well-formed etag answers 200 and sweeps the plain objects', async () => {
-      const id = await plainFile({ thumb: true });
-      const etag = await putCipher(id, 1);
-      expect((await completeInRaw(id, withEtag(etag))).status).toBe(200);
-      // An interrupted move-out left plain objects behind.
-      await put(`files/${id}`, 4);
-      await put(`thumbs/${id}.jpg`, 3);
-
-      const again = await completeInRaw(id, withEtag('some-other-etag'));
-      expect(again.status).toBe(200);
-      expect(await has(`files/${id}`)).toBe(false);
-      expect(await has(`thumbs/${id}.jpg`)).toBe(false);
-      expect(await has(`vault/${id}`)).toBe(true);
-      expect(await rowOf(id)).toMatchObject({ encrypted: 1, enc_key: ENC_KEY });
-    });
-
-    it('lets a link omit the etag: it has no object to compare', async () => {
-      const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0 });
-      const res = await completeInRaw(id, inBody({ size: 0 }));
-      expect(res.status).toBe(200);
-      expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_key: ENC_KEY });
-    });
-  });
-
   it('accepts encMeta of exactly 8192 characters and encKey of exactly 512', async () => {
     const id = await plainFile();
-    await put(`vault/${id}`, 40);
-    const res = await completeIn(id, inBody({ encMeta: 'A'.repeat(8192), encKey: 'B'.repeat(512) }));
+    const attempt = await stage(id);
+    const res = await completeIn(id, inBody({ encMeta: 'A'.repeat(8192), encKey: 'B'.repeat(512), attempt }));
     expect(res.status).toBe(200);
     expect(await rowOf(id)).toMatchObject({ encrypted: 1 });
+  });
+});
+
+describe('two devices moving the same file in: every attempt has its own object (spec 4.7d)', () => {
+  /** What a device does: vault/in, then PUT its own ciphertext (`fill` marks whose bytes they are) at the address it was given. */
+  async function device(id: string, fill: number, over: { thumb?: boolean; encKey: string; encMeta: string }) {
+    const { attempt, urls } = await startIn(id);
+    expect(urls.upload).toBe(`vault/${id}.${attempt}`);
+    await stage(id, { attempt, fill, thumb: over.thumb });
+    const complete = () => completeIn(id, inBody({ attempt, encKey: over.encKey, encMeta: over.encMeta, hasThumb: over.thumb === true }));
+    return { attempt, complete };
+  }
+  const A = { encKey: 'QUtFWS1B', encMeta: 'TUVUQS1B' };
+  const B = { encKey: 'QktFWS1C', encMeta: 'TUVUQS1C' };
+  const bytesOf = async (key: string) => new Uint8Array(await (await env.BUCKET.get(key))!.arrayBuffer());
+
+  it('both get an attempt and an upload address of their own: no item_busy for the second', async () => {
+    const id = await plainFile();
+    const a = await startIn(id);
+    const b = await startIn(id);
+    expect(a.attempt).not.toBe(b.attempt);
+    expect(a.urls.upload).not.toBe(b.urls.upload);
+  });
+
+  it('A completes first, then B: both get 200, the row keeps A\'s key, meta and object, and B\'s objects are deleted', async () => {
+    const id = await plainFile({ thumb: true });
+    const a = await device(id, 1, { ...A, thumb: true });
+    const b = await device(id, 2, { ...B, thumb: true });
+
+    expect((await a.complete()).status).toBe(200);
+    const late = await b.complete();
+    expect(late.status).toBe(200);
+    expect(((await late.json()) as FileItem).encrypted).toBe(true);
+
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_key: A.encKey, enc_meta: A.encMeta, enc_object: a.attempt });
+    expect((await vaultObjects()).sort()).toEqual([`vault/${id}.${a.attempt}`, `vault/${id}.${a.attempt}.thumb`]);
+    expect(await has(`vault/${id}.${b.attempt}`)).toBe(false);
+    expect(await has(`vault/${id}.${b.attempt}.thumb`)).toBe(false);
+  });
+
+  it('A completes first, then B: the stored object of the row is A\'s bytes, so A\'s key decrypts it (same size, different bytes)', async () => {
+    const id = await plainFile();
+    const a = await device(id, 1, A);
+    const b = await device(id, 2, B);
+    await a.complete();
+    await b.complete();
+
+    const row = (await rowOf(id))!;
+    const bytes = await bytesOf(`vault/${id}.${row.enc_object}`);
+    expect(row.enc_key).toBe(A.encKey);
+    expect(bytes).toHaveLength(40);
+    expect([...bytes].every((x) => x === 1)).toBe(true);
+  });
+
+  it('B completes first, then A: the symmetrical case, the row keeps B\'s key, meta and object, and A\'s objects are deleted', async () => {
+    const id = await plainFile({ thumb: true });
+    const a = await device(id, 1, { ...A, thumb: true });
+    const b = await device(id, 2, { ...B, thumb: true });
+
+    expect((await b.complete()).status).toBe(200);
+    expect((await a.complete()).status).toBe(200);
+
+    const row = (await rowOf(id))!;
+    expect(row).toMatchObject({ encrypted: 1, enc_key: B.encKey, enc_meta: B.encMeta, enc_object: b.attempt });
+    expect([...(await bytesOf(`vault/${id}.${row.enc_object}`))].every((x) => x === 2)).toBe(true);
+    expect((await vaultObjects()).sort()).toEqual([`vault/${id}.${b.attempt}`, `vault/${id}.${b.attempt}.thumb`]);
+  });
+
+  it('the loser changes nothing else: plain objects are gone once, the size and thumbnail flag are the winner\'s', async () => {
+    const id = await plainFile({ thumb: true });
+    const a = await device(id, 1, { ...A, thumb: true });
+    const b = await device(id, 2, B); // B has no thumbnail
+    await a.complete();
+    const before = await rowOf(id);
+    await b.complete();
+    expect(await rowOf(id)).toEqual(before);
+    expect(before).toMatchObject({ has_thumb: 1, size: 40 });
+  });
+
+  it('a retry by the winner after the loser finished is still 200 and keeps the live object', async () => {
+    const id = await plainFile();
+    const a = await device(id, 1, A);
+    const b = await device(id, 2, B);
+    await a.complete();
+    await b.complete();
+    expect((await a.complete()).status).toBe(200);
+    expect(await vaultObjects()).toEqual([`vault/${id}.${a.attempt}`]);
+    expect(await rowOf(id)).toMatchObject({ enc_key: A.encKey, enc_object: a.attempt });
+  });
+
+  it('a retry by the loser is 200 too, although its objects are gone already', async () => {
+    const id = await plainFile();
+    const a = await device(id, 1, A);
+    const b = await device(id, 2, B);
+    await a.complete();
+    await b.complete();
+    expect((await b.complete()).status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ enc_key: A.encKey, enc_object: a.attempt });
+  });
+
+  it('a row uploaded straight into the vault (enc_object NULL) is not changed by a late attempt, whose objects are deleted', async () => {
+    const id = await vaultedFile({ thumb: true });
+    const attempt = await stage(id, { thumb: true });
+    const res = await completeIn(id, inBody({ attempt, encKey: B.encKey, encMeta: B.encMeta, hasThumb: true }));
+    expect(res.status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ enc_key: 'S0VZ', enc_meta: 'TUVUQQ==', enc_object: null });
+    expect((await vaultObjects()).sort()).toEqual([`vault/${id}`, `vault/${id}.thumb`]);
+  });
+
+  describe('an attempt that never completes blocks nothing', () => {
+    it('leaves the row in the vault, not encrypted, with no attempt recorded', async () => {
+      const id = await plainFile();
+      await startIn(id);
+      expect(await rowOf(id)).toMatchObject({ in_vault: 1, encrypted: 0, enc_object: null });
+    });
+
+    it('a later vault/in and complete works as normal, and the abandoned objects stay for the cron', async () => {
+      const id = await plainFile({ thumb: true });
+      const abandoned = await startIn(id);
+      await stage(id, { attempt: abandoned.attempt, fill: 9, thumb: true });
+
+      const later = await startIn(id);
+      expect(later.attempt).not.toBe(abandoned.attempt);
+      await stage(id, { attempt: later.attempt, fill: 1, thumb: true });
+      const res = await completeIn(id, inBody({ attempt: later.attempt, hasThumb: true }));
+      expect(res.status).toBe(200);
+
+      expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_object: later.attempt, has_thumb: 1 });
+      expect(await has(`vault/${id}.${later.attempt}`)).toBe(true);
+      expect(await has(`vault/${id}.${abandoned.attempt}`)).toBe(true);
+    });
+
+    it('the abandoned attempt can still complete if it is the first to do so', async () => {
+      const id = await plainFile();
+      const first = await device(id, 1, A);
+      await startIn(id); // a second vault/in that nobody uses
+      expect((await first.complete()).status).toBe(200);
+      expect(await rowOf(id)).toMatchObject({ encrypted: 1, enc_object: first.attempt });
+    });
   });
 });
 
@@ -893,337 +1158,97 @@ describe('POST /files/:id/vault/out/complete', () => {
   });
 });
 
-describe('vault/in claim: one device at a time may write vault/<id> (spec 4.7c, review N1)', () => {
-  it('gives a non-empty base64url claim of at least 16 characters and stores it with an expiry 2 hours ahead', async () => {
-    const id = await plainFile();
-    const before = Date.now();
-    const claim = await claimOf(await moveIn(id));
-    expect(claim).toMatch(/^[A-Za-z0-9_-]{16,}$/);
-    const stored = (await claimRow(id))!;
-    expect(stored.in_claim).toBe(claim);
-    expect(stored.in_claim_until!).toBeGreaterThanOrEqual(before + CLAIM_MS - 5000);
-    expect(stored.in_claim_until!).toBeLessThanOrEqual(Date.now() + CLAIM_MS + 5000);
+describe('moving out an item that an attempt encrypted: the row\'s enc_object names its objects (spec 4.7d)', () => {
+  it('vault/out signs the GET on vault/<id>.<enc_object> and the thumbnail GET on its .thumb, and still the PUTs on files/<id>', async () => {
+    const attempt = newAttempt();
+    const id = await vaultedFile({ thumb: true, attempt });
+    expect(await urlsOf(await moveOut(id))).toEqual({
+      download: `vault/${id}.${attempt}`,
+      thumb: `vault/${id}.${attempt}.thumb`,
+      upload: `files/${id}`,
+      thumbUpload: `thumbs/${id}.jpg`,
+    });
   });
 
-  it('answers 409 item_busy to a second vault/in while the claim is live: no addresses, and the stored claim is unchanged', async () => {
-    const id = await plainFile({ thumb: true });
-    const claim = await claimOf(await moveIn(id));
-    const stored = await claimRow(id);
-
-    const second = await moveIn(id);
-    expect(second.status).toBe(409);
-    const body = (await second.json()) as Record<string, unknown> & { error: { code: string } };
-    expect(body.error.code).toBe('item_busy');
-    for (const k of ['uploadUrl', 'thumbUploadUrl', 'downloadUrl', 'thumbUrl', 'claim']) expect(body).not.toHaveProperty(k);
-    expect(JSON.stringify(body)).not.toContain('r2.test');
-    expect(await claimRow(id)).toEqual(stored);
-    expect((await claimRow(id))!.in_claim).toBe(claim);
+  it('vault/out signs the fixed vault/<id> for a row with no enc_object (uploaded straight into the vault)', async () => {
+    const id = await vaultedFile({ thumb: true });
+    expect(await urlsOf(await moveOut(id))).toMatchObject({ download: `vault/${id}`, thumb: `vault/${id}.thumb` });
   });
 
-  it('gives a new claim once the old one has expired', async () => {
-    const id = await plainFile();
-    const first = await claimOf(await moveIn(id));
-    await expireClaim(id);
-
-    const second = await claimOf(await moveIn(id));
-    expect(second).not.toBe(first);
-    const stored = (await claimRow(id))!;
-    expect(stored.in_claim).toBe(second);
-    expect(stored.in_claim_until!).toBeGreaterThan(Date.now() + CLAIM_MS - 5000);
+  it('vault/out stamps out_started_at as before and does not change enc_object', async () => {
+    const attempt = newAttempt();
+    const id = await vaultedFile({ attempt });
+    expect((await moveOut(id)).status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, enc_object: attempt });
+    expect((await rowOf(id))!.out_started_at).not.toBeNull();
   });
 
-  it('claims two different items independently', async () => {
-    const a = await plainFile();
-    const b = await plainFile();
-    expect(await claimOf(await moveIn(a))).not.toBe(await claimOf(await moveIn(b)));
-  });
-
-  it('claims a legacy vault item, a legacy item in the vault trash and a link too, because they all go through vault/in', async () => {
-    const legacy = await plainFile({ inVault: 1 });
-    const trashed = await plainFile({ inVault: 1, deletedAt: Date.now() - 1000 });
-    const link = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'example.com', size: 0 });
-    for (const id of [legacy, trashed, link]) {
-      const claim = await claimOf(await moveIn(id));
-      expect((await claimRow(id))!.in_claim).toBe(claim);
-      expect((await moveIn(id)).status).toBe(409);
-    }
-  });
-
-  it('still answers 409 already_encrypted for an encrypted row, and claims nothing', async () => {
-    const id = await vaultedFile();
-    const res = await moveIn(id);
-    expect(res.status).toBe(409);
-    expect(await errorCode(res)).toBe('already_encrypted');
-    expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
-  });
-
-  it('claims nothing when the Vault is not ready', async () => {
-    const id = await plainFile();
-    await setState('none');
-    expect((await moveIn(id)).status).toBe(409);
-    expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
-  });
-});
-
-describe('vault/in/complete and the claim (spec 4.7c)', () => {
-  /** A plain row claimed by vault/in, with its ciphertext uploaded. */
-  async function claimed(f: NewRow & { thumb?: boolean } = {}) {
-    const id = await plainFile(f);
-    const claim = await claimOf(await moveIn(id));
-    await put(`vault/${id}`, 40);
-    return { id, claim };
-  }
-  /** Nothing about the item moved: still plain, still claimed, objects as they were. */
-  async function untouched(id: string, claim: string | null) {
-    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null, enc_key: null });
-    expect((await claimRow(id))!.in_claim).toBe(claim);
-    expect(await has(`files/${id}`)).toBe(true);
-    expect(await has(`vault/${id}`)).toBe(true);
-  }
-
-  it('completes with the matching, unexpired claim, and clears the claim columns', async () => {
-    const { id, claim } = await claimed();
-    const res = await completeIn(id, inBody({ claim }));
-    expect(res.status).toBe(200);
-    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, enc_key: ENC_KEY });
-    expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
-  });
-
-  it('answers 409 item_busy with a wrong claim, and changes nothing', async () => {
-    const { id, claim } = await claimed();
-    const res = await completeIn(id, inBody({ claim: `${claim}x` }));
-    expect(res.status).toBe(409);
-    expect(await errorCode(res)).toBe('item_busy');
-    await untouched(id, claim);
-  });
-
-  it('answers 409 item_busy with no claim while the row has one, and changes nothing', async () => {
-    const { id, claim } = await claimed({ thumb: true });
+  it('out/complete deletes vault/<id>.<enc_object> and its thumbnail, keeps the plain objects, and the row is plain with no enc_object', async () => {
+    const attempt = newAttempt();
+    const id = await vaultedFile({ thumb: true, attempt });
+    expect((await moveOut(id)).status).toBe(200);
+    await put(`files/${id}`, 10);
     await put(`thumbs/${id}.jpg`, 3);
-    const res = await completeIn(id, inBody());
-    expect(res.status).toBe(409);
-    expect(await errorCode(res)).toBe('item_busy');
-    await untouched(id, claim);
-    expect(await has(`thumbs/${id}.jpg`)).toBe(true);
-  });
-
-  it('answers 409 item_busy with the matching claim once it expired, and changes nothing', async () => {
-    const { id, claim } = await claimed();
-    await expireClaim(id);
-    const res = await completeIn(id, inBody({ claim }));
-    expect(res.status).toBe(409);
-    expect(await errorCode(res)).toBe('item_busy');
-    await untouched(id, claim);
-  });
-
-  it('lets a row with no claim at all complete without one (items that never went through vault/in)', async () => {
-    const id = await plainFile();
-    await put(`vault/${id}`, 40);
-    expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
-    const res = await completeIn(id, inBody());
+    const res = await completeOut(id, outBody({ mime: 'image/png', hasThumb: true }));
     expect(res.status).toBe(200);
-    expect((await rowOf(id))?.encrypted).toBe(1);
+    expect(await vaultObjects()).toEqual([]);
+    expect(await has(`files/${id}`)).toBe(true);
+    expect(await has(`thumbs/${id}.jpg`)).toBe(true);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, enc_meta: null, enc_key: null, enc_object: null, out_started_at: null });
   });
 
-  it('answers 400 when the claim is not a string, and changes nothing', async () => {
-    const { id, claim } = await claimed();
-    const res = await completeIn(id, { ...inBody(), claim: 5 });
-    expect(res.status).toBe(400);
-    await untouched(id, claim);
+  it('out/complete of an encrypted link deletes the attempt-keyed preview thumbnail too', async () => {
+    const attempt = newAttempt();
+    const id = await vaultedFile({ withObjects: false, size: 0, attempt });
+    await put(`vault/${id}.${attempt}.thumb`, 20);
+    await env.DB.prepare('UPDATE files SET has_thumb = 1, out_started_at = ? WHERE id = ?').bind(Date.now(), id).run();
+    const res = await completeOut(id, outBody({ name: 'x', mime: LINK_MIME, size: 0, url: 'https://example.com/a' }));
+    expect(res.status).toBe(200);
+    expect(await vaultObjects()).toEqual([]);
+    expect(await rowOf(id)).toMatchObject({ kind: 'link', encrypted: 0, enc_object: null });
   });
 
-  it('asks a link for the claim too, and clears it when the link moves in', async () => {
-    const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0 });
-    const claim = await claimOf(await moveIn(id));
-
-    const wrong = await completeInRaw(id, inBody({ size: 0 }));
-    expect(wrong.status).toBe(409);
-    expect(await errorCode(wrong)).toBe('item_busy');
-    expect(await rowOf(id)).toMatchObject({ encrypted: 0, kind: 'link', url: 'https://example.com/a' });
-
-    const right = await completeInRaw(id, inBody({ size: 0, claim }));
-    expect(right.status).toBe(200);
-    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1 });
-    expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
+  it('out/complete that is refused (size_mismatch) leaves the attempt\'s objects and enc_object alone', async () => {
+    const attempt = newAttempt();
+    const id = await vaultedFile({ thumb: true, attempt });
+    expect((await moveOut(id)).status).toBe(200);
+    await put(`files/${id}`, 11);
+    const res = await completeOut(id, outBody({ size: 10 }));
+    expect(res.status).toBe(409);
+    expect((await vaultObjects()).sort()).toEqual([`vault/${id}.${attempt}`, `vault/${id}.${attempt}.thumb`]);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, enc_object: attempt, enc_key: 'S0VZ' });
   });
 
-  describe('409 item_changed and size_mismatch keep the claim and shorten it to issued + 16 minutes (spec 4.7c)', () => {
-    /** The claim row as vault/in left it, to compare after a refusal. */
-    async function overwritten() {
-      const id = await plainFile();
-      const claim = await claimOf(await moveIn(id));
-      const issued = (await claimRow(id))!.in_claim_until! - CLAIM_MS;
-      const etagA = (await env.BUCKET.put(`vault/${id}`, new Uint8Array(40).fill(1)))!.etag;
-      await env.BUCKET.put(`vault/${id}`, new Uint8Array(40).fill(2)); // overwritten, as by a device whose URL still lived
-      return { id, claim, issued, etagA };
-    }
-    const expectKept = async (id: string, claim: string, issued: number, untilBefore: number) => {
-      const stored = (await claimRow(id))!;
-      expect(stored.in_claim).toBe(claim);
-      expect(stored.in_claim_until!).toBeGreaterThanOrEqual(issued + KEPT_MS - 5000);
-      expect(stored.in_claim_until!).toBeLessThanOrEqual(issued + KEPT_MS + 5000);
-      expect(stored.in_claim_until!).toBeLessThan(untilBefore);
-    };
-
-    it('409 item_changed keeps in_claim and cuts in_claim_until to issued + 16 minutes', async () => {
-      const { id, claim, issued, etagA } = await overwritten();
-      const untilBefore = (await claimRow(id))!.in_claim_until!;
-      const res = await completeInRaw(id, { ...inBody({ claim }), etag: etagA });
-      expect(res.status).toBe(409);
-      expect(await errorCode(res)).toBe('item_changed');
-      expect((await rowOf(id))?.encrypted).toBe(0);
-      await expectKept(id, claim, issued, untilBefore);
-    });
-
-    it('409 size_mismatch keeps in_claim and cuts in_claim_until to issued + 16 minutes (and still deletes vault/<id>*)', async () => {
-      const id = await plainFile();
-      const claim = await claimOf(await moveIn(id));
-      const untilBefore = (await claimRow(id))!.in_claim_until!;
-      const issued = untilBefore - CLAIM_MS;
-      await put(`vault/${id}`, 41);
-      const res = await completeIn(id, inBody({ size: 40, claim }));
-      expect(res.status).toBe(409);
-      expect(await errorCode(res)).toBe('size_mismatch');
-      expect(await vaultObjects()).toEqual([]);
-      await expectKept(id, claim, issued, untilBefore);
-    });
-
-    it('after item_changed a new vault/in answers 409 item_busy with no addresses, until the shortened claim has passed', async () => {
-      const { id, claim, etagA } = await overwritten();
-      await completeInRaw(id, { ...inBody({ claim }), etag: etagA });
-
-      const busy = await moveIn(id);
-      expect(busy.status).toBe(409);
-      const body = (await busy.json()) as Record<string, unknown> & { error: { code: string } };
-      expect(body.error.code).toBe('item_busy');
-      for (const k of ['uploadUrl', 'thumbUploadUrl', 'downloadUrl', 'thumbUrl', 'claim']) expect(body).not.toHaveProperty(k);
-      expect((await claimRow(id))!.in_claim).toBe(claim);
-
-      await expireClaim(id);
-      const next = await claimOf(await moveIn(id));
-      expect(next).not.toBe(claim);
-      expect((await claimRow(id))!.in_claim).toBe(next);
-    });
-
-    it('after size_mismatch a new vault/in answers 409 item_busy, until the shortened claim has passed', async () => {
-      const id = await plainFile();
-      const claim = await claimOf(await moveIn(id));
-      await put(`vault/${id}`, 41);
-      expect(await errorCode(await completeIn(id, inBody({ size: 40, claim })))).toBe('size_mismatch');
-
-      const busy = await moveIn(id);
-      expect(busy.status).toBe(409);
-      expect(await errorCode(busy)).toBe('item_busy');
-      expect((await claimRow(id))!.in_claim).toBe(claim);
-
-      await expireClaim(id);
-      expect(await claimOf(await moveIn(id))).not.toBe(claim);
-    });
-
-    it('the holder can still finish with the old claim while the shortened claim lives, when the PUT is fine', async () => {
-      const { id, claim, etagA } = await overwritten();
-      expect(await errorCode(await completeInRaw(id, { ...inBody({ claim }), etag: etagA }))).toBe('item_changed');
-      const etagNow = (await env.BUCKET.head(`vault/${id}`))!.etag;
-      const res = await completeInRaw(id, { ...inBody({ claim }), etag: etagNow });
-      expect(res.status).toBe(200);
-      expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1 });
-      expect(await claimRow(id)).toEqual({ in_claim: null, in_claim_until: null });
-    });
-
-    it('once the shortened claim has passed, a complete with the old claim answers 409 item_busy and changes nothing', async () => {
-      const { id, claim, etagA } = await overwritten();
-      expect(await errorCode(await completeInRaw(id, { ...inBody({ claim }), etag: etagA }))).toBe('item_changed');
-      await expireClaim(id);
-      const etagNow = (await env.BUCKET.head(`vault/${id}`))!.etag;
-      const res = await completeInRaw(id, { ...inBody({ claim }), etag: etagNow });
-      expect(res.status).toBe(409);
-      expect(await errorCode(res)).toBe('item_busy');
-      await untouched(id, claim);
-    });
-
-    it('a second refusal does not push in_claim_until later than the first cut', async () => {
-      const { id, claim, etagA } = await overwritten();
-      await completeInRaw(id, { ...inBody({ claim }), etag: etagA });
-      const afterFirst = (await claimRow(id))!.in_claim_until!;
-      expect(await errorCode(await completeInRaw(id, { ...inBody({ claim }), etag: etagA }))).toBe('item_changed');
-      const stored = (await claimRow(id))!;
-      expect(stored.in_claim).toBe(claim);
-      expect(stored.in_claim_until!).toBeLessThanOrEqual(afterFirst);
-    });
-
-    it('the cut claim is shorter than the 2 hour claim and not shorter than the 15 minute lifetime of the URLs', async () => {
-      const { id, claim, issued, etagA } = await overwritten();
-      await completeInRaw(id, { ...inBody({ claim }), etag: etagA });
-      const until = (await claimRow(id))!.in_claim_until!;
-      expect(until - issued).toBeGreaterThan(URL_MS);
-      expect(until - issued).toBeLessThan(CLAIM_MS);
-    });
-
-    it('a request with a WRONG claim gets item_busy and does not release the holder', async () => {
-      const id = await plainFile();
-      const claim = await claimOf(await moveIn(id));
-      const before = await claimRow(id);
-      const etagA = (await env.BUCKET.put(`vault/${id}`, new Uint8Array(40).fill(1)))!.etag;
-      await env.BUCKET.put(`vault/${id}`, new Uint8Array(40).fill(2));
-      const res = await completeInRaw(id, { ...inBody({ claim: 'somebody-elses-claim-000' }), etag: etagA });
-      expect(await errorCode(res)).toBe('item_busy');
-      expect(await claimRow(id)).toEqual(before);
-      expect((await moveIn(id)).status).toBe(409);
-    });
-
-    it('the wrong size of a request with a wrong claim does not release it either', async () => {
-      const id = await plainFile();
-      const claim = await claimOf(await moveIn(id));
-      await put(`vault/${id}`, 41);
-      const before = await claimRow(id);
-      const res = await completeIn(id, inBody({ size: 40, claim: 'somebody-elses-claim-000' }));
-      expect(await errorCode(res)).toBe('item_busy');
-      expect((await claimRow(id))!.in_claim).toBe(claim);
-      expect(await claimRow(id)).toEqual(before);
-      expect(await has(`vault/${id}`)).toBe(true);
-    });
+  it('out/complete still answers 409 item_changed once the cron released out_started_at, and keeps the attempt\'s objects', async () => {
+    const attempt = newAttempt();
+    const id = await vaultedFile({ attempt });
+    await put(`files/${id}`, 10);
+    const res = await completeOut(id, outBody());
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('item_changed');
+    expect(await vaultObjects()).toEqual([`vault/${id}.${attempt}`]);
   });
 
-  describe('two devices moving the same file in (review N1)', () => {
-    it('B gets no upload address while A holds the claim; A completes; B then finds the row encrypted and its late complete changes nothing', async () => {
-      const id = await plainFile();
-      const claimA = await claimOf(await moveIn(id)); // device A
-      const b = await moveIn(id); // device B
-      expect(b.status).toBe(409);
-      expect(await errorCode(b)).toBe('item_busy');
+  it('a whole round trip through the API: vault/in, upload, complete, then vault/out signs the attempt\'s key and out/complete removes it', async () => {
+    const id = await plainFile({ kind: 'image', mime: 'image/png', thumb: true });
+    const { attempt } = await startIn(id);
+    await stage(id, { attempt, thumb: true });
+    expect((await completeIn(id, inBody({ attempt, hasThumb: true }))).status).toBe(200);
 
-      await put(`vault/${id}`, 40); // A's PUT
-      expect((await completeIn(id, inBody({ encKey: 'S0VZLUE=', claim: claimA }))).status).toBe(200);
-      expect((await rowOf(id))?.enc_key).toBe('S0VZLUE=');
+    const out = await urlsOf(await moveOut(id));
+    expect(out.download).toBe(`vault/${id}.${attempt}`);
+    expect(out.thumb).toBe(`vault/${id}.${attempt}.thumb`);
 
-      // B never got a URL, but could still send a complete of its own: the row is encrypted, so it is the idempotent answer.
-      const late = await completeIn(id, inBody({ encKey: 'S0VZLUI=', encMeta: 'bWV0YS1C', claim: 'device-b-claim-0000000' }));
-      expect(late.status).toBe(200);
-      expect(await rowOf(id)).toMatchObject({ encrypted: 1, enc_key: 'S0VZLUE=', enc_meta: ENC_META });
-      expect(await has(`vault/${id}`)).toBe(true);
-    });
+    await put(`files/${id}`, 10);
+    await put(`thumbs/${id}.jpg`, 3);
+    expect((await completeOut(id, outBody({ mime: 'image/png', hasThumb: true }))).status).toBe(200);
+    expect(await vaultObjects()).toEqual([]);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, enc_object: null });
 
-    it('with no claim and an etag that does not match, a complete on an encrypted row is still the idempotent 200 and keeps the key', async () => {
-      const id = await plainFile();
-      const claim = await claimOf(await moveIn(id));
-      await put(`vault/${id}`, 40);
-      expect((await completeIn(id, inBody({ claim }))).status).toBe(200);
-      const again = await completeInRaw(id, { ...inBody({ encKey: 'T1RIRVI=' }), etag: 'some-other-etag' });
-      expect(again.status).toBe(200);
-      expect((await rowOf(id))?.enc_key).toBe(ENC_KEY);
-    });
-
-    it('after A\'s claim expired, B can claim and move the file in; A\'s late complete then answers item_busy', async () => {
-      const id = await plainFile();
-      const claimA = await claimOf(await moveIn(id));
-      await expireClaim(id);
-      const claimB = await claimOf(await moveIn(id));
-      await put(`vault/${id}`, 40);
-      const late = await completeIn(id, inBody({ claim: claimA }));
-      expect(late.status).toBe(409);
-      expect(await errorCode(late)).toBe('item_busy');
-      expect((await completeIn(id, inBody({ claim: claimB }))).status).toBe(200);
-    });
+    // And it can go in again, with a new attempt.
+    const again = await startIn(id);
+    expect(again.attempt).not.toBe(attempt);
+    expect(again.urls.upload).toBe(`vault/${id}.${again.attempt}`);
   });
 });
 
@@ -1272,14 +1297,12 @@ describe('a legacy item in the vault trash', () => {
   it('can be moved in, stays in the vault trash, and loses its plain objects', async () => {
     const deletedAt = Date.now() - 1000;
     const id = await plainFile({ inVault: 1, deletedAt, thumb: true });
-    const urls = await moveIn(id);
-    expect(urls.status).toBe(200);
-    const claim = ((await urls.json()) as VaultMoveUrls).claim; // vault/in claimed the row, so complete has to send it (spec 4.7c)
-    await put(`vault/${id}`, 40);
-    await put(`vault/${id}.thumb`, 20);
-    const res = await completeIn(id, inBody({ size: 40, hasThumb: true, claim }));
+    const { attempt } = await startIn(id);
+    expect(await rowOf(id)).toMatchObject({ in_vault: 1, deleted_at: deletedAt, encrypted: 0 });
+    await stage(id, { attempt, thumb: true });
+    const res = await completeIn(id, inBody({ size: 40, hasThumb: true, attempt }));
     expect(res.status).toBe(200);
-    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, deleted_at: deletedAt, name: '' });
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, in_vault: 1, deleted_at: deletedAt, name: '', enc_object: attempt });
     expect(await has(`files/${id}`)).toBe(false);
     expect(await has(`thumbs/${id}.jpg`)).toBe(false);
   });
@@ -1291,12 +1314,14 @@ describe('a legacy item in the vault trash', () => {
 });
 
 describe('guards on all four routes', () => {
+  /** The attempt each vault/in/complete row was staged with. */
+  const attempts = new Map<string, string>();
   /** Each route with a row it would accept and a body that would otherwise be valid. */
   const routes: { name: string; call: (id: string) => Response | Promise<Response>; make: (f?: NewRow) => Promise<string> }[] = [
     { name: 'vault/in', call: moveIn, make: (f) => plainFile(f) },
-    { name: 'vault/in/complete', call: (id) => completeIn(id, inBody()), make: async (f) => {
+    { name: 'vault/in/complete', call: (id) => completeIn(id, inBody({ attempt: attempts.get(id) })), make: async (f) => {
       const id = await plainFile(f);
-      await put(`vault/${id}`, 40);
+      attempts.set(id, await stage(id));
       return id;
     } },
     { name: 'vault/out', call: moveOut, make: (f) => vaultedFile(f) },

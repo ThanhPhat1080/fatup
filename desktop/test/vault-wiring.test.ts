@@ -67,4 +67,13 @@ describe('wiring (static checks on files the unit tests cannot load)', () => {
     expect(prepare).not.toContain('afterOpen');
     expect(commit).toContain('afterOpen');
   });
+
+  it('the vaultMoveIn handler has no legacy setVault loop any more (spec 4.7d: the Vault is set up first, then the files move)', () => {
+    const main = src('main/index.ts');
+    const registration = main.split('ipcMain.handle(').find((chunk) => chunk.startsWith("'vaultMoveIn'")) ?? '';
+    expect(registration).not.toBe('');
+    expect(registration).not.toContain('setVault(');
+    expect(registration).not.toContain("state === 'none'");
+    expect(main).not.toMatch(/\.setVault\(/);
+  });
 });

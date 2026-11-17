@@ -162,8 +162,6 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
   const server = miniServer();
   const objects = new Map<string, Uint8Array>();
   const puts: { url: string; body: Uint8Array }[] = [];
-  /** The ETag header the fake R2 answered for the last PUT of each address. */
-  const etags = new Map<string, string>();
   const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (init?.method === 'PUT') {
@@ -171,10 +169,8 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
       const body = sent instanceof Blob ? await bytesOf(sent) : new Uint8Array(sent as ArrayBufferLike);
       puts.push({ url, body });
       objects.set(url, body);
-      // R2 answers a PUT with the ETag of the stored object; a move in must send it back to the Worker (review C1).
-      const etag = `"etag-${puts.length}-${body.length}"`;
-      etags.set(url, etag);
-      return new Response(null, { status: 200, headers: { ETag: etag } });
+      // No ETag header on purpose: since spec 4.7d a move in does not need one.
+      return new Response(null, { status: 200 });
     }
     const body = objects.get(url);
     return body ? new Response(body as unknown as BodyInit) : new Response('missing', { status: 404 });
@@ -184,12 +180,9 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
   const created: { id: string; req: CreateUploadRequest }[] = [];
   const updates: { id: string; patch: Patch }[] = [];
   const completesIn: { id: string; req: VaultMoveInComplete }[] = [];
-  /** Ids whose claim another device holds (vault/in answers 409 item_busy), and the claims handed out per id. */
-  const busy = new Set<string>();
-  const claims = new Map<string, string[]>();
-  /** Ids whose last claim is still alive: the Worker keeps it after 409 item_changed (spec 4.7c), so vault/in answers item_busy until `expireClaim`. */
-  const live = new Set<string>();
-  const expireClaim = (id: string) => void live.delete(id);
+  /** Every attempt vault/in handed out per id, in order: a fresh one each time, written nowhere (spec 4.7d). */
+  const attempts = new Map<string, string[]>();
+  const attempt = (id: string, n = 0) => attempts.get(id)![n];
   const completesOut: { id: string; req: VaultMoveOutComplete }[] = [];
   const find = (id: string) => {
     const row = rows.find((r) => r.id === id);
@@ -227,20 +220,21 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
     addLink: vi.fn(async (): Promise<FileItem> => {
       throw new Error('the plain /links route must never be used for the Vault');
     }),
+    /** The legacy plain move: the encrypted Vault never uses it (spec 4.7d). */
+    setVault: vi.fn(async (): Promise<FileItem> => {
+      throw new Error('the legacy setVault must never be used');
+    }),
     moveIn: vi.fn(async (id: string): Promise<VaultMoveUrls> => {
-      if (busy.has(id) || live.has(id)) throw new ApiError('item_busy', 'Another device is moving this item', 409, { error: { code: 'item_busy', message: 'busy' } });
-      live.add(id);
-      // Every successful vault/in hands out a new claim (spec 4.7c).
-      const claim = `claim-${id}-${(claims.get(id)?.length ?? 0) + 1}-AAAAAAAAAAAA`;
-      claims.set(id, [...(claims.get(id) ?? []), claim]);
-      return { uploadUrl: `${R2}/put/vault/${id}`, thumbUploadUrl: null, downloadUrl: `${R2}/files/${id}`, thumbUrl: null, claim };
+      const attempt = `attempt-${id}-${(attempts.get(id)?.length ?? 0) + 1}-AAAAAAAAAAAA`;
+      attempts.set(id, [...(attempts.get(id) ?? []), attempt]);
+      return { uploadUrl: `${R2}/put/vault/${id}.${attempt}`, thumbUploadUrl: null, downloadUrl: `${R2}/files/${id}`, thumbUrl: null, attempt };
     }),
     moveInComplete: vi.fn(async (id: string, req: VaultMoveInComplete): Promise<FileItem> => {
       completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
-      live.delete(id); // a successful complete clears the claim
       const row = find(id);
       Object.assign(row, { name: '', mime: 'application/octet-stream', kind: 'file', inVault: true, encrypted: true, encMeta: req.encMeta, encKey: req.encKey, size: req.size });
-      objects.set(`${R2}/vault/${id}`, objects.get(`${R2}/put/vault/${id}`)!);
+      const written = objects.get(`${R2}/put/vault/${id}.${req.attempt}`);
+      if (written) objects.set(`${R2}/vault/${id}`, written);
       return { ...row };
     }),
     moveOut: vi.fn(
@@ -332,7 +326,7 @@ async function world(opts: { open?: boolean; unlocked?: boolean; appPinMatches?:
     return row;
   }
 
-  return { server, vault, client, fetchImpl, objects, puts, etags, busy, claims, live, expireClaim, rows, created, updates, completesIn, completesOut, made, revoked, saved, state, deps: baseDeps, readDeps, masterKey, addItem, addPlain, recoveryKey };
+  return { server, vault, client, fetchImpl, objects, puts, attempts, attempt, rows, created, updates, completesIn, completesOut, made, revoked, saved, state, deps: baseDeps, readDeps, masterKey, addItem, addPlain, recoveryKey };
 }
 
 const PDF_META: VaultMeta = { name: 'Hợp đồng.pdf', mime: 'application/pdf', kind: 'file' };
@@ -851,88 +845,91 @@ describe('web Vault: moving in and out', () => {
     expect(res.value[0]).toMatchObject({ id: 'A', name: 'Hợp đồng.pdf', mime: 'application/pdf' });
   });
 
-  it('sends the ETag R2 answered for the PUT of vault/<id> with the completion (review C1)', async () => {
+  it('PUTs to the address of the attempt and completes with that attempt: no etag, no claim, and no ETag header needed (spec 4.7d)', async () => {
     const w = await world();
     w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
     expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
-    const stored = w.etags.get(`${R2}/put/vault/A`);
-    expect(stored).toBeTruthy();
-    expect(w.completesIn[0].req.etag).toBe(stored);
+    expect(w.attempts.get('A')).toHaveLength(1);
+    expect(w.puts.map((p) => p.url)).toEqual([`${R2}/put/vault/A.${w.attempt('A')}`]);
+    const [{ req }] = w.completesIn;
+    expect(req.attempt).toBe(w.attempt('A'));
+    expect(req).not.toHaveProperty('etag');
+    expect(req).not.toHaveProperty('claim');
   });
 
-  it('retries once from scratch when the Worker answers 409 item_changed, and reports the item as moved', async () => {
-    const w = await world();
-    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
-    w.client.moveInComplete.mockImplementationOnce(async (id: string, req: VaultMoveInComplete) => {
-      w.completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
-      w.expireClaim(id); // the kept claim (cut to issued + 16 minutes) has run out by the time of the retry
-      throw new ApiError('item_changed', 'The item changed', 409, { error: { code: 'item_changed', message: 'changed' } });
-    });
-    expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
-    expect(w.client.moveIn).toHaveBeenCalledTimes(2);
-    expect(w.completesIn).toHaveLength(2);
-    expect(w.completesIn[1].req.etag).toBe(w.etags.get(`${R2}/put/vault/A`));
-    expect(w.completesIn[1].req.etag).not.toBe(w.completesIn[0].req.etag);
-    expect(w.completesIn[1].req.encKey).not.toBe(w.completesIn[0].req.encKey);
-  });
-
-  it('reports the item as failed when vault/in answers 409 item_busy right after item_changed (the Worker keeps the claim): no second PUT, no second complete', async () => {
-    const w = await world();
-    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
-    w.client.moveInComplete.mockImplementationOnce(async (id: string, req: VaultMoveInComplete) => {
-      w.completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
-      throw new ApiError('item_changed', 'The item changed', 409, { error: { code: 'item_changed', message: 'changed' } }); // claim stays alive
-    });
-    expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 0, failed: ['A'] } });
-    expect(w.client.moveIn).toHaveBeenCalledTimes(2);
-    expect(w.puts.filter((p) => p.url === `${R2}/put/vault/A`)).toHaveLength(1);
-    expect(w.completesIn).toHaveLength(1);
-    expect(w.claims.get('A')).toHaveLength(1);
-  });
-
-  it('sends the claim vault/in handed out with the completion (spec 4.7c)', async () => {
-    const w = await world();
-    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
-    expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
-    expect(w.claims.get('A')).toHaveLength(1);
-    expect(w.completesIn[0].req.claim).toBe(w.claims.get('A')![0]);
-  });
-
-  it('completes the retry after 409 item_changed with the NEW claim', async () => {
-    const w = await world();
-    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
-    w.client.moveInComplete.mockImplementationOnce(async (id: string, req: VaultMoveInComplete) => {
-      w.completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
-      w.expireClaim(id); // the kept claim (cut to issued + 16 minutes) has run out by the time of the retry
-      throw new ApiError('item_changed', 'The item changed', 409, { error: { code: 'item_changed', message: 'changed' } });
-    });
-    expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
-    const [claim1, claim2] = w.claims.get('A')!;
-    expect(claim1).not.toBe(claim2);
-    expect(w.completesIn[0].req.claim).toBe(claim1);
-    expect(w.completesIn[1].req.claim).toBe(claim2);
-  });
-
-  it('reports an item another device is moving (409 item_busy) as failed, without download, upload or retry, and moves the rest', async () => {
+  it('gives every item its own attempt', async () => {
     const w = await world();
     w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
     w.addPlain('B', { name: 'b.txt', mime: 'text/plain' }, enc('b'));
-    w.busy.add('A');
-    expect(await w.vault.vaultMoveIn(['A', 'B'])).toEqual({ ok: true, value: { done: 1, failed: ['A'] } });
-    expect(w.client.moveIn.mock.calls.filter(([id]) => id === 'A')).toHaveLength(1);
-    expect(w.puts.map((p) => p.url)).toEqual([`${R2}/put/vault/B`]);
-    expect(w.completesIn.map((c) => c.id)).toEqual(['B']);
-    expect(w.completesIn[0].req.claim).toBe(w.claims.get('B')![0]);
+    await w.vault.vaultMoveIn(['A', 'B']);
+    expect(w.completesIn.map((c) => c.req.attempt)).toEqual([w.attempt('A'), w.attempt('B')]);
+    expect(w.attempt('A')).not.toBe(w.attempt('B'));
   });
 
-  it('sends no claim in the cleanup call after a failed move out (the row is already encrypted)', async () => {
+  it('reports an item whose completion answers 409 as failed, without a retry (no second vault/in, no second PUT), and moves the rest', async () => {
+    const w = await world();
+    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
+    w.addPlain('B', { name: 'b.txt', mime: 'text/plain' }, enc('b'));
+    w.client.moveInComplete.mockImplementationOnce(async (id: string, req: VaultMoveInComplete) => {
+      w.completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
+      throw new ApiError('item_changed', 'The item changed', 409, { error: { code: 'item_changed', message: 'changed' } });
+    });
+    expect(await w.vault.vaultMoveIn(['A', 'B'])).toEqual({ ok: true, value: { done: 1, failed: ['A'] } });
+    expect(w.client.moveIn.mock.calls.filter(([id]) => id === 'A')).toHaveLength(1);
+    expect(w.puts.filter((p) => p.url.includes('/put/vault/A.'))).toHaveLength(1);
+    expect(w.completesIn.filter((c) => c.id === 'A')).toHaveLength(1);
+    expect(w.completesIn.at(-1)!.id).toBe('B');
+  });
+
+  it('reports an item whose PUT answers 500 as failed, without completing it, and moves the rest', async () => {
+    const w = await world();
+    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
+    w.addPlain('B', { name: 'b.txt', mime: 'text/plain' }, enc('b'));
+    const real = w.fetchImpl.getMockImplementation()!;
+    w.fetchImpl.mockImplementation(async (input: string | URL | Request, init?: RequestInit) =>
+      init?.method === 'PUT' && String(input).includes('/put/vault/A.') ? new Response('boom', { status: 500 }) : real(input, init),
+    );
+    expect(await w.vault.vaultMoveIn(['A', 'B'])).toEqual({ ok: true, value: { done: 1, failed: ['A'] } });
+    expect(w.completesIn.map((c) => c.id)).toEqual(['B']);
+    expect(w.client.moveIn.mock.calls.filter(([id]) => id === 'A')).toHaveLength(1);
+  });
+
+  it('retries a failed item on a later run with a NEW attempt', async () => {
+    const w = await world();
+    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
+    w.client.moveInComplete.mockImplementationOnce(async (id: string, req: VaultMoveInComplete) => {
+      w.completesIn.push({ id, req: JSON.parse(JSON.stringify(req)) as VaultMoveInComplete });
+      throw new ApiError('item_changed', 'The item changed', 409, { error: { code: 'item_changed', message: 'changed' } });
+    });
+    expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 0, failed: ['A'] } });
+    expect(await w.vault.vaultMoveIn(['A'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
+    expect(w.attempts.get('A')).toHaveLength(2);
+    expect(w.attempt('A', 1)).not.toBe(w.attempt('A', 0));
+    expect(w.completesIn.map((c) => c.req.attempt)).toEqual([w.attempt('A', 0), w.attempt('A', 1)]);
+    expect(w.puts.map((p) => p.url)).toEqual([`${R2}/put/vault/A.${w.attempt('A', 0)}`, `${R2}/put/vault/A.${w.attempt('A', 1)}`]);
+  });
+
+  it('sends no attempt in the cleanup call after a failed move out (the row is already encrypted), and no etag or claim', async () => {
     const w = await world();
     await w.addItem('E', PDF_META, PDF);
     await w.vault.listVault();
     w.client.moveOutComplete.mockRejectedValueOnce(new ApiError('network', 'down'));
     await w.vault.vaultMoveOut(['E']);
     expect(w.completesIn).toHaveLength(1);
-    expect(w.completesIn[0].req).not.toHaveProperty('claim');
+    for (const field of ['attempt', 'claim', 'etag']) expect(w.completesIn[0].req).not.toHaveProperty(field);
+    expect(w.attempts.get('E')).toBeUndefined();
+  });
+
+  it('does not use the legacy setVault when the Vault has not been set up (state none): it refuses and calls nothing', async () => {
+    const w = await world();
+    w.addPlain('A', { name: 'a.txt', mime: 'text/plain' }, enc('a'));
+    w.vault.vaultClose();
+    w.server.state.req = null; // the server says: no Vault yet
+    const res = await w.vault.vaultMoveIn(['A']);
+    expect(res.ok).toBe(false);
+    expect(w.client.setVault).not.toHaveBeenCalled();
+    expect(w.client.moveIn).not.toHaveBeenCalled();
+    expect(w.fetchImpl).not.toHaveBeenCalled();
   });
 
   it('cleans up the plain copy when a move out fails after the plain upload (review C3)', async () => {

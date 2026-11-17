@@ -14,9 +14,10 @@ const LOCK_RULES = [
 ];
 const VAULT_HEADER = 'x-fatup-vault'; // Node lower-cases incoming header names
 const VAULT_VERSION = '2';
-/** How long a device keeps the right to write vault/<id>, and how long the claim lives on after item_changed / size_mismatch (issued + 16 minutes). */
-const CLAIM_MS = 2 * 60 * 60 * 1000;
-const KEPT_CLAIM_MS = 16 * 60 * 1000;
+/** What `vault/in` hands out as `attempt` and what `vault/in/complete` accepts: base64url, at least 16 characters, no dot or slash (spec 4.7d). */
+const ATTEMPT = /^[A-Za-z0-9_-]{16,}$/;
+/** The R2 key of an encrypted item's object: `vault/<id>.<attempt>` once an attempt encrypted it, the fixed `vault/<id>` for a direct upload. */
+const vaultKey = (v) => (v.encObject ? `vault/${v.id}.${v.encObject}` : `vault/${v.id}`);
 
 const COLORS = [
   ['#4285f4', '#34a853'],
@@ -110,7 +111,7 @@ function plainThumbSrc(f, base) {
 
 /** The item as the Worker's toItem returns it, for a plain (not encrypted) file. */
 function plainJson(f, base, shares) {
-  const { img, uploaded, hasThumb, claim, claimUntil, ...item } = f;
+  const { img, uploaded, hasThumb, ...item } = f;
   return { ...item, encrypted: false, encMeta: null, encKey: null, shared: shares.has(f.id), thumbUrl: plainThumbSrc(f, base) };
 }
 
@@ -122,7 +123,7 @@ function vaultJson(v, base) {
     mime: 'application/octet-stream',
     size: v.size,
     kind: 'file',
-    thumbUrl: v.hasThumb ? `${base}/obj/vault/${v.id}.thumb` : null,
+    thumbUrl: v.hasThumb ? `${base}/obj/${vaultKey(v)}.thumb` : null,
     device: v.device,
     createdAt: v.createdAt,
     deletedAt: v.deletedAt,
@@ -352,10 +353,14 @@ export function startMockServer(realNow = Date.now(), options = {}) {
       const trash = url.searchParams.get('trash') === '1';
       // Like the Worker, `kind` filters: the client asks for `all` and for `link` separately. The mock keeps only files in the Vault, so `link` is empty.
       const kind = url.searchParams.get('kind') ?? 'all';
-      const items = vaultItems
-        .filter((v) => kind !== 'link' && (trash ? v.deletedAt !== null : v.deletedAt === null))
+      // Plain files that vault/in put in the Vault but no device has finished encrypting yet (in_vault = 1, encrypted = 0) come with their plain metadata.
+      const pending = trash || kind === 'link' ? [] : files.filter((f) => f.inVault).map((f) => ({ createdAt: f.createdAt, json: plainJson(f, base, shares) }));
+      const items = [
+        ...vaultItems.filter((v) => kind !== 'link' && (trash ? v.deletedAt !== null : v.deletedAt === null)).map((v) => ({ createdAt: v.createdAt, json: vaultJson(v, base) })),
+        ...pending,
+      ]
         .sort((a, b) => b.createdAt - a.createdAt)
-        .map((v) => vaultJson(v, base));
+        .map((x) => x.json);
       return { status: 200, body: { items, nextCursor: null } };
     }
 
@@ -465,33 +470,34 @@ export function startMockServer(realNow = Date.now(), options = {}) {
       if (!v) return null;
       if (v.deletedAt === null) return fail(409, 'not_in_trash', 'Move the file to the trash first');
       vaultItems.splice(vaultItems.indexOf(v), 1);
-      blobs.delete(`vault/${v.id}`);
-      blobs.delete(`vault/${v.id}.thumb`);
+      blobs.delete(vaultKey(v));
+      blobs.delete(`${vaultKey(v)}.thumb`);
       return { status: 204 };
     }
     if ((m = /^\/files\/(\w+)\/download$/.exec(pathname)) && method === 'GET') {
       const v = vaultItem(m[1]);
       if (!v) return null;
       if (v.deletedAt !== null) return fail(404, 'not_found', 'File not found');
-      return { status: 200, body: { url: `${base}/obj/vault/${v.id}` } };
+      return { status: 200, body: { url: `${base}/obj/${vaultKey(v)}` } };
     }
 
     // Moves. A plain file goes into the Vault with `in`, an encrypted one comes out with `out`; the client does the crypto.
     if ((m = /^\/files\/(\w+)\/vault\/in$/.exec(pathname)) && method === 'POST') {
       if (!ready()) return notReady();
       const f = files.find((x) => x.id === m[1]);
-      if (!f) return fail(404, 'not_found', 'File not found');
-      // One writer at a time, like the Worker: the claim lasts 2 hours, and nobody else gets addresses while it lives.
-      if (f.claim && f.claimUntil > Date.now()) return fail(409, 'item_busy', 'Another device is moving this item in; try again later');
-      f.claim = randomBytes(16).toString('base64url');
-      f.claimUntil = Date.now() + CLAIM_MS;
+      if (!f) return vaultItem(m[1]) ? fail(409, 'already_encrypted', 'The item is already encrypted') : fail(404, 'not_found', 'File not found');
+      // Like the Worker (spec 4.7d): no claim and no state for the attempt, so any number of devices may ask. Every call gets a new attempt and
+      // its own object name. The item is in the Vault from now on (it leaves the main list, its share link dies), still plain until a complete.
+      const attempt = randomBytes(16).toString('base64url');
+      f.inVault = true;
+      shares.delete(f.id);
       const thumb = plainThumbSrc(f, base);
       return {
         status: 200,
         body: {
-          claim: f.claim,
-          uploadUrl: `${base}/put/vault/${f.id}`,
-          thumbUploadUrl: thumb ? `${base}/put/vault/${f.id}.thumb` : null,
+          attempt,
+          uploadUrl: `${base}/put/vault/${f.id}.${attempt}`,
+          thumbUploadUrl: thumb ? `${base}/put/vault/${f.id}.${attempt}.thumb` : null,
           downloadUrl: `${base}/raw/${f.id}`,
           thumbUrl: thumb,
         },
@@ -502,39 +508,37 @@ export function startMockServer(realNow = Date.now(), options = {}) {
       const b = jsonObject(raw);
       if (!b) return badRequest('Body must be JSON');
       if (!isStr(b.encMeta) || !isStr(b.encKey) || !isInt(b.size)) return badRequest('encMeta, encKey and a non-negative integer size are required');
-      if (b.claim !== undefined && typeof b.claim !== 'string') return badRequest('claim must be a string');
       const id = m[1];
       const existing = vaultItem(id);
-      if (existing) return { status: 200, body: vaultJson(existing, base) }; // a retry after the move went through: no claim or etag compare
+      if (existing) {
+        // Already encrypted. A body without attempt is the move-out cleanup: sweep the plain copies. A device that lost the race (another attempt
+        // won) is answered 200 and its own objects are deleted; the winner's key and metadata stay. A retry of the winning attempt changes nothing.
+        if (b.attempt === undefined) {
+          blobs.delete(`files/${id}`);
+          blobs.delete(`files/${id}.thumb`);
+        } else if (typeof b.attempt === 'string' && ATTEMPT.test(b.attempt) && b.attempt !== existing.encObject) {
+          blobs.delete(`vault/${id}.${b.attempt}`);
+          blobs.delete(`vault/${id}.${b.attempt}.thumb`);
+        }
+        return { status: 200, body: vaultJson(existing, base) };
+      }
       const f = files.find((x) => x.id === id);
       if (!f) return fail(404, 'not_found', 'File not found');
-      // A claimed row only completes for the holder of a live claim. 409 item_changed / size_mismatch keep the claim (the PUT URL of that
-      // round may live 15 minutes more) and cut it to issued + 16 minutes, like the Worker (spec 4.7c).
-      if (f.claim && (b.claim !== f.claim || f.claimUntil <= Date.now())) return fail(409, 'item_busy', 'Another device is moving this item in; try again later');
-      const release = () => {
-        if (f.claim) f.claimUntil = f.claimUntil - CLAIM_MS + KEPT_CLAIM_MS; // issued + 16 minutes
-      };
-      // Like the Worker: a file must say which bytes it encrypted (the ETag of its PUT), quoted or not.
-      const etag = typeof b.etag === 'string' && b.etag.length <= 200 ? b.etag.replace(/^"(.*)"$/, '$1') : '';
-      if (etag === '') return badRequest('etag (the ETag of the uploaded encrypted file, at most 200 characters) is required');
-      const key = `vault/${id}`;
-      const obj = blobs.get(key);
+      if (typeof b.attempt !== 'string' || !ATTEMPT.test(b.attempt)) return badRequest('attempt (the value vault/in returned) is required');
+      const stem = `vault/${id}.${b.attempt}`;
+      const obj = blobs.get(stem);
       if (!obj) return fail(409, 'not_uploaded', 'The encrypted file has not been uploaded yet');
       if (obj.bytes.length !== b.size) {
-        blobs.delete(key);
-        release();
+        blobs.delete(stem);
+        blobs.delete(`${stem}.thumb`);
         return fail(409, 'size_mismatch', 'Uploaded size does not match');
       }
-      // Another PUT replaced the object since this client's own: nothing changes, the client starts over.
-      if (obj.etag.replace(/^"(.*)"$/, '$1') !== etag) {
-        release();
-        return fail(409, 'item_changed', 'The item changed while moving it; try again');
-      }
-      const hasThumb = b.hasThumb === true && blobs.has(`${key}.thumb`);
+      const hasThumb = b.hasThumb === true && blobs.has(`${stem}.thumb`);
       files.splice(files.indexOf(f), 1);
+      shares.delete(id);
       blobs.delete(`files/${id}`);
       blobs.delete(`files/${id}.thumb`);
-      const v = { id, size: b.size, hasThumb, device: f.device, createdAt: f.createdAt, deletedAt: null, encMeta: b.encMeta, encKey: b.encKey, important: f.important ?? false };
+      const v = { id, size: b.size, hasThumb, device: f.device, createdAt: f.createdAt, deletedAt: null, encMeta: b.encMeta, encKey: b.encKey, encObject: b.attempt, important: f.important ?? false };
       vaultItems.push(v);
       return { status: 200, body: vaultJson(v, base) };
     }
@@ -547,8 +551,8 @@ export function startMockServer(realNow = Date.now(), options = {}) {
         body: {
           uploadUrl: `${base}/put/files/${v.id}`,
           thumbUploadUrl: v.hasThumb ? `${base}/put/files/${v.id}.thumb` : null,
-          downloadUrl: `${base}/obj/vault/${v.id}`,
-          thumbUrl: v.hasThumb ? `${base}/obj/vault/${v.id}.thumb` : null,
+          downloadUrl: `${base}/obj/${vaultKey(v)}`,
+          thumbUrl: v.hasThumb ? `${base}/obj/${vaultKey(v)}.thumb` : null,
         },
       };
     }
@@ -588,8 +592,8 @@ export function startMockServer(realNow = Date.now(), options = {}) {
         img: -1,
       };
       vaultItems.splice(vaultItems.indexOf(v), 1);
-      blobs.delete(`vault/${v.id}`);
-      blobs.delete(`vault/${v.id}.thumb`);
+      blobs.delete(vaultKey(v));
+      blobs.delete(`${vaultKey(v)}.thumb`);
       files.push(f);
       return { status: 200, body: plainJson(f, base, shares) };
     }
@@ -615,10 +619,9 @@ export function startMockServer(realNow = Date.now(), options = {}) {
     }
     // Presigned object storage, like R2's URLs: no token. PUT stores the bytes as sent; GET serves them back.
     if ((m = /^\/put\/(.+)$/.exec(url.pathname)) && req.method === 'PUT') {
-      // R2 answers a PUT with the ETag (quoted) of what it stored; a move in has to send it back to `vault/in/complete`.
-      const etag = `"${createHash('md5').update(raw).digest('hex')}"`;
-      blobs.set(m[1], { bytes: raw, type: req.headers['content-type'] ?? 'application/octet-stream', etag });
-      res.writeHead(200, { 'Content-Type': 'text/plain', ETag: etag });
+      // No ETag header: since spec 4.7d a move in names its object by attempt and needs nothing from the answer.
+      blobs.set(m[1], { bytes: raw, type: req.headers['content-type'] ?? 'application/octet-stream' });
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
       return res.end('');
     }
     if ((m = /^\/obj\/(.+)$/.exec(url.pathname))) {
@@ -651,7 +654,7 @@ export function startMockServer(realNow = Date.now(), options = {}) {
     if (url.pathname === '/files' && req.method === 'GET') {
       // Links are only returned when asked for.
       if (url.searchParams.get('kind') === 'link') return send(200, { items: links.map((l) => ({ ...l, thumbUrl: null })), nextCursor: null });
-      return send(200, { items: files.map((f) => plainJson(f, base, shares)), nextCursor: null });
+      return send(200, { items: files.filter((f) => !f.inVault).map((f) => plainJson(f, base, shares)), nextCursor: null });
     }
     if ((m = /^\/links\/(\w+)\/preview$/.exec(url.pathname)) && req.method === 'POST') {
       const link = links.find((x) => x.id === m[1]);
@@ -667,7 +670,7 @@ export function startMockServer(realNow = Date.now(), options = {}) {
         return send(200, { ok: true });
       }
       if (req.method === 'PUT') {
-        if (!files.some((x) => x.id === id)) return send(404, { error: { code: 'not_found', message: 'nope' } });
+        if (!files.some((x) => x.id === id && !x.inVault)) return send(404, { error: { code: 'not_found', message: 'nope' } });
         const days = jsonObject(raw)?.expiresInDays;
         const expiresAt = days === null || days === undefined ? null : Date.now() + days * day;
         const had = shares.get(id);

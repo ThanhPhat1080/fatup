@@ -24,7 +24,11 @@
  * 12. i18n for the Vault mode and Vault trash (en + vi, see the last describe block).
  * 13. Two-step setup (spec 4.7b I1): nextSetupState gains steps 'committing' and the event
  *      { type: 'commitResult', result: { ok: true } | { ok: false, error } } (answer of vaultSetupCommit).
- * 14. vaultMoveInPlan(status: 'none' | 'ready' | 'wiped', open: boolean): 'move' | 'unlock' | 'recover' (spec 4.7b I2).
+ * 14. vaultMoveInPlan(status: 'none' | 'ready' | 'wiped', open: boolean): 'setup' | 'move' | 'unlock' | 'recover'
+ *      (spec 4.7b I2, changed by 4.7d: 'none' and closed -> 'setup', the setup wizard opens first, the files move after it).
+ * 14b. vaultItemState(item): 'pending' | 'encrypted' | 'unreadable' | 'plain' (spec 4.7d). 'pending' = `inVault && !encrypted` (the faded cloud),
+ *      'encrypted' = `inVault && encrypted` (the green tick), 'unreadable' = `item.unreadable` (wins over 'encrypted': an unreadable item is
+ *      an encrypted one that cannot be opened), 'plain' = anything else (not in the Vault). i18n keys `vaultStatePending`, `vaultStateEncrypted`.
  * 15. Vault error strings (spec 4.7b I4): `err_<code>` in en and vi, read by errorText(dict, code).
  */
 import { describe, expect, it } from 'vitest';
@@ -298,9 +302,14 @@ describe('vaultMoveInPlan: moving into the Vault from the main list (spec 4.7b I
     }
   });
 
-  it('moves without a gate when no Vault is set up (legacy path, nothing to unlock)', async () => {
+  it('opens the setup wizard first when no Vault is set up (spec 4.7d: setup first, then the files move; no legacy plain move)', async () => {
     const { vaultMoveInPlan } = await lib();
-    expect(vaultMoveInPlan('none', false)).toBe('move');
+    expect(vaultMoveInPlan('none', false)).toBe('setup');
+  });
+
+  it('keeps `none` + open defined as move (it cannot happen, an open Vault exists)', async () => {
+    const { vaultMoveInPlan } = await lib();
+    expect(vaultMoveInPlan('none', true)).toBe('move');
   });
 
   it('asks for the PIN gate first when the Vault is ready and closed', async () => {
@@ -327,7 +336,6 @@ describe('vault error strings (spec 4.7b I4)', () => {
     'err_vault_not_ready',
     'err_encrypted',
     'err_unreadable',
-    'err_no_etag',
     'err_closed',
     'err_no_prepared_setup',
     'err_vault_wiped',
@@ -341,7 +349,6 @@ describe('vault error strings (spec 4.7b I4)', () => {
     'vault_not_ready',
     'encrypted',
     'unreadable',
-    'no_etag',
     'closed',
     'no_prepared_setup',
     'vault_wiped',
@@ -537,6 +544,55 @@ describe('isEncrypting: legacy Vault items still shown in plain text', () => {
     const { isEncrypting } = await lib();
     expect(isEncrypting(row({ inVault: false, encrypted: false }))).toBe(false);
     expect(isEncrypting(row({ inVault: false, encrypted: true }))).toBe(false);
+  });
+});
+
+describe('vaultItemState: pending (faded cloud), encrypted (green tick), unreadable, plain (spec 4.7d)', () => {
+  it('is pending for an item in the Vault that is not encrypted yet (put in by vault/in, not finished)', async () => {
+    const { vaultItemState } = await lib();
+    expect(vaultItemState(row({ inVault: true, encrypted: false }))).toBe('pending');
+  });
+
+  it('is pending for such an item in the Vault trash too', async () => {
+    const { vaultItemState } = await lib();
+    expect(vaultItemState(row({ inVault: true, encrypted: false, deletedAt: 5 }))).toBe('pending');
+  });
+
+  it('is encrypted for an item in the Vault that is encrypted', async () => {
+    const { vaultItemState } = await lib();
+    expect(vaultItemState(row({ inVault: true, encrypted: true }))).toBe('encrypted');
+  });
+
+  it('is unreadable for an item that cannot be decrypted, before it is called encrypted', async () => {
+    const { vaultItemState } = await lib();
+    expect(vaultItemState(row({ inVault: true, encrypted: true, unreadable: true }))).toBe('unreadable');
+  });
+
+  it('is plain for an item outside the Vault, encrypted flag or not', async () => {
+    const { vaultItemState } = await lib();
+    expect(vaultItemState(row({ inVault: false, encrypted: false }))).toBe('plain');
+    expect(vaultItemState(row({ inVault: false, encrypted: true }))).toBe('plain');
+  });
+
+  it('agrees with isEncrypting: pending exactly when the item is still encrypting', async () => {
+    const { vaultItemState, isEncrypting } = await lib();
+    for (const inVault of [true, false]) {
+      for (const encrypted of [true, false]) {
+        const it = row({ inVault, encrypted });
+        expect(vaultItemState(it) === 'pending', `inVault ${inVault}, encrypted ${encrypted}`).toBe(isEncrypting(it));
+      }
+    }
+  });
+
+  it('has a text for the pending and the encrypted state in both languages', () => {
+    for (const [lang, dict] of [['en', dictionaries.en], ['vi', dictionaries.vi]] as const) {
+      for (const key of ['vaultStatePending', 'vaultStateEncrypted']) {
+        const value = (dict as Record<string, unknown>)[key];
+        expect(typeof value === 'string' && value.trim().length > 0, `${lang}.${key} is a non-empty string`).toBe(true);
+      }
+    }
+    const text = (dict: unknown) => (dict as Record<string, unknown>).vaultStatePending;
+    expect(text(dictionaries.vi)).not.toBe(text(dictionaries.en));
   });
 });
 

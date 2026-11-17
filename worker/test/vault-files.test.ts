@@ -78,6 +78,8 @@ type NewRow = {
   hasThumb?: 0 | 1;
   encMeta?: string | null;
   encKey?: string | null;
+  /** The attempt that encrypted the row; its objects are vault/<id>.<attempt>[.thumb]. NULL = the fixed key vault/<id>. */
+  encObject?: string | null;
 };
 
 /** Inserts a finished file row straight into D1, bypassing the upload flow. */
@@ -102,6 +104,8 @@ async function insertFile(f: NewRow = {}) {
       f.url ?? null,
     )
     .run();
+  // Only a test that names an attempt touches enc_object, so tests that do not need the column do not depend on it.
+  if (f.encObject) await env.DB.prepare('UPDATE files SET enc_object = ? WHERE id = ?').bind(f.encObject, id).run();
   return id;
 }
 
@@ -118,6 +122,7 @@ type DbRow = {
   tags: string;
   important: number;
   has_thumb: number;
+  enc_object: string | null;
 };
 const rowOf = (id: string) => env.DB.prepare('SELECT * FROM files WHERE id = ?').bind(id).first<DbRow>();
 
@@ -329,6 +334,17 @@ describe('uploading straight into the vault', () => {
       expect(JSON.stringify(row)).not.toContain('application/pdf');
     });
 
+    it('keeps enc_object NULL and the fixed key vault/<id>: the item and its thumbnail are named without any attempt (spec 4.7d)', async () => {
+      const up = await create();
+      await env.BUCKET.put(`vault/${up.id}`, new Uint8Array(40));
+      await env.BUCKET.put(`vault/${up.id}.thumb`, new Uint8Array(20));
+      const item = (await (await callV(`/uploads/${up.id}/complete`, { method: 'POST' })).json()) as FileItem;
+      expect((await rowOf(up.id))?.enc_object).toBeNull();
+      expect(item.thumbUrl).toContain(`/vault/${up.id}.thumb`);
+      const { url } = (await (await callV(`/files/${up.id}/download`)).json()) as { url: string };
+      expect(url).toBe(`https://r2.test/get/vault/${up.id}`);
+    });
+
     it('shows the finished item in the vault list and never in the main list', async () => {
       const up = await create();
       await env.BUCKET.put(`vault/${up.id}`, new Uint8Array(40));
@@ -438,6 +454,55 @@ describe('downloading an encrypted item', () => {
     expect(signed).toHaveLength(1);
     expect(signed[0].opts?.filename).toBeFalsy();
     expect(signed[0].opts?.contentType ?? '').not.toMatch(/^image\//);
+  });
+});
+
+describe('the keys of an item encrypted by an attempt follow its enc_object (spec 4.7d)', () => {
+  beforeEach(() => setState('ready'));
+  const ATTEMPT = 'QXR0ZW1wdC1BQUFBQUFBQQ';
+
+  it('downloads vault/<id>.<enc_object>, with no filename and no image content type', async () => {
+    const id = await insertFile({ inVault: 1, encrypted: 1, encObject: ATTEMPT });
+    const res = await callV(`/files/${id}/download`);
+    expect(res.status).toBe(200);
+    const { url } = (await res.json()) as { url: string };
+    expect(url).toBe(`https://r2.test/get/vault/${id}.${ATTEMPT}`);
+    const signed = signedGets.filter((g) => g.key === `vault/${id}.${ATTEMPT}`);
+    expect(signed).toHaveLength(1);
+    expect(signed[0].opts?.filename).toBeFalsy();
+    expect(signed[0].opts?.contentType ?? '').not.toMatch(/^image\//);
+    expect(signedGets.some((g) => g.key === `vault/${id}`)).toBe(false);
+  });
+
+  it('lists the thumbnail on vault/<id>.<enc_object>.thumb, as application/octet-stream', async () => {
+    const id = await insertFile({ inVault: 1, encrypted: 1, hasThumb: 1, encObject: ATTEMPT });
+    const res = await callV('/files?vault=1');
+    const item = ((await res.json()) as ListFilesResponse).items.find((i) => i.id === id)!;
+    expect(item.thumbUrl).toBe(`https://r2.test/get/vault/${id}.${ATTEMPT}.thumb`);
+    const signed = signedGets.filter((g) => g.key === `vault/${id}.${ATTEMPT}.thumb`);
+    expect(signed).toHaveLength(1);
+    expect(signed[0].opts?.contentType).toBe('application/octet-stream');
+  });
+
+  it('lists the thumbnail of an item in the vault trash on its attempt key too', async () => {
+    const id = await insertFile({ inVault: 1, encrypted: 1, hasThumb: 1, encObject: ATTEMPT, deletedAt: Date.now() });
+    const item = ((await (await callV('/files?vault=1&trash=1')).json()) as ListFilesResponse).items.find((i) => i.id === id)!;
+    expect(item.thumbUrl).toBe(`https://r2.test/get/vault/${id}.${ATTEMPT}.thumb`);
+  });
+
+  it('still lists a row with no enc_object on the fixed key vault/<id>.thumb', async () => {
+    const id = await insertFile({ inVault: 1, encrypted: 1, hasThumb: 1 });
+    const item = ((await (await callV('/files?vault=1')).json()) as ListFilesResponse).items.find((i) => i.id === id)!;
+    expect(item.thumbUrl).toBe(`https://r2.test/get/vault/${id}.thumb`);
+  });
+
+  it('completing an upload of a plain (not encrypted) row is unaffected: it still uses files/<id>', async () => {
+    const res = await postJson('/uploads', { name: 'a.txt', mime: 'text/plain', size: 4, hasThumb: false });
+    const up = (await res.json()) as CreateUploadResponse;
+    expect(up.uploadUrl).toBe(`https://r2.test/put/files/${up.id}`);
+    await env.BUCKET.put(`files/${up.id}`, new Uint8Array(4));
+    expect((await callV(`/uploads/${up.id}/complete`, { method: 'POST' })).status).toBe(200);
+    expect((await rowOf(up.id))?.enc_object).toBeNull();
   });
 });
 
