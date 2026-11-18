@@ -8,7 +8,7 @@ const DAY = 24 * 60 * 60 * 1000;
 /** A move out of the Vault older than this is dead, not running. */
 const OUT_MOVE_GRACE_MS = 60 * 60 * 1000;
 /** A Vault object younger than this may belong to an attempt that is still uploading (its URL lives 15 minutes). */
-const VAULT_GARBAGE_GRACE_MS = 60 * 60 * 1000;
+export const VAULT_GARBAGE_GRACE_MS = 60 * 60 * 1000;
 const R2_DELETE_MAX = 1000;
 
 /** Deletes R2 keys in calls of at most 1000 (the R2 limit). */

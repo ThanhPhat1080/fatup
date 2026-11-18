@@ -788,6 +788,53 @@ describe('two devices moving the same file in: every attempt has its own object 
     expect(await has(`vault/${id}.${b.attempt}`)).toBe(false);
   });
 
+  /** The same app, but R2 says every object under `vault/` was uploaded `minutes` ago (the test bucket cannot fake upload times). */
+  const completeInWhenUploaded = (id: string, body: VaultMoveInComplete, minutes: number) => {
+    const bucket = new Proxy(env.BUCKET, {
+      get(t, key) {
+        const value = Reflect.get(t, key, t) as unknown;
+        if (key !== 'head') return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(t) : value;
+        return async (k: string) => {
+          const o = await t.head(k);
+          return o && k.startsWith('vault/') ? new Proxy(o, { get: (ot, p) => (p === 'uploaded' ? new Date(Date.now() - minutes * 60_000) : Reflect.get(ot, p, ot)) }) : o;
+        };
+      },
+    });
+    return app.request(`/files/${id}/vault/in/complete`, { method: 'POST', body: JSON.stringify(body), headers: { ...AUTH, ...VAULT, ...JSON_HEADERS } }, { ...env, BUCKET: bucket });
+  };
+
+  it('refuses an object uploaded more than 45 minutes ago: the cron may be deleting it (it sweeps after an hour), so nothing is written and the item goes on later', async () => {
+    const id = await plainFile({ thumb: true });
+    const attempt = await stage(id, { thumb: true });
+    const res = await completeInWhenUploaded(id, inBody({ attempt, hasThumb: true }), 50);
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('upload_too_old');
+    // The row still waits to be encrypted, the plain copy is intact, and this attempt's objects are gone (a later run starts a new attempt).
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 1, enc_object: null, enc_key: null, enc_meta: null, name: 'a.bin' });
+    expect(await has(`files/${id}`)).toBe(true);
+    expect(await has(`thumbs/${id}.jpg`)).toBe(true);
+    expect(await vaultObjects()).toEqual([]);
+  });
+
+  it('accepts an object uploaded 40 minutes ago', async () => {
+    const id = await plainFile();
+    const attempt = await stage(id);
+    const res = await completeInWhenUploaded(id, inBody({ attempt }), 40);
+    expect(res.status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 1, enc_object: attempt });
+  });
+
+  it('applies the age rule to a link\'s thumbnail too (a link has no file object)', async () => {
+    const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0, hasThumb: 1, inVault: 1 });
+    const attempt = newAttempt();
+    await env.BUCKET.put(`vault/${id}.${attempt}.thumb`, new Uint8Array(20));
+    const res = await completeInWhenUploaded(id, inBody({ size: 0, hasThumb: true, attempt }), 50);
+    expect(res.status).toBe(409);
+    expect(await errorCode(res)).toBe('upload_too_old');
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, kind: 'link', url: 'https://example.com/a' });
+    expect(await vaultObjects()).toEqual([]);
+  });
+
   it('A completes first, then B: the stored object of the row is A\'s bytes, so A\'s key decrypts it (same size, different bytes)', async () => {
     const id = await plainFile();
     const a = await device(id, 1, A);

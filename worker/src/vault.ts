@@ -20,6 +20,7 @@ import {
 } from '@fatup/shared';
 import type { AppEnv } from './app';
 import { MAX_ENC_KEY, MAX_ENC_META, cleanMime, fail, hostOf, isEncText, itemOf, sanitizeName, sanitizeTitle, type Row } from './app';
+import { VAULT_GARBAGE_GRACE_MS } from './cleanup';
 import { fileKey, objectKeys, thumbKey, vaultFileKey, vaultThumbKey } from './presign';
 import { isUlid } from './ulid';
 
@@ -242,6 +243,18 @@ const reload = async (c: Ctx, id: string) => (await c.env.DB.prepare('SELECT * F
 
 const changed = (c: Ctx) => fail(c, 409, 'item_changed', 'The item changed while moving it; try again');
 
+/**
+ * The daily cron deletes vault objects older than VAULT_GARBAGE_GRACE_MS that no row points to. A complete may only adopt an object younger than
+ * this (a quarter of an hour of slack), so the cron can never be deleting the object a complete is about to point a row at.
+ */
+const MAX_ADOPTABLE_AGE_MS = VAULT_GARBAGE_GRACE_MS - 15 * 60 * 1000;
+const uploadedTooLongAgo = (o: { uploaded: Date }) => Date.now() - o.uploaded.getTime() > MAX_ADOPTABLE_AGE_MS;
+/** The attempt took too long between its upload and its complete. Nothing is written; its objects go and the item is tried again later with a new attempt. */
+async function staleUpload(c: Ctx, keys: string[]) {
+  await c.env.BUCKET.delete(keys);
+  return fail(c, 409, 'upload_too_old', 'The upload finished too long ago; the item will be moved in again');
+}
+
 function registerMoveRoutes(app: Hono<AppEnv>): void {
   // Moving in (spec 4.7d): the client downloads the plain file, encrypts it and PUTs it to its own object vault/<id>.<attempt>; only `complete` makes it encrypted.
   // Nothing about the attempt is recorded, so devices never wait for each other. The item enters the Vault at once (still plain, shown as pending).
@@ -303,8 +316,11 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
         await c.env.BUCKET.delete([fileObject, thumbObject]);
         return fail(c, 409, 'size_mismatch', 'Uploaded size does not match');
       }
+      if (uploadedTooLongAgo(object)) return staleUpload(c, [fileObject, thumbObject]);
     }
-    const keepThumb = body.hasThumb && (await c.env.BUCKET.head(thumbObject)) !== null;
+    const thumbHead = body.hasThumb ? await c.env.BUCKET.head(thumbObject) : null;
+    if (thumbHead !== null && uploadedTooLongAgo(thumbHead)) return staleUpload(c, [fileObject, thumbObject]);
+    const keepThumb = thumbHead !== null;
 
     // The attempt's object exists, so D1 may point at it. One statement writes every column, so no plaintext metadata survives, and only the first
     // attempt to get here wins: the key in D1 always belongs to the object enc_object names. deleted_at is left alone, so an item in the Vault's trash stays there.
