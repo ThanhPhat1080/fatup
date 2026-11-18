@@ -171,6 +171,8 @@ async function vaultedFile(f: NewRow & { thumb?: boolean; withObjects?: boolean;
 
 /** What a device does after vault/in: PUTs its ciphertext (and thumbnail) at vault/<id>.<attempt>[.thumb]; `fill` tells devices' bytes apart. Returns the attempt. */
 async function stage(id: string, o: { thumb?: boolean; bytes?: number; fill?: number; attempt?: string } = {}) {
+  // A device only has an address to PUT to after vault/in, and vault/in puts a live item in the Vault at once (spec 4.7d); complete needs that.
+  await env.DB.prepare('UPDATE files SET in_vault = 1 WHERE id = ? AND deleted_at IS NULL').bind(id).run();
   const attempt = o.attempt ?? newAttempt();
   await env.BUCKET.put(`vault/${id}.${attempt}`, new Uint8Array(o.bytes ?? 40).fill(o.fill ?? 0));
   if (o.thumb) await env.BUCKET.put(`vault/${id}.${attempt}.thumb`, new Uint8Array(20).fill(o.fill ?? 0));
@@ -437,7 +439,7 @@ describe('POST /files/:id/vault/in/complete', () => {
     expect(await vaultObjects()).toEqual([]);
     expect(await has(`files/${id}`)).toBe(true);
     expect(await has(`thumbs/${id}.jpg`)).toBe(true);
-    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, name: 'a.bin', enc_meta: null, enc_key: null, enc_object: null, has_thumb: 1 });
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 1, name: 'a.bin', enc_meta: null, enc_key: null, enc_object: null, has_thumb: 1 });
   });
 
   it('on size_mismatch leaves the objects of another attempt alone', async () => {
@@ -561,7 +563,7 @@ describe('POST /files/:id/vault/in/complete', () => {
   });
 
   it('moves a link in without any upload: size 0 is accepted, the attempt is remembered, and no file object is required', async () => {
-    const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0 });
+    const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0, inVault: 1 });
     await env.DB.prepare('UPDATE files SET previewed_at = 5, icon_url = ? WHERE id = ?').bind('https://example.com/i.png', id).run();
     const attempt = newAttempt();
     const res = await completeIn(id, inBody({ size: 0, attempt }));
@@ -585,7 +587,7 @@ describe('POST /files/:id/vault/in/complete', () => {
   });
 
   it('moves a link with a preview picture in, keeping the picture encrypted on the attempt\'s thumb key and removing the plain one (spec Q3)', async () => {
-    const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0, hasThumb: 1 });
+    const id = await insertFile({ kind: 'link', url: 'https://example.com/a', name: 'Example', size: 0, hasThumb: 1, inVault: 1 });
     await put(`thumbs/${id}.jpg`, 7);
     const attempt = newAttempt();
     await put(`vault/${id}.${attempt}.thumb`, 39);
@@ -762,6 +764,28 @@ describe('two devices moving the same file in: every attempt has its own object 
     expect((await vaultObjects()).sort()).toEqual([`vault/${id}.${a.attempt}`, `vault/${id}.${a.attempt}.thumb`]);
     expect(await has(`vault/${id}.${b.attempt}`)).toBe(false);
     expect(await has(`vault/${id}.${b.attempt}.thumb`)).toBe(false);
+  });
+
+  it('A completes, the user takes the file out, then B\'s late complete arrives: the file stays out (review I1)', async () => {
+    const id = await plainFile();
+    const a = await device(id, 1, A);
+    const b = await device(id, 2, B);
+    expect((await a.complete()).status).toBe(200);
+
+    // The user takes the file out of the Vault: vault/out, the plain bytes are PUT, vault/out/complete.
+    expect((await moveOut(id)).status).toBe(200);
+    await put(`files/${id}`, 10);
+    expect((await completeOut(id, outBody({ name: 'taken-out.bin', size: 10 }))).status).toBe(200);
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, enc_object: null, name: 'taken-out.bin' });
+
+    // B's complete was slow. It must not pull the file back into the Vault, and must not delete the plain file the user just got back.
+    const late = await b.complete();
+    expect(late.status).toBe(409);
+    expect(await errorCode(late)).toBe('item_changed');
+    expect(await rowOf(id)).toMatchObject({ encrypted: 0, in_vault: 0, enc_object: null, enc_key: null, enc_meta: null, name: 'taken-out.bin' });
+    expect(await has(`files/${id}`)).toBe(true);
+    // Nothing of B's is left behind either.
+    expect(await has(`vault/${id}.${b.attempt}`)).toBe(false);
   });
 
   it('A completes first, then B: the stored object of the row is A\'s bytes, so A\'s key decrypts it (same size, different bytes)', async () => {

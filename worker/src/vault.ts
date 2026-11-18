@@ -311,13 +311,18 @@ function registerMoveRoutes(app: Hono<AppEnv>): void {
     const res = await c.env.DB.prepare(
       `UPDATE files SET encrypted = 1, in_vault = 1, enc_object = ?, enc_meta = ?, enc_key = ?, name = '', mime = 'application/octet-stream', kind = 'file',
          url = NULL, size = ?, has_thumb = ?, previewed_at = NULL, icon_url = NULL, title_set = 0
-       WHERE id = ? AND encrypted = 0 AND status = 'ready' AND (deleted_at IS NULL OR in_vault = 1)`,
+       WHERE id = ? AND encrypted = 0 AND in_vault = 1 AND status = 'ready'`,
     )
       .bind(attempt, body.encMeta, body.encKey, isLink ? 0 : body.size, keepThumb ? 1 : 0, row.id)
       .run();
     if (!res.meta.changes) {
       const now = await c.env.DB.prepare('SELECT * FROM files WHERE id = ?').bind(row.id).first<Row>();
-      if (now?.encrypted !== 1) return changed(c);
+      if (now?.encrypted !== 1) {
+        // The item is no longer on its way into the Vault (for example the user took it out after another device finished): leave it alone.
+        // Only this attempt's own objects go; the plain file stays.
+        await c.env.BUCKET.delete([fileObject, thumbObject]);
+        return changed(c);
+      }
       // Another device won: it is not an error, the file is encrypted (with that device's key). Only this attempt's own objects go.
       if (now.enc_object !== attempt) await c.env.BUCKET.delete([fileObject, thumbObject]);
       return c.json(await itemOf(c, now));
