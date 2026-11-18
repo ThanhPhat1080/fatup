@@ -12,8 +12,11 @@ Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy
   - Thiết lập lần đầu theo hai bước: đặt PIN, rồi nhận **recovery key** (hiện một lần, có nút sao chép) và gõ lại hai nhóm ngẫu nhiên để xác nhận. Các file đã có trong két được mã hóa dần, có tiến trình.
   - **Recovery key** dùng khi quên PIN: màn khôi phục đặt PIN mới, không mã hóa lại file. Đổi PIN két trong Cài đặt (cần PIN cũ hoặc recovery key).
   - **Thùng rác riêng của két**: khôi phục, xóa vĩnh viễn, dọn sạch, Hoàn tác 8 giây; file tự xóa sau 30 ngày.
-  - Cất vào két từ danh sách chính qua cổng PIN. Mục vừa cất rời danh sách chính ngay. Trong két, mục chưa mã hóa xong hiện **biểu tượng đám mây mờ**, và đổi thành **dấu tick xanh** khi đã mã hóa xong; các máy khác thấy đổi khi làm mới. File không đọc được hiện "Không đọc được trên thiết bị này".
-  - Tải file lên thẳng vào két khi két đang mở.
+  - **Giữ khóa 6 giờ:** sau khi nhập đúng PIN két, app giữ két mở để cất file trong **6 giờ** kể từ lần nhập đúng gần nhất (cố định, không gia hạn khi dùng). Trong thời gian đó cất file vào két không hỏi PIN nữa. Hết 6 giờ, khóa app hoặc đăng xuất thì két đóng hẳn.
+  - **Cất vào két từ danh sách chính:** nếu két chưa mở, một popup nhỏ hiện ngay trên danh sách để hỏi PIN két, không chuyển sang màn Két sắt; nhập đúng thì file được cất và danh sách vẫn ở nguyên. Popup có nút Hủy và "Quên PIN" (sang khôi phục). Mục vừa cất rời danh sách chính ngay. Trong két, mục chưa mã hóa xong hiện **biểu tượng đám mây mờ**, và đổi thành **dấu tick xanh** khi đã mã hóa xong; các máy khác thấy đổi khi làm mới. File không đọc được hiện "Không đọc được trên thiết bị này".
+  - **Thông báo khi cất lỗi** nói rõ lý do: file đã vào két sẽ hiện đám mây mờ và được mã hóa lại tự động; file còn ở danh sách chính thì cất lại sau. Không còn chỉ báo "N lỗi".
+  - Vào màn Két sắt luôn hỏi PIN két, kể cả khi đang giữ khóa. Đổi PIN két trong Cài đặt không cần mở két.
+  - Tải file lên thẳng vào két khi két đang giữ khóa (trong 6 giờ sau PIN đúng).
   - Bản web: két chạy trong bộ nhớ trang. Khóa và dữ liệu két không ghi vào `localStorage`, IndexedDB hay Cache Storage.
   - Tài liệu: [mục 7.1–7.7 của security](docs/spec/security.md), [ADR 0013](docs/decisions/0013-ket-sat-ma-hoa-phia-client.md) và [ADR 0015](docs/decisions/0015-mot-object-rieng-moi-lan-ma-hoa.md).
 

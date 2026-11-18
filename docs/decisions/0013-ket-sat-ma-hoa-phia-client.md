@@ -1,6 +1,6 @@
 # 0013. Két sắt mã hóa phía client: PIN két 6 số, bộ đếm trên server, recovery key
 
-- Trạng thái: Đã chốt
+- Trạng thái: Đã chốt; mục 1 được chỉnh bởi [0016](0016-phien-ket-sat-6-gio.md)
 - Ngày: 2026-11-17
 - Nguồn: design spec `docs/superpowers/specs/2026-11-17-vault-e2ee-design.md` (mục 3, 4, 7); plan `docs/superpowers/plans/2026-11-17-vault-e2ee.md`; các Ruling trong sổ SDD `.superpowers/sdd/2026-11-17-vault-e2ee/progress.md` (chép ở cuối ADR); commit `0c04fa0`, `9eb55ac`…`2afb891`
 - Phạm vi: worker, shared, desktop, web
@@ -23,7 +23,7 @@ Các phương án đã cân nhắc:
 
 Két sắt là mã hóa đầu cuối phía client. Các khóa và định dạng:
 
-1. **Khóa.** `MK` (AES-256, một lần khi thiết lập) chỉ sống trong bộ nhớ khi két mở. Mỗi mục có `DEK` riêng, bọc bằng `MK`. `S` (32 byte, client sinh) lưu trên server và chỉ trả khi `authKey` đúng. `P = PBKDF2-SHA256(PIN, salt, 600 000 vòng)`; `authKey = HKDF(P, "fatup-vault-auth")` là thứ duy nhất gửi lên; `KEK = HKDF(HKDF(P, "fatup-vault-wrap") ‖ S, "fatup-vault-kek")` bọc `MK`. `RK` 128 bit (recovery key) có đường riêng qua `rkAuth` và `rkKek`.
+1. **Khóa.** `MK` (AES-256, một lần khi thiết lập) chỉ sống trong bộ nhớ khi két mở. *(Cập nhật 2026-11-18: "khi két mở" nay là tối đa 6 giờ kể từ lần nhập PIN đúng gần nhất, và quyền xem tách khỏi khóa; xem [ADR 0016](0016-phien-ket-sat-6-gio.md).)* Mỗi mục có `DEK` riêng, bọc bằng `MK`. `S` (32 byte, client sinh) lưu trên server và chỉ trả khi `authKey` đúng. `P = PBKDF2-SHA256(PIN, salt, 600 000 vòng)`; `authKey = HKDF(P, "fatup-vault-auth")` là thứ duy nhất gửi lên; `KEK = HKDF(HKDF(P, "fatup-vault-wrap") ‖ S, "fatup-vault-kek")` bọc `MK`. `RK` 128 bit (recovery key) có đường riêng qua `rkAuth` và `rkKek`.
 2. **PIN két 6 số, khác PIN app 4 số.** PIN app không bao giờ lên server ([ADR 0006](0006-pin-chi-khoa-giao-dien.md), vẫn đúng). PIN két tham gia kiểm tra phía server qua `authKey` dẫn xuất, nhưng không bao giờ gửi dạng đọc được. Từ chối PIN yếu: sáu chữ số giống nhau, dãy tăng hoặc giảm liên tiếp, hoặc trùng 4 số đầu/cuối của PIN app.
 3. **Bộ đếm sai trên server.** Sai 1–4: nhập lại. Sai 5: khóa 1 phút. Sai 6–9: mỗi lần khóa 15 phút. Sai 10: server xóa `auth_hash`, `S` và `wrapped_mk_pin`, chỉ recovery key mở được. Đúng thì về 0. Việc đếm là một câu `UPDATE` có điều kiện, nên các request song song không vượt giới hạn.
 4. **Recovery key.** 128 bit, Crockford base32, 26 ký tự cộng 1 ký tự kiểm tra, in theo nhóm 4 ký tự. Hiện một lần khi thiết lập. Xác nhận bằng cách gõ lại 2 nhóm ngẫu nhiên. `rkAuth` không đếm và không bị khóa, vì 128 bit không đoán được; đặt lại PIN bằng recovery key được cả khi két đang khóa hoặc đã bị xóa bí mật.

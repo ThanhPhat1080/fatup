@@ -20,7 +20,7 @@
 
 Thiết kế đầy đủ: [design spec](../superpowers/specs/2026-11-17-vault-e2ee-design.md). Lý do chọn: [ADR 0013](../decisions/0013-ket-sat-ma-hoa-phia-client.md); cách cất vào két không ghi đè nhau: [ADR 0015](../decisions/0015-mot-object-rieng-moi-lan-ma-hoa.md) (thay [ADR 0014](../decisions/0014-mot-nguoi-ghi-moi-muc-khi-cat-vao-ket.md)).
 
-**Mối đe dọa được tính tới.** Máy công ty có Zscaler soi HTTPS: admin mạng đọc được mọi request đi qua máy đó, kể cả API token. Mục tiêu: file trong két **không đọc được dù lộ token**, miễn là két chưa từng được mở trên máy bị soi.
+**Mối đe dọa được tính tới.** Máy công ty có Zscaler soi HTTPS: admin mạng đọc được mọi request đi qua máy đó, kể cả API token. Mục tiêu: file trong két **không đọc được dù lộ token**, miễn là két chưa từng được mở trên máy bị soi. Giữ khóa tối đa 6 giờ ([7.7](#77-giới-hạn-bảo-mật-còn-lại)) không thêm đường lộ ra mạng: khóa chỉ nằm trong bộ nhớ, và mọi lần đọc két vẫn cần PIN.
 
 **Không tính tới:** Cloudflare và người có quyền đọc D1 (xem [7.7](#77-giới-hạn-bảo-mật-còn-lại)); phần mềm theo dõi đã cài sẵn trên máy.
 
@@ -28,7 +28,7 @@ Thiết kế đầy đủ: [design spec](../superpowers/specs/2026-11-17-vault-e
 
 | Tên | Là gì | Ở đâu |
 |---|---|---|
-| `MK` (master key) | AES-256 ngẫu nhiên, sinh một lần khi thiết lập | Chỉ trong bộ nhớ khi két mở (main process của desktop, bộ nhớ trang của web), không bao giờ extractable ngoài lúc đổi PIN hoặc khôi phục. Trên server chỉ có `MK` đã bọc (`wrapped_mk_pin`, `wrapped_mk_recovery`). Không bao giờ ra renderer, không ghi đĩa, không vào `localStorage` |
+| `MK` (master key) | AES-256 ngẫu nhiên, sinh một lần khi thiết lập | Chỉ trong bộ nhớ (main process của desktop, bộ nhớ trang của web), tối đa 6 giờ kể từ lần mở két thành công gần nhất (PIN đúng, khôi phục, thiết lập, đổi PIN); không gia hạn khi dùng, không bao giờ extractable ngoài lúc đổi PIN hoặc khôi phục. Quyền xem két là một thứ khác, không đi theo khóa ([mục 5.2](lifecycle.md#52-két-sắt-secret-vault)). Trên server chỉ có `MK` đã bọc (`wrapped_mk_pin`, `wrapped_mk_recovery`). Không bao giờ ra renderer, không ghi đĩa, không vào `localStorage` |
 | `DEK` (khóa từng file) | AES-256 ngẫu nhiên cho mỗi mục trong két | D1 cột `enc_key`, bọc bằng `MK` (nonce 12 byte ‖ AES-GCM, base64) |
 | `S` (bí mật của server) | 32 byte ngẫu nhiên, client sinh khi thiết lập | D1 `vault_keys.server_secret`; server **chỉ trả khi `authKey` đúng** |
 | `P` | `PBKDF2-SHA256(PIN, salt, 600 000 vòng)` → 64 byte | Tính trên máy, không lưu |
@@ -114,3 +114,8 @@ Mỗi lần cất vào két ghi một object riêng, tên `vault/<id>.<attempt>`
 - **AAD chưa gắn với id (M6).** `enc_meta` và `DEK` không được ràng buộc với id mục. Người ghi được cả D1 lẫn R2 có thể hoán đổi hai mục. Người chỉ có API token thì không làm được. Nâng cấp lên FUV2 nằm ở [Nợ kỹ thuật](roadmap.md#nợ-kỹ-thuật).
 - **Thumbnail trong két** dùng presigned GET 1 giờ, giống thumbnail thường (xem [Nợ kỹ thuật](roadmap.md#nợ-kỹ-thuật), M3).
 - **Mất PIN và recovery key đồng thời** thì file trong két không thể lấy lại. Đây là hệ quả có chủ ý của việc mã hóa phía client.
+- **Khóa giữ trong bộ nhớ tới 6 giờ.** Sau lần nhập PIN đúng, khóa `MK` được giữ tối đa 6 giờ để cất file vào két mà không hỏi PIN. Trong khoảng đó, kẻ kiểm soát app đang chạy hoặc trang đang chạy có thể cất file vào két, nhưng **không đọc được**: đọc cần quyền xem, tức cần PIN. Khóa không bao giờ ra mạng. Khóa app, đăng xuất, đặt lại, hết hạn hoặc đóng app thì khóa bị xóa ngay. Quyết định và lý do: [ADR 0016](../decisions/0016-phien-ket-sat-6-gio.md).
+- **Khóa còn lại sau lượt mở bị dở.** Bấm lùi ở cổng khi lần mở đang chạy, hoặc rời trình thiết lập lúc đang gửi lên server, có thể để khóa được giữ tới 6 giờ. Quyền xem không được cấp trong trường hợp này, nhưng khóa vẫn còn.
+- **Byte đã giải mã có thể lọt sau khi rời két.** Lượt tải đang chạy (`serve`, `fileBytes`) khi người dùng rời màn Két sắt vẫn có thể trả byte đã giải mã, vì sau khi tải không kiểm tra lại quyền xem.
+- **Đổi PIN không cần mở két.** Đổi PIN chạy khi app đã mở khóa, bằng PIN cũ, kể cả khi két đang đóng hoặc chỉ đang giữ khóa. Ai biết PIN cũ thì đổi được PIN.
+- **Thử lại mục đám mây mờ.** Mỗi lần danh sách két được tải khi đang xem, mục chưa mã hóa xong được thử mã hóa lại bằng khóa đang giữ. Không mở thêm quyền nào.

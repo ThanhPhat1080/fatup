@@ -184,6 +184,6 @@ Giới hạn độ dài: `encMeta` ≤ 8192 ký tự, `encKey` ≤ 512 ký tự,
 | (phẳng) | 403 | `authKey` sai: body `{ remaining, lockedUntil }` | Nhập lại PIN |
 | (phẳng) | 423 | Két đang khóa do sai nhiều: body `{ remaining, lockedUntil }` | Chờ `lockedUntil` |
 
-`vault_locked` không phải mã HTTP: đó là lỗi phía client khi két đang đóng trong app (desktop, web). Các lỗi `bad_item`, `unreadable`, `bad_response`, `network`, `upload_failed` cũng phía client, không có trong bảng này.
+`vault_locked` không phải mã HTTP: đó là lỗi phía client (desktop, web), với hai nghĩa. Cất vào két, tải lên vào két và chuyển đổi file cũ chỉ cần két **đang giữ khóa** (chưa mở, hoặc đã hết 6 giờ thì `vault_locked`). Mọi thao tác đọc (liệt kê, xem, tải, đổi tên, thêm liên kết, lấy ra) cần thêm **quyền xem**: đã nhập PIN ở màn Két sắt và chưa thoát màn đó. Thiếu quyền xem cũng trả `vault_locked`. Các lỗi `bad_item`, `unreadable`, `bad_response`, `network`, `upload_failed` cũng phía client, không có trong bảng này.
 
 *Cron và object mã hóa:* cron xóa object rác dưới `vault/` (lần cất bỏ dở hoặc thua) sau 1 giờ; một complete đến sau mốc đó có thể không còn object để `head()`. Chi tiết và rủi ro: [mục 6](lifecycle.md#6-vòng-đời-file-thùng-rác-và-dọn-dẹp), [mục 7.7](security.md#77-giới-hạn-bảo-mật-còn-lại).

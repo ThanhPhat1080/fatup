@@ -44,11 +44,15 @@ Các mục liên quan đến két sắt mã hóa (từ bản 0.5.0):
 - **M6 / FUV2, AAD chưa gắn với id.** Gắn `enc_meta` và `DEK` với id mục (định dạng FUV2) để người ghi được cả D1 lẫn R2 không hoán đổi được hai mục ([mục 7.7](security.md#77-giới-hạn-bảo-mật-còn-lại)).
 - **Số vòng KDF tối thiểu phía server.** Server không kiểm `kdfIterations`; chỉ kiểm là số nguyên dương. Đề xuất: từ chối dưới 100 000 vòng.
 - **Checksum của recovery key chưa bắt được đổi chỗ 2 ký tự cách nhau 16 giá trị.** Checksum là tổng có trọng số lẻ mod 32, bắt được mọi lỗi một ký tự nhưng không bắt được hoán đổi kiểu này ([mục 7.4](security.md#74-recovery-key)).
-- **Đóng két ngay sau cất từ danh sách chính** có thể cắt việc mã hóa nền; lần mở két sau tự chạy tiếp.
+- **Khóa đóng hẳn giữa lúc mã hóa nền** (khóa app, hết 6 giờ, hoặc đóng app) có thể cắt việc mã hóa nền; lần mở két sau tự chạy tiếp. Cất từ danh sách chính không còn đóng két ([ADR 0016](../decisions/0016-phien-ket-sat-6-gio.md)).
 - **Chưa có ảnh chụp dòng "Đang tạo két sắt…"** trong bộ ảnh e2e.
 - **E2E `vault` chập chờn.** Đôi khi timeout ở bước `.vault-key` khi chạy cạnh việc khác, và một lần treo ở máy của agent. Chưa điều tra.
 - **N3, mục nhấp nháy ở trang chính.** Một lần làm mới bắt đầu trước `vault/in` mà trả về sau khi mục đã được ẩn có thể làm mục hiện lại một lúc. Cần bộ đếm thế hệ cho làm mới ([mục 9.11](desktop-ui.md#911-két-sắt-mã-hóa)).
-- **N4, cất và chuyển đổi chạy đôi.** `migrateLegacy` và `moveInAndClose` có thể cùng chạy trên một mục ngay sau khi thiết lập. Kết quả đúng nhưng tốn công. `leaveVault()` có thể cắt một lượt chuyển đổi đang chạy; lần mở két sau làm lại.
+- **N4, cất và chuyển đổi chạy đôi.** `migrateLegacy` (sau thiết lập, sau mở két, sau khôi phục, và khi danh sách két thấy mục đám mây mờ) và cất từ danh sách chính có thể cùng chạy trên một mục. Kết quả đúng nhưng tốn công. Rời màn Két sắt (`vaultLeave`) không cắt lượt chuyển đổi đang chạy, vì khóa vẫn được giữ ([ADR 0016](../decisions/0016-phien-ket-sat-6-gio.md)).
+- **E2E chưa phủ luồng thiết lập rồi cất, khôi phục từ popup, và đếm ngược khóa của popup.** Vùng `vault` mới kiểm popup khi chưa giữ khóa, sai PIN, hủy, PIN đúng và thông báo cất lỗi; chưa kiểm luồng "chưa thiết lập → thiết lập → cất", "Quên PIN" từ popup sang khôi phục, và đếm ngược khi popup bị khóa tạm.
+- **Chuỗi `vaultUnlockToMove` và prop `hint` của `VaultGate` đã thừa.** Popup thay màn cổng khi cất, nên không còn chỗ nào dùng `vaultUnlockToMove` (`en` và `vi` trong `i18n.ts`) hoặc prop `hint` của `VaultGate.tsx`. Xóa cả hai.
+- **Popup PIN gửi `not_ready` sang khôi phục.** `VaultPinDialog.tsx` đi tới màn khôi phục khi nhận `not_ready`, trong khi két chưa thiết lập thì cần đi tới trình thiết lập. Hiện popup chỉ mở khi két đã thiết lập, nên gần như không gặp; sửa khi làm lại popup.
+- **Thiếu kiểm tra thế hệ sau `fetchPlain` (`serve`, `plainBytes`).** Byte đã giải mã của lượt tải đang chạy khi rời màn Két sắt vẫn có thể được trả về. Chấp nhận có chủ ý trong [ADR 0016](../decisions/0016-phien-ket-sat-6-gio.md) (mục c); thêm kiểm tra thế hệ sau khi tải để đóng lỗ này.
 - **N5, thiếu test cho cron.** Chưa có test chứng minh cron để yên các key `vault/` sai dạng (không khớp `VAULT_KEY`) ([mục 6](lifecycle.md#6-vòng-đời-file-thùng-rác-và-dọn-dẹp)).
 - **Đổi tên lúc đang chuyển.** `PATCH` đổi tên một mục đang ở trạng thái đám mây, trong lúc chuyển đổi chạy, có thể bị `encMeta` cũ của lần cất ghi đè tên mới. Chưa kiểm chứng.
 - **`r2-cors.json` còn `exposeHeaders: etag`.** Không còn cần cho két; vô hại. Bỏ khi cập nhật file đó lần sau.
@@ -56,3 +60,8 @@ Các mục liên quan đến két sắt mã hóa (từ bản 0.5.0):
 - **Icon trạng thái chưa kiểm bằng mắt ở chế độ tối.**
 - **Cột "Tải lên" trong danh sách trên điện thoại bị xuống dòng.**
 - **E2E `share` đôi khi hỏng ở bước `tooltip shows on hover`** (`desktop/e2e/areas/share.mjs`): bước rê chuột rồi chờ cố định 600 ms trước khi đọc độ mờ của tooltip. Quan sát 1 lần hỏng trong 4 lần chạy lại (3 lần pass), cả khi chạy toàn bộ lẫn khi chạy riêng. Chưa kiểm trên `main`, nên chưa biết lỗi có từ trước hay không. Nên chờ theo điều kiện (poll độ mờ) thay vì chờ cố định.
+
+Nhập ảnh từ `d30/` (thiết kế: [2026-11-18-nhap-anh-tu-thu-muc-bucket-design.md](../superpowers/specs/2026-11-18-nhap-anh-tu-thu-muc-bucket-design.md), chưa cài đặt):
+
+- **Hai máy làm mới cùng lúc, cùng nhập một ảnh.** Id của dòng được tính từ object nguồn (key + etag) nên `INSERT OR IGNORE` chặn dòng trùng, nhưng chưa có test với hai request song song thật trên D1/R2 thật, và các bước copy/xóa bản gốc của hai máy có thể chồng nhau (copy hai lần cùng một đích, xóa bản gốc hai lần). Người dùng cho phép để lại ở đây. Nếu thấy một ảnh ở bucket thành hai dòng ở Fatup thì đây là chỗ nghi đầu tiên.
+- **Ảnh nhập lại sau khi đã xóa vĩnh viễn.** Nếu lần nhập bị ngắt giữa bước đánh dấu `ready` và bước xóa bản gốc, rồi người dùng xóa vĩnh viễn file đó trước khi lần quét sau chạy, bản gốc còn ở `d30/` sẽ được nhập lại.

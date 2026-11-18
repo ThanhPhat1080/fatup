@@ -49,6 +49,7 @@ Cái được, cái mất, và điều agent KHÔNG được làm vì quyết đ
 | [0010](0010-bo-phim-tat-them-lien-ket.md) | Không có phím tắt Ctrl/⌘+L cho "Thêm liên kết" | desktop | Đã chốt |
 | [0011](0011-linkworker-khong-foreground.md) | `LinkWorker` Android là worker thường, không foreground | android | Đã chốt |
 | [0012](0012-dong-bang-test-khi-sua.md) | Đóng băng file test khi làm cho test thất bại chạy qua | quy trình | Đã chốt |
-| [0013](0013-ket-sat-ma-hoa-phia-client.md) | Két sắt mã hóa phía client: PIN két 6 số, bộ đếm trên server, recovery key | worker, shared, desktop, web | Đã chốt |
+| [0013](0013-ket-sat-ma-hoa-phia-client.md) | Két sắt mã hóa phía client: PIN két 6 số, bộ đếm trên server, recovery key | worker, shared, desktop, web | Đã chốt; mục 1 được chỉnh bởi 0016 |
 | [0014](0014-mot-nguoi-ghi-moi-muc-khi-cat-vao-ket.md) | Một người ghi mỗi mục khi cất vào két: giữ chỗ 2 giờ, không nhả sớm | worker, desktop, web | Bị thay bởi 0015 |
 | [0015](0015-mot-object-rieng-moi-lan-ma-hoa.md) | Mỗi lần cất vào két một object riêng (`vault/<id>.<attempt>`), `enc_object` trong D1, không giữ chỗ | worker, desktop, web, shared | Đã chốt |
+| [0016](0016-phien-ket-sat-6-gio.md) | Phiên két 6 giờ: giữ khóa để cất, quyền xem tách riêng và luôn hỏi PIN, popup thay chuyển màn hình | desktop, web, shared | Đã chốt |

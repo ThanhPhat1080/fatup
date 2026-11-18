@@ -16,7 +16,7 @@
 
 ### 10.1 Upload từ web
 
-- `WebUploadManager` (`web/src/uploader.ts`) cùng giao diện hàng đợi với `UploadManager` của desktop nên **bảng tiến trình dùng chung**: 2 file cùng lúc, tiến độ, hủy từng file, tick khi xong. Luồng `POST /uploads` → PUT file → PUT thumbnail → `complete`. Khi đang mở két, file và thumbnail được mã hóa trong trang và `POST /uploads` gửi kèm `vault: { encMeta, encKey }`; không gọi `PUT /files/:id/vault` ([mục 4.3](api.md#43-két-sắt-mã-hóa)).
+- `WebUploadManager` (`web/src/uploader.ts`) cùng giao diện hàng đợi với `UploadManager` của desktop nên **bảng tiến trình dùng chung**: 2 file cùng lúc, tiến độ, hủy từng file, tick khi xong. Luồng `POST /uploads` → PUT file → PUT thumbnail → `complete`. Khi đang giữ khóa két, file và thumbnail được mã hóa trong trang và `POST /uploads` gửi kèm `vault: { encMeta, encKey }`; không gọi `PUT /files/:id/vault` ([mục 4.3](api.md#43-két-sắt-mã-hóa)).
 - File lấy từ `<input type="file" multiple>` (nút Tải lên, trên Android có cả chụp ảnh) hoặc kéo-thả. Vì File của trình duyệt không có đường dẫn, "paths" của bridge là **handle** `web:N` trỏ vào một bảng File trong bộ nhớ.
 - PUT bằng `XMLHttpRequest` (fetch không báo tiến độ upload). Thumbnail 400px JPEG q80 vẽ bằng canvas (`createImageBitmap`, theo EXIF); định dạng trình duyệt không giải mã được (HEIC...) vẫn upload, chỉ thiếu thumbnail.
 - `device` là `Trình duyệt · Hệ điều hành` từ User-Agent. File > 100 MB bị từ chối ngay. Khóa app hoặc đăng xuất hủy các upload đang chạy.
@@ -33,8 +33,9 @@
 
 - Cùng két và cùng giao diện với desktop ([9.11](desktop-ui.md#911-két-sắt-mã-hóa)). Khóa, mã hóa và giải mã chạy trong trang, bằng `VaultSession`, lõi `createVaultCore`, `createVaultMover` (dùng chung với desktop) và WebCrypto trong `shared/`; mã nguồn: `web/src/vault-web.ts`.
 - `MK` và tên đã giải mã chỉ nằm trong bộ nhớ JS. **Không ghi** vào `localStorage`, IndexedDB hay Cache Storage, và mục két không đi vào kho ảnh xem trước. Service worker không cache API, presigned URL hay `/s/`.
-- Ảnh và file trong két hiện qua **`blob:` URL** làm từ byte đã giải mã. Đóng két (khóa app, đăng xuất, bấm logo, nút đóng két) thu hồi **mọi** `blob:` URL ngay lập tức, đồng bộ, và xóa khóa khỏi bộ nhớ. Đóng tab cũng mất khóa; mở lại cần PIN.
+- Ảnh và file trong két hiện qua **`blob:` URL** làm từ byte đã giải mã. Thoát màn Két sắt (nút ←, bấm logo) thu hồi **mọi** `blob:` URL ngay lập tức, đồng bộ, và bỏ quyền xem, nhưng giữ khóa 6 giờ để cất file tiếp mà không hỏi PIN. Đóng hẳn két (khóa app, đăng xuất, hết 6 giờ) thu hồi mọi `blob:` URL và xóa khóa khỏi bộ nhớ, cũng đồng bộ. Đóng tab cũng mất khóa; mở lại cần PIN.
 - **Giới hạn bộ nhớ:** file được mã hóa và giải mã **trong bộ nhớ** trên mọi trình duyệt, nên giới hạn là `MAX_FILE_SIZE` = 100 MB. Không ghi luồng xuống đĩa và không dùng `showSaveFilePicker`. Tải về đi qua `<a download>`.
 - **Cất vào két không cần ETag.** Mỗi lần cất ghi object riêng của lần thử (`vault/<id>.<attempt>`), nên không có đọc header `ETag` và không có lỗi `no_etag` ([ADR 0015](../decisions/0015-mot-object-rieng-moi-lan-ma-hoa.md)).
+- **Giữ khóa 6 giờ:** cùng quy tắc với desktop ([mục 5.2](lifecycle.md#52-két-sắt-secret-vault), [ADR 0016](../decisions/0016-phien-ket-sat-6-gio.md)): khóa được giữ tối đa 6 giờ kể từ lần nhập PIN đúng gần nhất, không gia hạn khi dùng, và kiểm lại khi dùng khóa nên tab nền bị trình duyệt làm chậm vẫn hết hạn đúng giờ. Cất vào két từ danh sách chính: nếu chưa giữ khóa thì hiện popup PIN ngay trên danh sách, như desktop.
 - **Két chưa thiết lập:** "Chuyển vào Két sắt" trên web mở trình thiết lập trước, rồi cất khi thiết lập xong, như desktop ([mục 5.2](lifecycle.md#52-két-sắt-secret-vault)). Không còn báo `vault_locked` ở đường này.
 - **Trạng thái mã hóa và làm mới:** cùng biểu tượng đám mây mờ / tick xanh như desktop ([9.11](desktop-ui.md#911-két-sắt-mã-hóa)); làm mới bằng polling 60 giây và khi lấy lại focus, như desktop.
