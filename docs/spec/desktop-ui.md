@@ -34,6 +34,7 @@
 - **Sắp xếp** (chế độ danh sách): bấm tiêu đề cột Tên / Tải lên / Dung lượng, bấm lần nữa để đảo chiều. Tên sắp theo thứ tự tự nhiên và bỏ qua dấu ("img2" trước "img10"). Mặc định: mới tải lên trước. Nhóm theo ngày ("Hôm nay", "Hôm qua", `dd/MM/yyyy`) chỉ áp dụng khi sắp theo thời gian tải lên.
 - **Chọn nhiều file:** mỗi file có checkbox (lưới: hiện khi rê chuột hoặc khi đã chọn; danh sách: cột đầu, kèm checkbox chọn tất cả ở tiêu đề). `Shift`+bấm chọn một dãy, `Ctrl/⌘+A` chọn tất cả, `Esc` bỏ chọn. Khi có file được chọn, thanh tab đổi thành thanh chọn: "Đã chọn N", Chọn tất cả, **Chuyển vào Két sắt**, **Chuyển vào thùng rác**. Thao tác chỉ áp dụng cho file **đang hiển thị**, nên bộ lọc không thể che file khỏi thao tác hàng loạt.
 - **Click ảnh** mở viewer; **click file khác** thì tải về. Menu `⋮`/chuột phải: Tải về, Copy ảnh (HEIC copy thumbnail JPEG), Chuyển vào Két sắt, Chuyển vào thùng rác.
+- **Biểu tượng theo loại file** (`FileIcon`, chọn bằng `fileVisual` trong `lib/format.ts`, theo `mime` rồi theo đuôi tên): ảnh **xanh ngọc**, PDF **đỏ** (dải chữ PDF), Word xanh dương, bảng tính xanh lá, slide cam, nén xám, **video hồng** (nhận cả khi `mime` chỉ là `application/octet-stream`: `mp4 mov m4v mkv avi webm 3gp wmv mpg mpeg`), âm thanh tím, và ba loại có dải chữ như PDF: **MD** (xanh dương; `md`, `markdown`, `text/markdown`), **HTML** (cam; `html`, `htm`, `text/html`), **TXT** (xám; `txt`, `text/plain`). Văn bản khác (`json`, `log`, `text/*`) giữ biểu tượng văn bản xám; còn lại là biểu tượng file trống. Màu có bản sáng và tối (`--tone-teal`, `--tone-pink` thêm vào `--tone-*`).
 - **Phím tắt:** `Ctrl/⌘+R` làm mới, `Ctrl/⌘+F` tìm, `Ctrl/⌘+U` tải lên, `Delete` chuyển file đang chọn vào thùng rác (trong thùng rác: xóa vĩnh viễn, có xác nhận).
 - **Tải về**: main process tải vào `~/Downloads`, trùng tên thì thêm hậu tố (1), (2)…, xong `shell.showItemInFolder`.
 - **Làm mới:** polling 60s, tự làm mới khi cửa sổ focus (cách nhau ≥ 5s) và sau mỗi thao tác.
@@ -113,7 +114,7 @@ Dictionary `en` / `vi` tự viết (không thư viện), mặc định theo `app
 
 - `main/`: config store (JSON trong `userData`, ghi nguyên tử), `safeStorage`, `ApiClient` (fetch), download manager, `UploadManager`, kiểm tra cập nhật, IPC handlers.
 - `preload/`: `contextBridge` expose `window.fatup.*` (một interface `FatupApi` trong `shared-ipc.ts`).
-- `renderer/`: React, không có quyền Node (`contextIsolation`, `sandbox`). Thumbnail và ảnh viewer tải thẳng từ presigned URL bằng `<img>`, trừ mục két sắt (đi qua `fatup-vault://`, xem [9.11](#911-két-sắt-mã-hóa)).
+- `renderer/`: React, không có quyền Node (`contextIsolation`, `sandbox`). Thumbnail và ảnh viewer tải thẳng từ presigned URL bằng `<img>`, trừ mục két sắt (không có thumbnail; ảnh mở ra đi qua `fatup-vault://file/<id>`, xem [9.11](#911-két-sắt-mã-hóa)).
 - Két sắt mã hóa: `vault-session.ts` (khóa trong bộ nhớ, 6 giờ cố định kể từ PIN đúng, dùng chung với PWA), `vault-handlers.ts` (logic gọi két, quyền xem `viewOpen` tách khỏi khóa, không import Electron), `main/vault-mover.ts` (cất vào, lấy ra, chuyển đổi file cũ) và `main/vault-ipc.ts` (lớp mỏng của IPC và scheme `fatup-vault://`). Renderer không bao giờ nhận khóa.
 
 ### 9.10 Màn hình khóa có hoạt họa
@@ -162,7 +163,7 @@ Giao diện của két là một bộ React dùng chung cho desktop và PWA ([m�
   - Toast hiện tiến trình "Đang chuyển N / M…". Lỗi một file không dừng các file còn lại. Khi có file không cất được, toast nói rõ: file đã vào két sẽ hiện đám mây mờ và được mã hóa lại tự động; file còn ở danh sách chính thì thử cất lại sau. File lỗi không tự thử lại trong lượt đó. Lần mở két sau thì cất lại với lần thử mới.
   - Lấy ra chỉ làm được khi đang xem két (sau PIN ở màn Két sắt). Mục không đọc được, hoặc đang ở trạng thái đám mây (chưa mã hóa xong), không có "Đưa ra khỏi Két sắt".
   - **Lấy ra đổi giao diện ngay** (plan `2026-11-18-vault-lay-ra-optimistic`, [ADR 0017](../decisions/0017-lay-ra-khoi-ket-doi-giao-dien-ngay.md)): bấm "Đưa ra khỏi Két sắt" thì các mục đã chọn rời danh sách két ngay và hiện ở danh sách chính như **bản giả** (`inVault: false`, tên đã giải mã giữ nguyên, ảnh thu nhỏ bỏ đi nên hiện icon loại file, hoặc logo trang với liên kết). Bản giả nằm đầu danh sách chính và không có trong danh sách két.
-    - Khi lượt lấy ra thành công, làm mới thay bản giả bằng mục thật (có ảnh thu nhỏ của chính nó). Toast "Đã đưa N file ra khỏi Két sắt" hiện khi lượt xong.
+    - Khi lượt lấy ra thành công, làm mới thay bản giả bằng mục thật (có ảnh thu nhỏ của chính nó, vì thumbnail đi theo mục khi lấy ra). Toast "Đã đưa N file ra khỏi Két sắt" hiện khi lượt xong.
     - Khi lấy ra thất bại (mục nằm trong `failed`, hoặc cả lượt bị từ chối): bản giả bị bỏ khỏi danh sách chính và mục quay lại danh sách két, kèm toast lỗi. Việc đưa lại bằng tay chỉ làm khi két đang mở và đang xem; nếu không, làm mới kế tiếp nạp lại từ server. Lỗi `locked` và `vault_locked` không đưa lại bằng tay (két đã đóng).
     - Trong lúc lượt đang chạy, một làm mới đến sớm (poll, focus, nút làm mới) không làm mục nhảy ngược: danh sách két không hiện các id đang lấy ra, danh sách chính giữ bản giả. Mỗi lần làm mới có số thế hệ; câu trả lời của một lần làm mới đã bị lần mới hơn thay thế thì bị bỏ, để câu trả lời cũ không ghi đè trạng thái mới.
     - Hàm thuần trong `lib/vault.ts`: `leavingGhost`, `withoutIds`, `mergeGhosts`, `restoreAfterFailedMoveOut` (có unit test).
@@ -172,6 +173,7 @@ Giao diện của két là một bộ React dùng chung cho desktop và PWA ([m�
   - Trên điện thoại, biểu tượng nằm ở góc ảnh thu nhỏ, để tên có chỗ.
   - Cập nhật: danh sách két làm mới khi mở két, mỗi 60 giây và khi cửa sổ lấy lại focus, nên thiết bị khác thấy đổi trạng thái sau tối đa một phút khi két đang mở. Không có kênh thông báo thời gian thực.
   - Mục không giải mã được (dữ liệu hỏng, hoặc khóa khác) hiện "Không đọc được trên thiết bị này" thay cho tên. Bấm vào thì báo, không xem được và không đưa ra được. Các mục khác trong danh sách không bị ảnh hưởng.
+  - **Két không hiện thumbnail của mục nào** ([ADR 0019](../decisions/0019-ket-sat-khong-hien-thumbnail.md)): thẻ lưới và dòng danh sách trong két là biểu tượng file, không tải và không giải mã gì cho tới khi người dùng mở ảnh (trình xem ảnh, Tải về, Sao chép ảnh). Danh sách chính không đổi.
   - Ảnh và file trong két xem qua `fatup-vault://` trên desktop (phục vụ từ bộ nhớ, không ghi đĩa) hoặc qua `blob:` trên web.
   - Liên kết trong két có thể giữ ảnh xem trước đã mã hóa. Ảnh xem trước do app tự tải về không bao giờ được lưu cho link trong két ([9.2c](#92c-liên-kết)).
 - **Tải về** mục két: giải mã và ghi vào thư mục tải về như mục thường; tên file lấy từ bản đã giải mã.

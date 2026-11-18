@@ -4,6 +4,15 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [0.5.3] — 2026-11-18
+
+### Đổi
+- **Biểu tượng file dễ phân biệt hơn:** ảnh đổi sang màu xanh ngọc (trước đây đỏ, giống PDF); video màu hồng và nhận cả video có `mime` chung (`.mov`, `.mkv`...); thêm biểu tượng riêng có dải chữ cho **Markdown (MD)**, **HTML** và **văn bản (TXT)**.
+- **Két sắt không còn hiện thumbnail** của bất kỳ ảnh nào (ảnh trong két thường là ảnh nhạy cảm). Danh sách két chỉ hiện biểu tượng file và tên; ảnh chỉ được tải và giải mã khi bạn mở nó (trình xem ảnh, Tải về, Sao chép ảnh), vẫn sau PIN két. Mở két nhanh hơn vì không tải thumbnail nào. Danh sách chính không đổi, và ảnh lấy ra khỏi két vẫn có thumbnail như cũ. Chi tiết: [ADR 0019](docs/decisions/0019-ket-sat-khong-hien-thumbnail.md).
+
+### Nâng cấp
+Không có migration, không đổi server. Chỉ cần phát hành app máy tính mới và deploy lại PWA.
+
 ## [0.5.2] — 2026-11-18
 
 ### Sửa
