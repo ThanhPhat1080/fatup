@@ -137,19 +137,23 @@ export function inTab(item: { kind: string }, tab: 'all' | 'image' | 'file' | 'l
   return tab === 'all' || item.kind === tab;
 }
 
-export type FileVisual = 'image' | 'pdf' | 'doc' | 'sheet' | 'slide' | 'archive' | 'video' | 'audio' | 'text' | 'other';
+export type FileVisual = 'image' | 'pdf' | 'doc' | 'sheet' | 'slide' | 'archive' | 'video' | 'audio' | 'markdown' | 'html' | 'txt' | 'text' | 'other';
 
 export function fileVisual(name: string, mime: string): FileVisual {
-  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  const ext = splitExt(name).ext.slice(1).toLowerCase(); // "" for a name with no extension
   if (mime.startsWith('image/')) return 'image';
   if (mime === 'application/pdf' || ext === 'pdf') return 'pdf';
-  if (mime.startsWith('video/')) return 'video';
+  // A video is told by its type, or by its extension when the type says nothing (a phone often sends `application/octet-stream`).
+  if (mime.startsWith('video/') || ['mp4', 'mov', 'm4v', 'mkv', 'avi', 'webm', '3gp', 'wmv', 'mpg', 'mpeg'].includes(ext)) return 'video';
   if (mime.startsWith('audio/')) return 'audio';
   if (['doc', 'docx', 'odt', 'rtf', 'pages'].includes(ext)) return 'doc';
   if (['xls', 'xlsx', 'ods', 'csv', 'numbers'].includes(ext)) return 'sheet';
   if (['ppt', 'pptx', 'odp', 'key'].includes(ext)) return 'slide';
   if (['zip', 'rar', '7z', 'tar', 'gz', 'apk'].includes(ext)) return 'archive';
-  if (mime.startsWith('text/') || ['txt', 'md', 'json', 'log'].includes(ext)) return 'text';
+  if (mime === 'text/markdown' || ['md', 'markdown'].includes(ext)) return 'markdown';
+  if (mime === 'text/html' || ['html', 'htm'].includes(ext)) return 'html';
+  if (mime === 'text/plain' || ext === 'txt') return 'txt';
+  if (mime.startsWith('text/') || ['json', 'log'].includes(ext)) return 'text';
   return 'other';
 }
 
