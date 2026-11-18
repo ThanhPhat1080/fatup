@@ -4,7 +4,7 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
-## [Chưa phát hành]
+## [0.5.1] — 2026-11-18
 
 ### Thêm
 - **Ảnh app khác bỏ vào bucket hiện ngay ở Fatup.** Ảnh nằm trong thư mục `d30/` của bucket (đổi bằng biến `IMPORT_PREFIX` trong `worker/wrangler.toml`; để trống thì tắt) được **di chuyển** sang `files/<id>` mỗi khi mở hoặc làm mới danh sách (tối đa 10 ảnh mỗi lần, cách nhau ≥ 30 giây). Chỉ nhập ảnh (`png jpg jpeg gif webp bmp heic heif avif`, ≤ 100 MB); mọi thứ khác bị bỏ qua và để nguyên. Một ảnh ở bucket không bao giờ thành hai dòng ở Fatup (id tính từ object nguồn), và bản gốc chỉ bị xóa sau khi bản copy đã đủ. Xóa trong Fatup là xóa hẳn khỏi bucket. Chi tiết: [api.md 4.4](docs/spec/api.md#44-nhập-ảnh-từ-thư-mục-của-bucket), [ADR 0018](docs/decisions/0018-nhap-anh-tu-thu-muc-bucket.md).
