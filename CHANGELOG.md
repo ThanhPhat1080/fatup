@@ -4,7 +4,7 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
-## [0.5.0] — chưa phát hành
+## [0.5.0] — 2026-11-18
 
 ### Thêm
 - **Két sắt mã hóa đầu cuối** (máy tính và bản web). File trong két được mã hóa trên máy trước khi rời máy: nội dung, ảnh xem trước, tên, loại và địa chỉ liên kết. Server và R2 chỉ thấy bản mã, nên người có API token không đọc được file trong két.
