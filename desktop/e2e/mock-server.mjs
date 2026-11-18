@@ -165,6 +165,9 @@ export function startMockServer(realNow = Date.now(), options = {}) {
   // morning. Before 08:00 local time, pretend it is 08:00 so the file list always has a Today and a Yesterday group.
   const startOfToday = new Date(realNow).setHours(0, 0, 0, 0);
   const now = Math.max(realNow, startOfToday + 8 * hour);
+  // What "now" is for anything the mock creates while it runs (an upload, an imported image): never before the seed clock above, so a new item
+  // is always the newest one. With the real clock a run before 08:00 (UTC on CI) would put it between two seeded files.
+  const clockNow = () => Math.max(Date.now(), startOfToday + 8 * hour);
   const day = 24 * hour;
   const seed = [
     ['IMG_20261112_0832.jpg', 'image/jpeg', 2_480_000, 0.3 * hour],
@@ -277,7 +280,7 @@ export function startMockServer(realNow = Date.now(), options = {}) {
   async function vaultApi(req, url, raw, base) {
     const { pathname } = url;
     const method = req.method;
-    const now = Date.now();
+    const now = clockNow();
     const ready = () => vault !== null && vault.authHash !== null;
     const vaultItem = (id) => vaultItems.find((v) => v.id === id);
     let m;
@@ -690,7 +693,7 @@ export function startMockServer(realNow = Date.now(), options = {}) {
         size,
         kind: 'image',
         device: 'd30',
-        createdAt: Date.now(),
+        createdAt: clockNow(),
         deletedAt: null,
         inVault: false,
         tags: [],
