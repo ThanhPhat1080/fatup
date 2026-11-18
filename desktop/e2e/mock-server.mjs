@@ -165,9 +165,10 @@ export function startMockServer(realNow = Date.now(), options = {}) {
   // morning. Before 08:00 local time, pretend it is 08:00 so the file list always has a Today and a Yesterday group.
   const startOfToday = new Date(realNow).setHours(0, 0, 0, 0);
   const now = Math.max(realNow, startOfToday + 8 * hour);
-  // What "now" is for anything the mock creates while it runs (an upload, an imported image): never before the seed clock above, so a new item
-  // is always the newest one. With the real clock a run before 08:00 (UTC on CI) would put it between two seeded files.
-  const clockNow = () => Math.max(Date.now(), startOfToday + 8 * hour);
+  // The time stamped on anything the mock creates while it runs (an upload, an imported image): it starts at the seed clock above and then
+  // moves with the real clock, so a new item is always the newest one. With the plain real time, a run before 08:00 (UTC on CI) would put it
+  // between two seeded files. Timers and locks keep using the real time (`Date.now()`).
+  const clockNow = () => now + (Date.now() - realNow);
   const day = 24 * hour;
   const seed = [
     ['IMG_20261112_0832.jpg', 'image/jpeg', 2_480_000, 0.3 * hour],
@@ -280,7 +281,7 @@ export function startMockServer(realNow = Date.now(), options = {}) {
   async function vaultApi(req, url, raw, base) {
     const { pathname } = url;
     const method = req.method;
-    const now = clockNow();
+    const now = Date.now();
     const ready = () => vault !== null && vault.authHash !== null;
     const vaultItem = (id) => vaultItems.find((v) => v.id === id);
     let m;
@@ -405,7 +406,7 @@ export function startMockServer(realNow = Date.now(), options = {}) {
         size,
         hasThumb: withThumb,
         device: typeof device === 'string' ? device.slice(0, 64) : null,
-        createdAt: now,
+        createdAt: clockNow(),
         encMeta: isVault ? vaultBody.encMeta : null,
         encKey: isVault ? vaultBody.encKey : null,
       });
@@ -431,7 +432,7 @@ export function startMockServer(realNow = Date.now(), options = {}) {
       uploads.delete(up.id);
       const hasThumb = up.hasThumb && blobs.has(`${key}.thumb`);
       if (up.vault) {
-        const v = { id: up.id, size: up.size, hasThumb, device: up.device, createdAt: now, deletedAt: null, encMeta: up.encMeta, encKey: up.encKey };
+        const v = { id: up.id, size: up.size, hasThumb, device: up.device, createdAt: clockNow(), deletedAt: null, encMeta: up.encMeta, encKey: up.encKey };
         vaultItems.push(v);
         return { status: 200, body: vaultJson(v, base) };
       }
@@ -442,7 +443,7 @@ export function startMockServer(realNow = Date.now(), options = {}) {
         size: up.size,
         kind: up.mime.startsWith('image/') ? 'image' : 'file',
         device: up.device,
-        createdAt: now,
+        createdAt: clockNow(),
         deletedAt: null,
         inVault: false,
         tags: [],
