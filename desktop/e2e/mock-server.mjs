@@ -143,13 +143,23 @@ function vaultJson(v, base) {
 
 /**
  * @param {number} realNow  the clock the seed dates are built from
- * @param {{ vaultLockScale?: number, slowVaultComplete?: number }} options  vaultLockScale multiplies the Vault lock lengths (the test shortens
- *   them; default: E2E_VAULT_LOCK_SCALE or 1). slowVaultComplete holds each `vault/in/complete` for that many ms, so a move stays
- *   "pending" (faded cloud) for a while; default 0.
+ * @param {{ vaultLockScale?: number, slowVaultComplete?: number, slowVaultOut?: number, failVaultOut?: number }} options  vaultLockScale
+ *   multiplies the Vault lock lengths (the test shortens them; default: E2E_VAULT_LOCK_SCALE or 1). slowVaultComplete holds each
+ *   `vault/in/complete` for that many ms, so a move stays "pending" (faded cloud) for a while; default 0. slowVaultOut and failVaultOut
+ *   are read per request (see the move-out switches and takeOutFailure in the body below).
  */
 export function startMockServer(realNow = Date.now(), options = {}) {
   const lockScale = options.vaultLockScale ?? Number(process.env.E2E_VAULT_LOCK_SCALE ?? 1);
   const slowVaultComplete = options.slowVaultComplete ?? 0;
+  // Move-out switches, read from the options object when a request arrives so an area can set them while it runs. slowVaultOut holds each
+  // vault/out and vault/out/complete for that many ms (a move-out stays optimistic meanwhile). failVaultOut makes the next one of those two
+  // requests answer 500, after the hold (a one-shot: the counter goes down when it arrives).
+  const takeOutFailure = () => {
+    if (!(options.failVaultOut > 0)) return false;
+    options.failVaultOut -= 1;
+    return true;
+  };
+  const outHold = () => (options.slowVaultOut > 0 ? new Promise((resolve) => setTimeout(resolve, options.slowVaultOut)) : null);
   const hour = 3_600_000;
   // The seed dates are "a few hours ago" and "yesterday evening", which only land in the right calendar days when it is already
   // morning. Before 08:00 local time, pretend it is 08:00 so the file list always has a Today and a Yesterday group.
@@ -554,6 +564,9 @@ export function startMockServer(realNow = Date.now(), options = {}) {
     }
     if ((m = /^\/files\/(\w+)\/vault\/out$/.exec(pathname)) && method === 'POST') {
       if (!ready()) return notReady();
+      const failed = takeOutFailure();
+      await outHold();
+      if (failed) return fail(500, 'e2e_failure', 'E2E: simulated failure of vault/out');
       const v = vaultItem(m[1]);
       if (!v || v.deletedAt !== null) return fail(404, 'not_found', 'File not found');
       return {
@@ -568,6 +581,9 @@ export function startMockServer(realNow = Date.now(), options = {}) {
     }
     if ((m = /^\/files\/(\w+)\/vault\/out\/complete$/.exec(pathname)) && method === 'POST') {
       if (!ready()) return notReady();
+      const failed = takeOutFailure();
+      await outHold();
+      if (failed) return fail(500, 'e2e_failure', 'E2E: simulated failure of vault/out/complete');
       const b = jsonObject(raw);
       if (!b) return badRequest('Body must be JSON');
       if (b.url !== undefined && b.url !== null) return badRequest('the mock moves files, not links');

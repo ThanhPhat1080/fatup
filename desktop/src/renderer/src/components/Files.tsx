@@ -228,9 +228,10 @@ export function TagDots({ tags }: { tags: Item['tags'] }) {
 }
 
 function Thumb({ item }: { item: Item }) {
-  const [failed, setFailed] = useState(false);
-  if (item.thumbUrl && !failed) {
-    return <img src={item.thumbUrl} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} />;
+  // The failed address is remembered, so a different address (a later real one) is tried again.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (item.thumbUrl && item.thumbUrl !== failedSrc) {
+    return <img src={item.thumbUrl} alt="" loading="lazy" draggable={false} onError={() => setFailedSrc(item.thumbUrl)} />;
   }
   if (item.kind === 'link') {
     // No preview image (yet, or the page has none): a little cow keeps the card from looking broken.
@@ -249,9 +250,10 @@ function Thumb({ item }: { item: Item }) {
 
 /** The little picture before a name in the list: the thumbnail, or (when there is none or it fails to load) the file icon, or the platform logo for a link. The cow is for the grid only. */
 function MiniThumb({ item }: { item: Item }) {
-  const [failed, setFailed] = useState(false);
-  if (item.thumbUrl && !failed) {
-    return <img className="list__mini" src={item.thumbUrl} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} />;
+  // The failed address is remembered, so a different address (a later real one) is tried again.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (item.thumbUrl && item.thumbUrl !== failedSrc) {
+    return <img className="list__mini" src={item.thumbUrl} alt="" loading="lazy" draggable={false} onError={() => setFailedSrc(item.thumbUrl)} />;
   }
   return item.kind === 'link' ? <SiteBadge site={item.site ?? 'internet'} size={24} icons={siteIcons(item)} /> : <FileIcon name={item.name} mime={item.mime} />;
 }

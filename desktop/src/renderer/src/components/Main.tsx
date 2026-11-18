@@ -4,7 +4,7 @@ import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shar
 import { DEFAULT_QUOTA_BYTES, isShareable, type TagColor } from '@fatup/shared';
 import { DEFAULT_SORT, groupByDay, groupByDomain, inTab, matchesLink, matchesQuery, matchesSite, matchesTags, singleGroup, siteCounts, sortItems, type SiteFilter, type SortKey, type SortState } from '../lib/format';
 import { errorText, useI18n } from '../lib/i18n';
-import { canMoveOut, moveFailedMessageKey, undoVaultDelete, vaultMoveInPlan } from '../lib/vault';
+import { canMoveOut, leavingGhost, mergeGhosts, moveFailedMessageKey, restoreAfterFailedMoveOut, undoVaultDelete, vaultMoveInPlan, withoutIds } from '../lib/vault';
 import { AddLinkDialog } from './AddLinkDialog';
 import { ConfirmDialog } from './Dialog';
 import { EmptyState, FileGrid, FileList } from './Files';
@@ -39,6 +39,14 @@ const FOCUS_REFRESH_MIN_GAP_MS = 5_000;
 /** Previews are fetched when the app opens, newest links first, a couple at a time and not more than this many per session. */
 const PREVIEW_BUDGET = 20;
 const PREVIEW_PARALLEL = 2;
+
+/**
+ * The main-list copy of a Vault item on its way out. Its thumbnail address is a Vault one (fatup-vault:// or blob:), revoked when the
+ * Vault is left, so it is dropped here: the row shows the file icon until the real item arrives with its own address.
+ */
+function outGhost(item: Item): Item {
+  return { ...leavingGhost(item), thumbUrl: null };
+}
 
 export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (p: Partial<Prefs>) => void; onLocked: () => void }) {
   const { t, locale } = useI18n();
@@ -104,9 +112,14 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const searchRef = useRef<HTMLInputElement>(null);
   /** Ids on their way into the Vault: they stay out of the main list until the move ends, even if a refresh that started earlier answers with them. */
   const enteringVault = useRef(new Set<string>());
+  /** Vault items on their way out (optimistic move-out, plan 2026-11-18-vault-lay-ra-optimistic): the original items, kept until the move ends. */
+  const leavingVault = useRef(new Map<string, Item>());
+  /** Counts refreshes: an answer whose refresh was superseded by a newer one is dropped, so an older answer cannot undo a newer state. */
+  const refreshGen = useRef(0);
 
   // Reads vaultActiveRef, not the render's value, so a refresh started by a move that ends later still sees a Vault opened meanwhile.
   const refresh = useCallback(async () => {
+    const gen = ++refreshGen.current;
     lastRefresh.current = Date.now();
     setLoading(true);
     const [res, trashRes, usageRes, vaultRes] = await Promise.all([
@@ -115,16 +128,24 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       window.fatup.usage(),
       vaultActiveRef.current ? window.fatup.listVault() : Promise.resolve(null),
     ]);
+    // A newer refresh owns the loading flag and the lists now; it sets loading false when it ends.
+    if (gen !== refreshGen.current) return;
     setLoading(false);
+    // Items leaving the Vault stay out of the Vault list and in the main list as ghosts, even when this answer predates the move.
+    const leaving = leavingVault.current;
     if (vaultRes) {
-      if (vaultRes.ok) setVaultItems(vaultRes.value);
+      if (vaultRes.ok) setVaultItems(withoutIds(vaultRes.value, leaving.keys()));
       else if (vaultRes.error === 'vault_locked') setVaultUnlocked(false);
       else if (vaultRes.error !== 'locked') setError(errorText(t, vaultRes.error));
     }
     if (res.ok) {
-      const shown = res.value.filter((it) => !enteringVault.current.has(it.id));
+      const shown = mergeGhosts(
+        res.value.filter((it) => !enteringVault.current.has(it.id)),
+        [...leaving.values()].map(outGhost),
+      );
+      const vaultShown = vaultRes?.ok ? withoutIds(vaultRes.value, leaving.keys()) : [];
       setItems(shown);
-      setTopIds(new Set([...shown, ...(vaultRes?.ok ? vaultRes.value : [])].filter((it) => it.important).map((it) => it.id)));
+      setTopIds(new Set([...shown, ...vaultShown].filter((it) => it.important).map((it) => it.id)));
       if (trashRes.ok) setTrashItems(trashRes.value);
       if (usageRes.ok) setUsage(usageRes.value);
       setError(null);
@@ -386,7 +407,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   }
 
   /** Moves files into or out of the Vault in one call (the main process reports each file's progress). Null when nothing was asked, or the call was refused. */
-  async function moveBetween(targets: Item[], into: boolean): Promise<{ done: Set<string>; failed: number } | null> {
+  async function moveBetween(targets: Item[], into: boolean): Promise<{ done: Set<string>; failed: number } | { refused: string } | null> {
     if (targets.length === 0) return null;
     const ids = targets.map((it) => it.id);
     movingRef.current = true;
@@ -398,7 +419,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       // The 6 hours ran out while the files were on their way: the PIN popup comes back with the same files.
       else if (into && res.error === 'vault_locked') setPendingMove(targets);
       else toast(errorText(t, res.error), true);
-      return null;
+      // The error code is returned too: the caller decides what happens to the items (a refusal is already reported above).
+      return { refused: res.error };
     }
     const failed = new Set(res.value.failed);
     return { done: new Set(ids.filter((id) => !failed.has(id))), failed: failed.size };
@@ -440,7 +462,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       for (const id of ids) enteringVault.current.delete(id);
       refresh();
     }
-    if (!moved) return;
+    if (!moved || 'refused' in moved) return;
     const { done, failed } = moved;
     const endedShare = targets.some((it) => it.shared && done.has(it.id));
     // What did move (and a share that ended with it) is always said; when some failed, the failure message follows in the same toast.
@@ -457,14 +479,43 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     setLightboxId(null);
     setLinkPreviewId(null);
     setPdfId(null);
-    const moved = await moveBetween(outable, false);
-    if (!moved) return;
-    const { done, failed } = moved;
-    setVaultItems((list) => list?.filter((it) => !done.has(it.id)) ?? null);
+    // Optimistic: the files leave the Vault list and show in the main list at once, as ghosts until the move ends.
+    const ids = outable.map((it) => it.id);
+    for (const it of outable) leavingVault.current.set(it.id, it);
+    setVaultItems((list) => (list ? withoutIds(list, ids) : list));
+    setItems((list) => (list ? mergeGhosts(list, outable.map(outGhost)) : list));
     clearSelection();
-    if (failed > 0) toast(t.movedOutOfVaultFailed({ n: failed }), true);
-    else toast(t.removedFromVault(done.size));
-    refresh();
+    try {
+      let moved: Awaited<ReturnType<typeof moveBetween>> = null;
+      try {
+        moved = await moveBetween(outable, false);
+      } catch {
+        // An IPC failure: nothing is known to have moved, so every item counts as failed below and the refresh reloads the truth.
+        moved = null;
+      }
+      // A refused call (moveBetween has already reported it) leaves every item failed; otherwise only the ones it did not move.
+      const answer = moved && !('refused' in moved) ? moved : null;
+      const refused = moved && 'refused' in moved ? moved.refused : null;
+      const done = answer?.done ?? new Set<string>();
+      const failedItems = outable.filter((it) => !done.has(it.id));
+      const failedIds = failedItems.map((it) => it.id);
+      // The failed ids leave the ghost map now, so a refresh from here on shows them in the Vault again (not as ghosts).
+      for (const id of failedIds) leavingVault.current.delete(id);
+      if (failedIds.length > 0) {
+        setItems((list) => (list ? withoutIds(list, failedIds) : list));
+        // Only while the Vault is open and unlocked: a closed Vault must not get decrypted items back; the refresh below drops them.
+        // A `locked` or `vault_locked` refusal: the Vault is closed now, so the items are not put back by hand either.
+        if (vaultActiveRef.current && refused !== 'locked' && refused !== 'vault_locked') {
+          setVaultItems((list) => (list ? restoreAfterFailedMoveOut(list, failedItems) : list));
+        }
+      }
+      if (answer && answer.failed > 0) toast(t.movedOutOfVaultFailed({ n: answer.failed }), true);
+      else if (answer) toast(t.removedFromVault(done.size));
+      // The done ids stay ghosts until this refresh has answered, so an earlier refresh cannot show them in the Vault again.
+      await refresh();
+    } finally {
+      for (const id of ids) leavingVault.current.delete(id);
+    }
   }
 
   async function foreverMany(targets: Item[]) {

@@ -32,6 +32,13 @@
  * 14c. moveFailedMessageKey(failed: number): 'vaultMoveFailed' | null (plan 2026-11-18-vault-session-6h, decision 6). null when nothing failed,
  *      otherwise the i18n key `vaultMoveFailed`, a function of `{ n }` in en and vi (the item stays in the Vault as a faded cloud and is encrypted again).
  * 15. Vault error strings (spec 4.7b I4): `err_<code>` in en and vi, read by errorText(dict, code).
+ * 16. leavingGhost(item: Item): Item (plan 2026-11-18-vault-lay-ra-optimistic, decision 5). A copy with `inVault: false`; every other field,
+ *      the decrypted name included, unchanged; the input is not mutated.
+ * 17. withoutIds<T extends { id: string }>(list: T[], ids: Iterable<string>): T[]. The list minus the given ids, order kept, new array.
+ * 18. mergeGhosts(list: Item[], ghosts: Iterable<Item>): Item[]. Ghosts whose id is not in the list go first, then the list in its own order.
+ *      No id appears twice; a ghost whose id is already in the list is not added (the list's copy stays). The input is not mutated.
+ * 19. restoreAfterFailedMoveOut(vaultList: Item[], failedItems: Item[]): Item[]. The failed items go back into the Vault list, each id once,
+ *      in the default list order (`sortItems` with `DEFAULT_SORT` from lib/format.ts). The inputs are not mutated.
  */
 import { describe, expect, it } from 'vitest';
 import type { Item } from '../src/shared-ipc';
@@ -787,5 +794,127 @@ describe('moveFailedMessageKey: what to say when some files could not be moved i
     }
     const say = (dict: unknown) => (dict as Record<string, (a: { n: number }) => string>).vaultMoveFailed?.({ n: 3 });
     expect(say(dictionaries.en)).not.toBe(say(dictionaries.vi));
+  });
+});
+
+const ids = (list: Item[]) => list.map((i) => i.id);
+
+describe('leavingGhost: the copy shown in the main list while an item leaves the Vault (plan 2026-11-18-vault-lay-ra-optimistic, decision 5)', () => {
+  it('returns a new object marked as outside the Vault', async () => {
+    const { leavingGhost } = await lib();
+    const item = row({ id: 'a', name: 'anh-bia.jpg', inVault: true, encrypted: true });
+    const ghost = leavingGhost(item);
+    expect(ghost).not.toBe(item);
+    expect(ghost.inVault).toBe(false);
+  });
+
+  it('keeps every other field unchanged, the decrypted name included', async () => {
+    const { leavingGhost } = await lib();
+    const item = row({ id: 'a', name: 'hop-dong.pdf', size: 42, createdAt: 1000, mime: 'application/pdf', kind: 'file', inVault: true, encrypted: true, unreadable: false });
+    expect(leavingGhost(item)).toEqual({ ...item, inVault: false });
+  });
+
+  it('does not change the item it was given', async () => {
+    const { leavingGhost } = await lib();
+    const item = row({ id: 'a', name: 'ghi-chu.txt', inVault: true, encrypted: true });
+    leavingGhost(item);
+    expect(item.inVault).toBe(true);
+    expect(item.name).toBe('ghi-chu.txt');
+  });
+});
+
+describe('withoutIds: the Vault list minus the items being taken out', () => {
+  it('drops the items whose ids are given and keeps the order of the rest', async () => {
+    const { withoutIds } = await lib();
+    const list = [row({ id: 'a' }), row({ id: 'b' }), row({ id: 'c' }), row({ id: 'd' })];
+    expect(ids(withoutIds(list, ['c', 'a']))).toEqual(['b', 'd']);
+  });
+
+  it('accepts any iterable of ids, not only an array', async () => {
+    const { withoutIds } = await lib();
+    const list = [row({ id: 'a' }), row({ id: 'b' })];
+    expect(ids(withoutIds(list, new Set(['b'])))).toEqual(['a']);
+  });
+
+  it('ignores ids that are not in the list, and never changes the list it was given', async () => {
+    const { withoutIds } = await lib();
+    const list = [row({ id: 'a' }), row({ id: 'b' })];
+    const out = withoutIds(list, ['z']);
+    expect(ids(out)).toEqual(['a', 'b']);
+    expect(out).not.toBe(list);
+    expect(ids(list)).toEqual(['a', 'b']);
+  });
+
+  it('gives an empty list when every item is taken out', async () => {
+    const { withoutIds } = await lib();
+    expect(withoutIds([row({ id: 'a' })], ['a'])).toEqual([]);
+  });
+});
+
+describe('mergeGhosts: the main list plus the copies of items that are leaving the Vault', () => {
+  it('puts the ghosts that are not in the list first, then the list in its own order', async () => {
+    const { mergeGhosts } = await lib();
+    const list = [row({ id: 'm', inVault: false }), row({ id: 'a', inVault: false })];
+    const ghosts = [row({ id: 'g', inVault: false }), row({ id: 'h', inVault: false })];
+    expect(ids(mergeGhosts(list, ghosts))).toEqual(['g', 'h', 'm', 'a']);
+  });
+
+  it('does not add a ghost whose id is already in the list, and keeps the list copy', async () => {
+    const { mergeGhosts } = await lib();
+    const list = [row({ id: 'a', name: 'ban-trong-danh-sach' })];
+    const ghosts = [row({ id: 'a', name: 'ban-ma' })];
+    const out = mergeGhosts(list, ghosts);
+    expect(ids(out)).toEqual(['a']);
+    expect(out[0].name).toBe('ban-trong-danh-sach');
+  });
+
+  it('adds a ghost id that appears twice only once', async () => {
+    const { mergeGhosts } = await lib();
+    const g = row({ id: 'g' });
+    expect(ids(mergeGhosts([], [g, g]))).toEqual(['g']);
+  });
+
+  it('accepts any iterable of ghosts, and does not change the list it was given', async () => {
+    const { mergeGhosts } = await lib();
+    const list = [row({ id: 'a' })];
+    const out = mergeGhosts(list, new Set([row({ id: 'g' })]));
+    expect(ids(out)).toEqual(['g', 'a']);
+    expect(ids(list)).toEqual(['a']);
+  });
+});
+
+describe('restoreAfterFailedMoveOut: failed items go back into the Vault list (plan 2026-11-18-vault-lay-ra-optimistic, decision 5)', () => {
+  it('puts a restored item where the default list order puts it, not at the end', async () => {
+    const { restoreAfterFailedMoveOut } = await lib();
+    const vaultList = [row({ id: 'a', inVault: true, createdAt: 300, name: 'a', size: 1 }), row({ id: 'c', inVault: true, createdAt: 100, name: 'c', size: 1 })];
+    const failed = [row({ id: 'b', inVault: true, createdAt: 200, name: 'b', size: 1 })];
+    // The default order is newest upload first (DEFAULT_SORT), so b (200) sits between a (300) and c (100).
+    expect(ids(restoreAfterFailedMoveOut(vaultList, failed))).toEqual(['a', 'b', 'c']);
+  });
+
+  it('keeps an item that is already in the Vault list once', async () => {
+    const { restoreAfterFailedMoveOut } = await lib();
+    const vaultList = [row({ id: 'a', inVault: true, createdAt: 300, name: 'a', size: 1 }), row({ id: 'b', inVault: true, createdAt: 200, name: 'b', size: 1 })];
+    const failed = [row({ id: 'b', inVault: true, createdAt: 200, name: 'b', size: 1 })];
+    const out = ids(restoreAfterFailedMoveOut(vaultList, failed));
+    expect(out).toHaveLength(2);
+    expect(out.filter((id) => id === 'b')).toHaveLength(1);
+  });
+
+  it('never repeats an id, even when the failed items repeat one', async () => {
+    const { restoreAfterFailedMoveOut } = await lib();
+    const vaultList = [row({ id: 'a', inVault: true, createdAt: 300, name: 'a', size: 1 })];
+    const c = row({ id: 'c', inVault: true, createdAt: 100, name: 'c', size: 1 });
+    const out = ids(restoreAfterFailedMoveOut(vaultList, [c, c]));
+    expect(out).toEqual(['a', 'c']);
+  });
+
+  it('gives the Vault list back in its own order when nothing failed, and changes neither input', async () => {
+    const { restoreAfterFailedMoveOut } = await lib();
+    const vaultList = [row({ id: 'a', inVault: true, createdAt: 300, name: 'a', size: 1 }), row({ id: 'c', inVault: true, createdAt: 100, name: 'c', size: 1 })];
+    const failed: Item[] = [];
+    expect(ids(restoreAfterFailedMoveOut(vaultList, failed))).toEqual(['a', 'c']);
+    expect(ids(vaultList)).toEqual(['a', 'c']);
+    expect(failed).toEqual([]);
   });
 });

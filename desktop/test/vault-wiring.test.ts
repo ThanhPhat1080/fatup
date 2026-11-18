@@ -112,4 +112,12 @@ describe('wiring (static checks on files the unit tests cannot load)', () => {
     expect(registration).not.toContain("state === 'none'");
     expect(main).not.toMatch(/\.setVault\(/);
   });
+
+  // Plan 2026-11-18-vault-lay-ra-optimistic, decisions 2 and 3: items leaving the Vault are kept in a `leavingVault` ref and merged into the main list.
+  it('Main.tsx keeps the items leaving the Vault in a leavingVault ref and uses mergeGhosts and restoreAfterFailedMoveOut', () => {
+    const main = src('renderer/src/components/Main.tsx');
+    expect(main).toMatch(/const leavingVault = useRef\b/);
+    expect(main).toContain('mergeGhosts');
+    expect(main).toContain('restoreAfterFailedMoveOut');
+  });
 });

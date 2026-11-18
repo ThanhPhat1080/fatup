@@ -4098,6 +4098,10 @@ body {
   line-height: 1.5;
   color: #c9ccd4;
 }
+/* The PIN cells of the setup and recovery screens sit in the middle of the card. */
+.vault-card .pin__cells {
+  justify-content: center;
+}
 /* The default outlined button is blue on white; on the dark card it needs light text and a visible outline. */
 .vault-card .btn--outlined {
   color: #eaf1ff;

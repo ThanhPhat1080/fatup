@@ -3,6 +3,7 @@
  * No React, no DOM: components call these and only render the result, so the logic is unit-tested (test/vault-ui.test.ts).
  */
 import type { Item, VaultPinRefusal, VaultSetupCommitResult, VaultUnlockResult } from '../../../shared-ipc';
+import { DEFAULT_SORT, sortItems } from './format';
 
 export const VAULT_PIN_LENGTH = 6;
 
@@ -243,6 +244,51 @@ export function vaultItemState(item: Item): 'pending' | 'encrypted' | 'unreadabl
 /** Whether a Vault item may leave the Vault: it must be readable, and encrypted (not still being converted). */
 export function canMoveOut(item: Item): boolean {
   return !item.unreadable && !isEncrypting(item);
+}
+
+/**
+ * The copy of a Vault item shown in the main list while it leaves the Vault (optimistic move-out). Only `inVault` changes; the
+ * decrypted name and every other field stay as they are. The given item is not changed.
+ */
+export function leavingGhost(item: Item): Item {
+  return { ...item, inVault: false };
+}
+
+/** The list minus the items whose ids are given, in the same order. Returns a new array; the given list is not changed. */
+export function withoutIds<T extends { id: string }>(list: T[], ids: Iterable<string>): T[] {
+  const drop = new Set(ids);
+  return list.filter((it) => !drop.has(it.id));
+}
+
+/**
+ * The main list with the ghosts of items that are leaving the Vault added. A ghost whose id is already in the list is not added
+ * (the list's copy wins), and an id is never listed twice. Ghosts that are added go first, then the list in its own order.
+ * Returns a new array; neither input is changed.
+ */
+export function mergeGhosts(list: Item[], ghosts: Iterable<Item>): Item[] {
+  const seen = new Set(list.map((it) => it.id));
+  const extra: Item[] = [];
+  for (const ghost of ghosts) {
+    if (seen.has(ghost.id)) continue;
+    seen.add(ghost.id);
+    extra.push(ghost);
+  }
+  return [...extra, ...list];
+}
+
+/**
+ * The Vault list with the items whose move-out failed put back, in the default list order (`DEFAULT_SORT`). An item already in the
+ * list is kept once, with the list's copy. Returns a new array; neither input is changed.
+ */
+export function restoreAfterFailedMoveOut(vaultList: Item[], failedItems: Item[]): Item[] {
+  const seen = new Set(vaultList.map((it) => it.id));
+  const back: Item[] = [];
+  for (const item of failedItems) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    back.push(item);
+  }
+  return sortItems([...vaultList, ...back], DEFAULT_SORT);
 }
 
 /** The Vault's trash: only deleted items, most recently deleted first; ties by id, descending. Returns a new array. */

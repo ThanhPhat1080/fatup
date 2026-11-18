@@ -67,6 +67,19 @@ export async function run(h) {
   h.log('vault: open the setup wizard');
   await page.getByRole('button', { name: 'Két sắt', exact: true }).first().click();
   await page.locator('.vault-card').getByRole('button', { name: 'Bắt đầu', exact: true }).click();
+  // The six PIN cells sit in the middle of the card, not against its left edge.
+  await page.locator('.vault-card .pin__cells').waitFor();
+  const centred = async (label) => {
+    const { card, cells } = await page.evaluate(() => {
+      const card = document.querySelector('.vault-card').getBoundingClientRect();
+      const all = [...document.querySelectorAll('.vault-card .pin__cell')].map((c) => c.getBoundingClientRect());
+      return { card: { left: card.left, right: card.right }, cells: { left: all[0].left, right: all[all.length - 1].right } };
+    });
+    const offset = (cells.left + cells.right) / 2 - (card.left + card.right) / 2;
+    assert.ok(Math.abs(offset) <= 2, `${label}: the PIN cells are centred in the card (off by ${offset.toFixed(1)}px)`);
+  };
+  await centred('setup PIN, desktop width');
+  await h.shot(page, '13-setup-pin');
   await typePin(page, PIN);
   await page.getByText('Nhập lại mã PIN', { exact: true }).waitFor();
   await typePin(page, PIN);
@@ -335,11 +348,118 @@ export async function run(h) {
   const state = await failedRow.locator('[data-vault-state]').getAttribute('data-vault-state');
   assert.ok(state === 'pending' || state === 'encrypted', `the failed file is in the Vault as ${state} (not plain)`);
   await h.shot(page, '15f-vault-failed-file-inside');
+
+  // Taking files out of the Vault (plan 2026-11-18-vault-lay-ra-optimistic). The mock holds each vault/out and each vault/out/complete for
+  // 4 s (slowVaultOut), so one move-out stays on screen for about 8 s; the rows must already have moved while it is held.
+  mock.slowVaultOut = 4000;
+  const rowIn = (name) => page.locator('.list__row', { hasText: name });
+  const toastOut = (n) => page.locator('.toast', { hasText: `Đã đưa ${n} file ra khỏi Két sắt` });
+  const outFromVault = async (name) => {
+    await rowIn(name).click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Đưa ra khỏi Két sắt', exact: true }).click();
+  };
+  const backToList = async () => {
+    await page.getByRole('button', { name: 'Quay lại danh sách file' }).first().click();
+    await page.locator('.app:not(.vault-mode)').waitFor();
+  };
+  const openVault = async () => {
+    await page.getByRole('button', { name: 'Két sắt', exact: true }).first().click();
+    await gate.locator('.pin__input').waitFor();
+    await typePin(page, PIN);
+    await page.locator('.app.vault-mode').waitFor({ timeout: 20_000 });
+  };
+  const refreshToolbar = async () => {
+    await page.getByRole('button', { name: 'Làm mới', exact: true }).first().click();
+    await page.waitForTimeout(1200); // the mock answers at once; the move-out itself is held, so this is well inside the hold
+  };
+
+  h.log('vault out A: one file leaves the Vault list at once and shows in the main list while the move is held');
+  const OUT = 'Đà Lạt trip.jpg';
+  await rowIn(OUT).locator('[data-vault-state="encrypted"]').waitFor();
+  await outFromVault(OUT);
+  await rowIn(OUT).waitFor({ state: 'detached', timeout: 2000 });
+  await backToList();
+  const ghost = rowIn(OUT);
+  await ghost.waitFor({ timeout: 2000 });
+  assert.equal(await ghost.count(), 1, 'the file is in the main list once, with its real name, while the move is held');
+  assert.equal(await page.locator('.toast', { hasText: 'Đã đưa' }).count(), 0, 'the move is still held: no success toast yet');
+  await ghost.scrollIntoViewIfNeeded();
+  // Information for the report (E2E_VERBOSE-independent): where the ghost row sits, and whether it is under a toast.
+  const where = await ghost.evaluate((row) => {
+    const r = row.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return { top: Math.round(r.top), bottom: Math.round(r.bottom), vh: window.innerHeight, coveredBy: hit?.closest('.toast') ? 'toast' : hit?.className ?? null };
+  });
+  console.log(`  [vault out A] ghost row while held: ${JSON.stringify(where)}`);
+  await h.shot(page, '16a-vault-out-held');
+
+  h.log('vault out A: after the hold the real item is in the main list and nothing is left in the Vault');
+  await toastOut(1).waitFor({ timeout: 20_000 });
+  await page.waitForTimeout(600); // the list refresh that follows the move
+  assert.equal(await rowIn(OUT).count(), 1, 'after the move the file is in the main list once (no duplicate)');
+  assert.equal(await rowIn(OUT).locator('img[src^="fatup-vault://"]').count(), 0, 'the main-list row is the real item (no Vault thumbnail left)');
+  await openVault();
+  assert.equal(await rowIn(OUT).count(), 0, 'nothing left in the Vault');
+  await backToList();
+  assert.equal(await rowIn(OUT).count(), 1, 'still once in the main list after leaving the Vault');
+
+  h.log('vault out A: two files at once, and a toolbar refresh while the move is held does not bring them back');
+  const PAIR = ['IMG_20261105_1012.jpg', 'chi-tieu-2026.xlsx'];
+  await openVault();
+  // The row checkbox selects without opening the picture (a click on the picture would open the lightbox).
+  for (const name of PAIR) await rowIn(name).getByRole('checkbox').click();
+  await page.getByRole('button', { name: 'Đưa ra khỏi Két sắt', exact: true }).click();
+  await rowIn(PAIR[0]).waitFor({ state: 'detached', timeout: 2000 });
+  await rowIn(PAIR[1]).waitFor({ state: 'detached', timeout: 2000 });
+  await refreshToolbar();
+  assert.equal(await rowIn(PAIR[0]).count(), 0, 'C: a refresh while held keeps the first file out of the Vault list');
+  assert.equal(await rowIn(PAIR[1]).count(), 0, 'C: a refresh while held keeps the second file out of the Vault list');
+  assert.equal(await page.locator('.toast', { hasText: 'Đã đưa' }).count(), 0, 'C: the move is still held after the refresh');
+  await backToList();
+  for (const name of PAIR) assert.equal(await rowIn(name).count(), 1, `C: ${name} is in the main list while held`);
+  await refreshToolbar();
+  for (const name of PAIR) assert.equal(await rowIn(name).count(), 1, `C: ${name} stays in the main list after a refresh in the main list`);
+  assert.equal(await page.locator('.toast', { hasText: 'Đã đưa' }).count(), 0, 'C: still held');
+  await h.shot(page, '16e-vault-out-two-held');
+  await toastOut(2).waitFor({ timeout: 30_000 });
+  await page.waitForTimeout(600);
+  for (const name of PAIR) assert.equal(await rowIn(name).count(), 1, `${name} is in the main list once after the move`);
+  await openVault();
+  for (const name of PAIR) assert.equal(await rowIn(name).count(), 0, `${name} is not in the Vault any more`);
+  await backToList();
+
+  h.log('vault out B: the file leaves the Vault at once, the failure brings it back into the Vault with a toast');
+  const BAD = 'boarding-pass.pdf';
+  await openVault();
+  await rowIn(BAD).locator('[data-vault-state="encrypted"]').waitFor();
+  mock.failVaultOut = 1; // the next vault/out (the first request of the move) answers 500, after the hold
+  await outFromVault(BAD);
+  await rowIn(BAD).waitFor({ state: 'detached', timeout: 2000 });
+  await backToList();
+  await rowIn(BAD).waitFor({ timeout: 2000 });
+  assert.equal(await rowIn(BAD).count(), 1, 'B: the file shows in the main list at once, while the move is held');
+
+  h.log('vault out B: after the failure the file is gone from the main list, with the toast');
+  const failToast = page.locator('.toast', { hasText: 'Không đưa ra được 1 file khỏi Két sắt' });
+  await failToast.waitFor({ timeout: 20_000 });
+  await rowIn(BAD).waitFor({ state: 'detached', timeout: 5000 });
+  assert.equal(await rowIn(BAD).count(), 0, 'B: after the failure the file is gone from the main list');
+  assert.equal(mock.failVaultOut, 0, 'B: the one-shot failure was used by the move-out');
+  await h.shot(page, '16b-vault-out-failed-toast');
+
+  h.log('vault out B: the file is back in the Vault');
+  await openVault();
+  await rowIn(BAD).waitFor({ timeout: 5000 });
+  assert.equal(await rowIn(BAD).count(), 1, 'B: the failed file is back in the Vault list');
+  await rowIn(BAD).locator('[data-vault-state="encrypted"]').waitFor();
+  await h.shot(page, '16c-vault-out-failed-back-in-vault');
+  mock.slowVaultOut = 0;
   await page.setViewportSize({ width: 1180, height: 760 });
 }
 
 /**
  * Timing and failure switches for the mock. slowVaultComplete holds each vault/in/complete for 8 s, so a move stays pending while the
- * Vault is opened. failVaultComplete is set by the area at run time (it is the same object the mock reads).
+ * Vault is opened. failVaultComplete is set by the area at run time (it is the same object the mock reads). slowVaultOut holds each
+ * vault/out and vault/out/complete (set to 4 s by the move-out steps); failVaultOut makes the next of those two answer 500 (one-shot).
  */
-export const mock = { slowVaultComplete: 8000, failVaultComplete: 0 };
+export const mock = { slowVaultComplete: 8000, failVaultComplete: 0, slowVaultOut: 0, failVaultOut: 0 };
