@@ -10,6 +10,9 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-18-nhap-anh-tu-thu-muc-bucket-design.md`
 
+> **Trạng thái: đã triển khai và phát hành ở `0.5.1`.** Plan này là bản ghi lịch sử; code và [design spec](../specs/2026-11-18-nhap-anh-tu-thu-muc-bucket-design.md) (mục 5, các quyết định 7 đến 13) là chuẩn. Các giá trị sau **đã đổi so với plan** khi triển khai và sau review: `IMPORT_BATCH` là **10** (không phải 20); nhánh được tách từ `main` chưa có Két mã hóa nên điều kiện `encrypted` được thêm sau khi merge `main` 0.5.0; ADR là **0018** và mục API là **4.4** (`main` đã dùng 0017 và 4.3); copy có điều kiện etag; `purgePending` của cron; một ảnh lỗi thì dừng lượt và trả tiến độ; URL ảnh gốc ổn định theo giờ.
+
+
 **Nhánh/worktree:** làm trong worktree riêng tách từ `main` (nhánh `feat/vault-e2ee` còn thay đổi chưa commit). `app.ts` sẽ chạm file mà nhánh két cũng sửa; xử lý xung đột khi merge.
 
 ## Ràng buộc chung
