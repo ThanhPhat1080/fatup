@@ -37,7 +37,6 @@ export type WebVaultDeps = {
 function blobViews(deps: Pick<WebVaultDeps, 'createObjectURL' | 'revokeObjectURL'>): VaultViews {
   /** Bumped by every close: a picture that was still being decrypted then must not make a URL the close can no longer revoke. */
   let epoch = 0;
-  const thumbs = new Map<string, string>();
   const files = new Map<string, string>();
   const make = (bytes: Uint8Array, type: string) => deps.createObjectURL(new Blob([bytes as BlobPart], { type }));
   const revoke = (map: Map<string, string>, id?: string) => {
@@ -48,17 +47,6 @@ function blobViews(deps: Pick<WebVaultDeps, 'createObjectURL' | 'revokeObjectURL
     }
   };
   return {
-    async thumbnail(id, current, load) {
-      if (!current) return null;
-      const cached = thumbs.get(id);
-      if (cached) return cached;
-      const at = epoch;
-      const bytes = await load();
-      if (at !== epoch) return null;
-      const url = make(bytes, 'image/jpeg');
-      thumbs.set(id, url);
-      return url;
-    },
     async preview(id, mime, load) {
       const cached = files.get(id);
       if (cached) return cached;
@@ -71,13 +59,11 @@ function blobViews(deps: Pick<WebVaultDeps, 'createObjectURL' | 'revokeObjectURL
     },
     forget(ids) {
       for (const id of ids) {
-        revoke(thumbs, id);
         revoke(files, id);
       }
     },
     closeAll() {
       epoch++;
-      revoke(thumbs);
       revoke(files);
     },
   };

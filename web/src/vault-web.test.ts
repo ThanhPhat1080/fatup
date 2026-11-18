@@ -27,7 +27,7 @@
 //          and for the two PIN checks `{ok:false, reason:'error', error:'locked'}`; the client is not touched.
 //     vaultClose(): void                  // SYNCHRONOUS, never refused: forgets the key and revokes EVERY object URL created so far
 //     vaultLeave(): void                  // SYNCHRONOUS: view-only close (plan 2026-11-18-vault-session-6h): revokes the URLs, keeps the key
-//     listVault({ trash? }): Result<Item[]>   // decrypted; no `encMeta`/`encKey`; thumbnails are `blob:` URLs of the DECRYPTED picture
+//     listVault({ trash? }): Result<Item[]>   // decrypted; no `encMeta`/`encKey`; `thumbUrl` is always null (the Vault shows no thumbnails)
 //     vaultMoveIn(ids) / vaultMoveOut(ids): Result<{ done: number; failed: string[] }>   // createVaultMover semantics
 //     onVaultProgress(cb): () => void     // one call per item of a move or of the legacy conversion: { done, total, current? }
 //     fileBytes(id) / copyImageBytes(id): Result<Uint8Array>          // decrypted
@@ -540,30 +540,17 @@ describe('web Vault: listing', () => {
     expect(json).not.toContain(pdf.encKey!);
   });
 
-  it('turns a thumbnail into a blob: URL made from the DECRYPTED picture', async () => {
+  it('shows no thumbnail for any item: no thumbUrl, no thumbnail request, no blob URL (the Vault never loads pictures by itself)', async () => {
     const w = await world();
     await w.addItem('P', PHOTO_META, PHOTO, { thumb: THUMB });
     await w.addItem('A', PDF_META, PDF);
+    w.made.length = 0;
     const res = await w.vault.listVault();
     if (!res.ok) throw new Error(res.error);
-    const photo = res.value.find((i) => i.id === 'P')!;
-    const pdf = res.value.find((i) => i.id === 'A')!;
-    expect(photo.thumbUrl).toMatch(/^blob:/);
-    expect(pdf.thumbUrl).toBeNull();
-    const [thumb] = w.made.filter((m) => m.url === photo.thumbUrl);
-    expect(thumb).toBeDefined();
-    expect(same(await bytesOf(thumb.blob), THUMB)).toBe(true); // plaintext, not the FUV1 ciphertext
-    expect(w.fetchImpl.mock.calls.map((c) => String(c[0]))).toContain(`${R2}/vault/P.thumb`);
+    expect(res.value.map((i) => [i.id, i.thumbUrl])).toEqual([['P', null], ['A', null]]);
+    expect(w.fetchImpl.mock.calls.map((c) => String(c[0])).filter((u) => u.includes('.thumb'))).toEqual([]);
+    expect(w.made).toHaveLength(0);
     expect(JSON.stringify(res)).not.toContain('r2.test'); // no presigned address of an encrypted object reaches the page's items
-  });
-
-  it('keeps an item whose thumbnail cannot be fetched, without a picture', async () => {
-    const w = await world();
-    await w.addItem('P', PHOTO_META, PHOTO, { thumb: THUMB });
-    w.objects.delete(`${R2}/vault/P.thumb`);
-    const res = await w.vault.listVault();
-    if (!res.ok) throw new Error(res.error);
-    expect(res.value[0]).toMatchObject({ id: 'P', name: 'photo.jpg', thumbUrl: null });
   });
 
   it('marks an item it cannot decrypt as unreadable and still shows the others', async () => {
@@ -686,43 +673,17 @@ describe('web Vault: opening, saving and copying', () => {
   });
 });
 
-describe('web Vault: closing in the middle of a listing (review M4)', () => {
-  it('answers vault_locked, keeps no item and makes no blob URL when the Vault closes while a thumbnail is being fetched', async () => {
-    const w = await world();
-    await w.addItem('P', PHOTO_META, PHOTO, { thumb: THUMB });
-    let open!: () => void;
-    const gate = new Promise<void>((r) => (open = r));
-    let reached!: () => void;
-    const there = new Promise<void>((r) => (reached = r));
-    const real = w.fetchImpl.getMockImplementation()!;
-    w.fetchImpl.mockImplementation(async (input, init) => {
-      if (String(input) === `${R2}/vault/P.thumb`) {
-        reached();
-        await gate;
-      }
-      return real(input, init);
-    });
-    const pending = w.vault.listVault();
-    await there;
-    w.vault.vaultClose();
-    open();
-    expect(await pending).toMatchObject({ ok: false, error: 'vault_locked' });
-    expect(w.vault.owns('P')).toBe(false);
-    expect(w.made).toHaveLength(0); // nothing was made that the close could no longer revoke
-    expect(await w.vault.previewUrl('P')).toMatchObject({ ok: false, error: 'vault_locked' });
-  });
-});
-
 describe('web Vault: closing', () => {
-  it('revokes EVERY object URL it made (thumbnails and previews), synchronously, then refuses to list', async () => {
+  it('revokes EVERY object URL it made (the previews), synchronously, then refuses to list', async () => {
     const w = await world();
-    await w.addItem('P', PHOTO_META, PHOTO, { thumb: THUMB });
-    await w.addItem('Q', PHOTO_META, PHOTO, { thumb: THUMB });
+    await w.addItem('P', PHOTO_META, PHOTO);
+    await w.addItem('Q', PHOTO_META, PHOTO);
     await w.addItem('A', PDF_META, PDF);
     await w.vault.listVault();
     await w.vault.previewUrl('A');
+    await w.vault.previewUrl('P');
     await w.vault.listVault(); // a second listing must not leave the first one's URLs behind
-    expect(w.made.length).toBeGreaterThanOrEqual(3);
+    expect(w.made.length).toBeGreaterThanOrEqual(2);
 
     w.vault.vaultClose(); // not awaited: the key and the URLs are gone by the time it returns
     expect(new Set(w.revoked)).toEqual(new Set(w.made.map((m) => m.url)));
@@ -1154,7 +1115,8 @@ describe('web Vault: the 6-hour session (plan 2026-11-18-vault-session-6h)', () 
   it('revokes every blob: URL it made, and lists as vault_locked, when the timer ends the session', async () => {
     const w = await openedUnderFakeTime();
     const listed = await w.vault.listVault();
-    expect(listed.ok && listed.value[0].thumbUrl).toMatch(/^blob:/);
+    expect(listed.ok && listed.value[0].thumbUrl).toBeNull(); // the Vault lists no thumbnail
+    expect(await w.vault.previewUrl('P1')).toEqual({ ok: true, value: expect.stringMatching(/^blob:/) }); // opening a picture makes the URL
     expect(w.made.length).toBeGreaterThan(0);
     expect(w.revoked).toEqual([]);
     vi.advanceTimersByTime(VAULT_SESSION_MS);
@@ -1242,6 +1204,7 @@ describe('web Vault: viewing and moving are separate rights', () => {
       const w = await closedWorld();
       await w.vault.vaultUnlock(PIN);
       expect((await w.vault.listVault()).ok).toBe(true);
+      expect((await w.vault.previewUrl('P1')).ok).toBe(true);
       expect(w.made.length).toBeGreaterThan(0);
       expect(w.vault.vaultLeave()).toBeUndefined();
       expect(w.revoked).toEqual(w.made.map((m) => m.url));

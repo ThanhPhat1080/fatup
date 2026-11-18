@@ -17,6 +17,8 @@ Ghi lại spec đã đổi qua các phiên bản. Đây là **lịch sử**, kh�
 - **v9** (2026-11-18, app `0.5.1`) thêm **nhập ảnh từ thư mục của bucket** ([api.md 4.4](api.md#44-nhập-ảnh-từ-thư-mục-của-bucket), [lifecycle.md 6.1](lifecycle.md#61-ảnh-nhập-từ-thư-mục-của-bucket), [ADR 0018](../decisions/0018-nhap-anh-tu-thu-muc-bucket.md)): ảnh app khác ghi vào `IMPORT_PREFIX` (mặc định `d30/`) được **di chuyển** sang `files/<id>` khi làm mới danh sách; id tính từ object nguồn nên một ảnh không bao giờ thành hai dòng; `FileItem` thêm `hasThumb`, ảnh chưa có thumbnail hiện ảnh gốc, và desktop tạo thumbnail bù. Không đổi schema.
 - **v10** (2026-11-18, app `0.5.2`) đổi hai chỗ của giao diện két sắt: **cổng két sắt trên điện thoại là ảnh tĩnh** (không lửa, không hoạt họa, PIN đúng vào ngay; [desktop-ui.md 9.11](desktop-ui.md#911-két-sắt-mã-hóa), [web.md 10.2](web.md#102-giao-diện-điện-thoại)) và **popup cất vào két căn giữa hàng sáu ô PIN** (trước đây căn trái có chủ ý).
 
+- **v11** (2026-11-18, app `0.5.3`) **két sắt không hiện thumbnail** của mục nào ([ADR 0019](../decisions/0019-ket-sat-khong-hien-thumbnail.md), [security.md 7.7](security.md#77-giới-hạn-bảo-mật-còn-lại), [desktop-ui.md 9.11](desktop-ui.md#911-két-sắt-mã-hóa)): không tải, không giải mã, `fatup-vault://thumb/<id>` luôn 404; thumbnail vẫn được lưu để đi theo mục khi lấy ra. Cùng v11: biểu tượng file đổi màu ảnh và thêm MD/HTML/TXT/video ([desktop-ui.md 9.2](desktop-ui.md#92-màn-hình-chính)).
+
 ## 12. Khác với v1
 
 | Chủ đề | v1 | v2 |

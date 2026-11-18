@@ -94,7 +94,6 @@ async function world() {
 
   const raw: FileItem[] = [];
   const views: VaultViews = {
-    thumbnail: vi.fn(async (_id, current) => current),
     preview: vi.fn(async (id: string) => `fatup-vault://file/${id}`),
     forget: vi.fn(),
     closeAll: vi.fn(),
@@ -527,7 +526,7 @@ async function freshWorld() {
     client: () => ({ listEverything: vi.fn(async () => []), downloadUrl: vi.fn(), update: vi.fn(), createUpload: vi.fn(), complete: vi.fn(), addLink: vi.fn() }) as never,
     isUnlocked: () => true,
     saveDownload: async () => '',
-    views: { thumbnail: async (_i, c) => c, preview: async (i) => i, forget: () => undefined, closeAll: () => undefined },
+    views: { preview: async (i) => i, forget: () => undefined, closeAll: () => undefined },
   });
   return { core, session, server };
 }

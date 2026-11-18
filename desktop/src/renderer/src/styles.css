@@ -35,6 +35,8 @@
   --crit: #d93025;
   --tone-purple: #9334e6;
   --tone-gray: #5f6368;
+  --tone-teal: #0b8a8a;
+  --tone-pink: #d6336c;
   --radius: 16px;
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Ubuntu, sans-serif;
   font-size: 14px;
@@ -79,6 +81,8 @@
     --crit: #f44336;
     --tone-purple: #d7aefb;
     --tone-gray: #bdc1c6;
+    --tone-teal: #5fd3d0;
+    --tone-pink: #f783ac;
   }
 }
 :root[data-theme='dark'] {
@@ -117,6 +121,8 @@
   --crit: #f44336;
   --tone-purple: #d7aefb;
   --tone-gray: #bdc1c6;
+  --tone-teal: #5fd3d0;
+  --tone-pink: #f783ac;
 }
 
 * {
@@ -1000,6 +1006,12 @@ h2 {
 }
 .tone-gray {
   color: var(--tone-gray);
+}
+.tone-teal {
+  color: var(--tone-teal);
+}
+.tone-pink {
+  color: var(--tone-pink);
 }
 
 /* ---------- Empty / loading ---------- */

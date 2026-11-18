@@ -46,6 +46,34 @@ describe('formatting', () => {
     expect(fileVisual('a.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')).toBe('sheet');
     expect(fileVisual('a.bin', 'application/octet-stream')).toBe('other');
   });
+
+  it('gives Markdown, HTML and plain text their own visuals, by extension or by type', () => {
+    expect(fileVisual('README.md', 'text/markdown')).toBe('markdown');
+    expect(fileVisual('notes.MD', 'application/octet-stream')).toBe('markdown');
+    expect(fileVisual('doc.markdown', 'application/octet-stream')).toBe('markdown');
+    expect(fileVisual('index.html', 'text/html')).toBe('html');
+    expect(fileVisual('page.htm', 'application/octet-stream')).toBe('html');
+    expect(fileVisual('ghi-chu.txt', 'text/plain')).toBe('txt');
+    expect(fileVisual('ghi-chu.TXT', 'application/octet-stream')).toBe('txt');
+    // The other text files keep the general text visual.
+    expect(fileVisual('data.json', 'application/json')).toBe('text');
+    expect(fileVisual('server.log', 'application/octet-stream')).toBe('text');
+    expect(fileVisual('style.css', 'text/css')).toBe('text');
+  });
+
+  it('knows a video by its extension when the type says nothing', () => {
+    expect(fileVisual('clip.mp4', 'video/mp4')).toBe('video');
+    for (const ext of ['mp4', 'mov', 'm4v', 'mkv', 'avi', 'webm', '3gp', 'wmv', 'MOV']) {
+      expect(fileVisual(`clip.${ext}`, 'application/octet-stream'), ext).toBe('video');
+    }
+    expect(fileVisual('song.mp3', 'audio/mpeg')).toBe('audio');
+  });
+
+  it('a name with no extension, or only a dot-name, is not mistaken for a type', () => {
+    expect(fileVisual('md', 'application/octet-stream')).toBe('other');
+    expect(fileVisual('txt', 'application/octet-stream')).toBe('other');
+    expect(fileVisual('.gitignore', 'application/octet-stream')).toBe('other');
+  });
 });
 
 describe('i18n', () => {
