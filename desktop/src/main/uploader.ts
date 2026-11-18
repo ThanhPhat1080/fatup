@@ -228,7 +228,7 @@ const codeOf = (err: unknown): string | undefined => {
   return typeof code === 'string' ? code : undefined;
 };
 
-async function putThumb(url: string, bytes: Buffer, contentType: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+export async function putThumb(url: string, bytes: Buffer, contentType: string, fetchImpl: typeof fetch = fetch): Promise<void> {
   const res = await fetchImpl(url, { method: 'PUT', headers: { 'Content-Type': contentType }, body: new Uint8Array(bytes) });
   if (!res.ok) throw new ApiError('upload_failed', `HTTP ${res.status}`, res.status);
 }

@@ -67,3 +67,7 @@ Một file chỉ chia sẻ được khi đang **ở ngoài**. Vào Két sắt, v
 File `ready` ngoài thùng rác (kể cả trong két, có nhãn quan trọng, hoặc là link) **không bao giờ bị cron xóa**, dù cũ đến đâu.
 
 Cron cũng xóa các dòng `shares` đã hết hạn; `purge` xóa tường minh `shares` của file bị xóa. `purge` (dùng cho cron, xóa vĩnh viễn và dọn sạch) xóa mọi khóa của mục: `files/<id>`, `thumbs/<id>.jpg`, cặp `vault/<id>` cố định, và cặp `vault/<id>.<enc_object>` nếu mục có `enc_object`. Không phụ thuộc cột `encrypted`, vì một lần chuyển có thể để lại cặp khóa nào cũng được. Các object rác khác của `vault/` (lần cất bỏ dở hoặc thua) là việc của cron ở mục 4. Việc xóa được làm theo lô (tối đa 100 mục mỗi lượt).
+
+### 6.1 Ảnh nhập từ thư mục của bucket
+
+Ảnh app khác bỏ vào `IMPORT_PREFIX` ([api.md 4.4](api.md#44-nhập-ảnh-từ-thư-mục-của-bucket)) đi vào vòng đời bình thường: dòng `pending` (giờ nhập) → `ready`. Lần nhập bị ngắt để lại dòng `pending` và bản gốc còn nguyên; lần quét sau làm tiếp. Dòng `pending` kẹt quá 24 giờ bị cron xóa như mọi upload dở (cùng `files/<id>` thừa). Cron xóa **dòng trước, có điều kiện `status = 'pending'`**, rồi mới xóa object của những dòng thật sự đã xóa (`purgePending`): một lần nhập hoàn tất dòng đó đúng lúc ấy thì dòng và object được giữ, và lần nhập nào thấy dòng đã bị cron xóa thì tự xóa bản copy của mình và để bản gốc; bản gốc vẫn còn nên lần quét sau nhập lại sạch, không mất ảnh. Sau khi nhập, ảnh là file thường: xóa vào thùng rác, xóa vĩnh viễn hoặc cron 30 ngày xóa `files/<id>` và `thumbs/<id>.jpg` như mọi file.

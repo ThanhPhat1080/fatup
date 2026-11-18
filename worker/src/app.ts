@@ -25,8 +25,12 @@ import {
   SHARE_TOKEN_BYTES,
   isShareExpiry,
   type ShareInfo,
+  type ImportSyncResponse,
+  type ThumbUploadResponse,
 } from '@fatup/shared';
 import { purge } from './cleanup';
+import { importImages, normalizeImportPrefix } from './import';
+import { createObjectStore, type ObjectStore } from './object-store';
 import { checkFrame, fetchPreview } from './preview';
 import type { Env } from './env';
 import { createPresigner, fileKey, objectKeys, thumbKey, vaultFileKey, vaultThumbKey, type Presigner } from './presign';
@@ -73,6 +77,8 @@ export type AppOptions = {
   presigner?: (env: Env) => Presigner;
   /** Lets tests replace the network when a link's page is fetched for its preview. */
   fetch?: typeof fetch;
+  /** Lets tests replace the S3 client that lists, copies and deletes the objects of the import. */
+  objectStore?: (env: Env) => ObjectStore;
 };
 
 export function fail(c: Context, status: 400 | 401 | 403 | 404 | 409 | 410 | 413 | 426, code: string, message: string) {
@@ -132,9 +138,13 @@ export async function toItem(row: Row, presigner: Presigner, shared = false): Pr
     mime: row.mime,
     size: row.size,
     kind: row.kind,
+    // An image without a thumbnail shows its original until a client makes the thumbnail. An encrypted item has no original to show: its object is ciphertext.
     thumbUrl: row.has_thumb
       ? await presigner.get(objectKeys(row)[1], { contentType: row.encrypted === 1 ? 'application/octet-stream' : 'image/jpeg' })
-      : null,
+      : row.kind === 'image' && row.encrypted !== 1
+        ? await presigner.get(fileKey(row.id), { contentType: row.mime, stable: true })
+        : null,
+    hasThumb: row.has_thumb === 1,
     device: row.device,
     createdAt: row.created_at,
     deletedAt: row.deleted_at,
@@ -207,6 +217,14 @@ export function createApp(options: AppOptions = {}) {
   app.get('/me', (c) => c.json({ ok: true }));
 
   registerVaultRoutes(app);
+
+  // Moves the images another app dropped into the bucket folder IMPORT_PREFIX into Fatup (at most one batch per call). A failure is the
+  // client's to ignore: it asks again on its next refresh.
+  app.post('/import/sync', async (c) => {
+    const prefix = normalizeImportPrefix(c.env.IMPORT_PREFIX);
+    if (!prefix) return c.json<ImportSyncResponse>({ imported: 0, more: false });
+    return c.json<ImportSyncResponse>(await importImages(c.env, (options.objectStore ?? createObjectStore)(c.env), prefix));
+  });
 
   // Storage in use, summed from the database (no extra R2 API credentials needed). Preview thumbnails are tiny and not counted.
   app.get('/usage', async (c) => {
@@ -302,6 +320,29 @@ export function createApp(options: AppOptions = {}) {
       .bind(hasThumb ? 1 : 0, now, id)
       .run();
     return c.json(await itemOf(c, { ...row, status: 'ready', has_thumb: hasThumb ? 1 : 0, created_at: now }));
+  });
+
+  // A thumbnail made later by a client, for an image that was added without one (for example an image imported from the bucket folder).
+  // Encrypted items are refused: their thumbnail is ciphertext made by the Vault client, never by this route.
+  const imageForThumb = (c: Context<AppEnv>) =>
+    c.env.DB.prepare(`SELECT id FROM files WHERE id = ? AND status = 'ready' AND kind = 'image' AND deleted_at IS NULL AND in_vault = 0 AND encrypted = 0`)
+      .bind(c.req.param('id'))
+      .first<Pick<Row, 'id'>>();
+
+  app.post('/files/:id/thumb', async (c) => {
+    const row = await imageForThumb(c);
+    if (!row) return fail(c, 404, 'not_found', 'Image not found');
+    const res: ThumbUploadResponse = { thumbUploadUrl: await c.get('presigner').put(thumbKey(row.id)) };
+    return c.json(res);
+  });
+
+  app.post('/files/:id/thumb/complete', async (c) => {
+    const row = await imageForThumb(c);
+    if (!row) return fail(c, 404, 'not_found', 'Image not found');
+    if (!(await c.env.BUCKET.head(thumbKey(row.id)))) return fail(c, 409, 'not_uploaded', 'The thumbnail has not been uploaded yet');
+    await c.env.DB.prepare('UPDATE files SET has_thumb = 1 WHERE id = ?').bind(row.id).run();
+    const full = (await c.env.DB.prepare('SELECT * FROM files WHERE id = ?').bind(row.id).first<Row>())!;
+    return c.json(await itemOf(c, full));
   });
 
   app.post('/links', async (c) => {

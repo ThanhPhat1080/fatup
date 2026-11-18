@@ -54,3 +54,4 @@ Cái được, cái mất, và điều agent KHÔNG được làm vì quyết đ
 | [0015](0015-mot-object-rieng-moi-lan-ma-hoa.md) | Mỗi lần cất vào két một object riêng (`vault/<id>.<attempt>`), `enc_object` trong D1, không giữ chỗ | worker, desktop, web, shared | Đã chốt |
 | [0016](0016-phien-ket-sat-6-gio.md) | Phiên két 6 giờ: giữ khóa để cất, quyền xem tách riêng và luôn hỏi PIN, popup thay chuyển màn hình | desktop, web, shared | Đã chốt |
 | [0017](0017-lay-ra-khoi-ket-doi-giao-dien-ngay.md) | Lấy ra khỏi Két sắt đổi giao diện ngay: bản giả trong danh sách chính, làm mới có bộ đếm thế hệ | desktop, web | Đã chốt |
+| [0018](0018-nhap-anh-tu-thu-muc-bucket.md) | Nhập ảnh từ thư mục của bucket: di chuyển, id xác định từ nguồn, mọi thao tác qua S3 API | worker, shared, desktop, web | Đã chốt |

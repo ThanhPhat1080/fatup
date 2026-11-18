@@ -2,7 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 /** The Worker's API paths. Everything else (the app itself) is served by Vite. */
-const API_PATHS = ['files', 'health', 'links', 'me', 'trash', 'uploads', 'usage', 'vault'];
+const API_PATHS = ['files', 'health', 'import', 'links', 'me', 'trash', 'uploads', 'usage', 'vault'];
 
 // Builds straight into the Worker's static assets folder so `wrangler deploy` ships the PWA with the API.
 export default defineConfig(({ mode }) => {

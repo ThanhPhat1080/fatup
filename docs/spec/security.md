@@ -119,3 +119,7 @@ Mỗi lần cất vào két ghi một object riêng, tên `vault/<id>.<attempt>`
 - **Byte đã giải mã có thể lọt sau khi rời két.** Lượt tải đang chạy (`serve`, `fileBytes`) khi người dùng rời màn Két sắt vẫn có thể trả byte đã giải mã, vì sau khi tải không kiểm tra lại quyền xem.
 - **Đổi PIN không cần mở két.** Đổi PIN chạy khi app đã mở khóa, bằng PIN cũ, kể cả khi két đang đóng hoặc chỉ đang giữ khóa. Ai biết PIN cũ thì đổi được PIN.
 - **Thử lại mục đám mây mờ.** Mỗi lần danh sách két được tải khi đang xem, mục chưa mã hóa xong được thử mã hóa lại bằng khóa đang giữ. Không mở thêm quyền nào.
+
+### 7.x Nhập ảnh từ bucket dùng lại khóa R2
+
+Việc nhập ảnh ([api.md 4.4](api.md#44-nhập-ảnh-từ-thư-mục-của-bucket)) dùng đúng khóa R2 đang ký presigned URL (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) để liệt kê, copy và xóa object qua S3 API; không thêm secret mới. Khóa đó đã phải đủ quyền đọc/ghi bucket. `POST /import/sync` nằm sau token như mọi route; prefix `files/`, `thumbs/`, `vault/` và cả bucket bị từ chối để việc nhập không tự di chuyển file của Fatup. Ảnh nhập vào là **bản rõ** (app kia ghi bản rõ), không vào Két sắt.

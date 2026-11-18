@@ -14,6 +14,7 @@ const api: FatupApi = {
   list: () => ipcRenderer.invoke('list'),
   listTrash: () => ipcRenderer.invoke('listTrash'),
   usage: () => ipcRenderer.invoke('usage'),
+  importSync: () => ipcRenderer.invoke('importSync'),
   vaultStatus: () => ipcRenderer.invoke('vaultStatus'),
   vaultSetup: (pin) => ipcRenderer.invoke('vaultSetup', pin),
   vaultSetupPrepare: (pin) => ipcRenderer.invoke('vaultSetupPrepare', pin),

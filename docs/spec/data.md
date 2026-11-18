@@ -77,3 +77,5 @@ CREATE TABLE vault_keys (
 - `0009` chỉ thêm cột và bảng, không đổi dữ liệu cũ; mọi dòng hiện có có `encrypted = 0`.
 - Hằng số liên quan: `MAX_ENC_META = 8192`, `MAX_ENC_KEY = 512` ký tự (validate ở API, không ở schema).
 - Migration chạy theo thứ tự. Mỗi lần nâng cấp: **migrate trước, deploy sau** (code mới đọc cột mới).
+
+- **Ảnh nhập từ bucket không thêm cột nào.** Id của dòng được tính từ object nguồn (khóa + etag) nên khóa chính `id` là thứ chặn dòng trùng; `device` là tên thư mục nguồn. Xem [api.md 4.4](api.md#44-nhập-ảnh-từ-thư-mục-của-bucket).

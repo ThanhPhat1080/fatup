@@ -1,5 +1,5 @@
 /** Contract between the preload bridge and the renderer. */
-import type { FileItem, FrameCheck, ShareExpiryDays, ShareInfo, TagColor, UsageResponse, VaultClientStatus } from '@fatup/shared';
+import type { FileItem, FrameCheck, ImportSyncResponse, ShareExpiryDays, ShareInfo, TagColor, UsageResponse, VaultClientStatus } from '@fatup/shared';
 
 export type Lang = 'auto' | 'en' | 'vi';
 export type Theme = 'system' | 'light' | 'dark';
@@ -107,6 +107,8 @@ export type FatupApi = {
   list(): Promise<Result<Item[]>>;
   listTrash(): Promise<Result<Item[]>>;
   usage(): Promise<Result<Usage>>;
+  /** Asks the server to move images other apps dropped into its bucket folder into Fatup. `imported` is how many became ready; refresh the list when it is above 0. */
+  importSync(): Promise<Result<ImportSyncResponse>>;
   /** Whether the encrypted Vault is set up (`none`, `ready`, `wiped`), the PIN attempts left and `open`: the key is held now (6 hours after the last correct PIN), so files can be moved in without a PIN. Needs no unlocked Vault. */
   vaultStatus(): Promise<Result<VaultClientStatus>>;
   /** First-time setup with the Vault PIN (6 digits) in one step. Opens the Vault and returns the recovery key, once. The renderer uses the two steps below. */

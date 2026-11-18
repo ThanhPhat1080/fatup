@@ -5,6 +5,8 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 R2_BUCKET_NAME = "fatup-files"
+# Images another app drops in this bucket folder are moved into Fatup. Empty turns the import off.
+IMPORT_PREFIX = "d30/"
 
 [[r2_buckets]]
 binding = "BUCKET"

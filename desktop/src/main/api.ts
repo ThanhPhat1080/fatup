@@ -23,6 +23,8 @@ import type {
   VaultMoveUrls,
   VaultMoveInComplete,
   VaultMoveOutComplete,
+  ImportSyncResponse,
+  ThumbUploadResponse,
 } from '@fatup/shared';
 
 export class ApiError extends Error {
@@ -77,6 +79,20 @@ export class ApiClient {
 
   usage(): Promise<UsageResponse> {
     return this.request('/usage');
+  }
+
+  /** Asks the server to move images other apps dropped into the bucket folder into Fatup (a batch per call). */
+  importSync(): Promise<ImportSyncResponse> {
+    return this.request('/import/sync', { method: 'POST' });
+  }
+
+  /** The URL to PUT a thumbnail to, for an image that has none. */
+  thumbUpload(id: string): Promise<ThumbUploadResponse> {
+    return this.request(`/files/${encodeURIComponent(id)}/thumb`, { method: 'POST' });
+  }
+
+  thumbComplete(id: string): Promise<FileItem> {
+    return this.request(`/files/${encodeURIComponent(id)}/thumb/complete`, { method: 'POST' });
   }
 
   /** Fetches every page; retention keeps the total small. */
