@@ -130,11 +130,11 @@ Giao diện của két là một bộ React dùng chung cho desktop và PWA ([m�
 
 - **Thiết lập (lần đầu)**, `VaultSetup.tsx`, toàn màn hình, ba bước:
   1. Nhập PIN két 6 số hai lần. PIN sai định dạng, quá dễ, hoặc trùng 4 số đầu/cuối của PIN app thì báo ngay.
-  2. Hiện **recovery key** một lần, nhóm theo nhóm 4 ký tự, có nút **Sao chép**, kèm cảnh báo "Hãy cất key này ở nơi an toàn".
+  2. Hiện **recovery key** một lần, nhóm theo nhóm 4 ký tự, có nút **Sao chép** (chữ đọc được trên thẻ tối), kèm cảnh báo "Hãy cất key này ở nơi an toàn".
   3. Gõ lại **2 nhóm ngẫu nhiên** để xác nhận. Sai thì báo và giữ nguyên màn hình.
 
   Xác nhận xong thì két được tạo ("Đang tạo két sắt…") và mở. Việc mã hóa các file cũ chạy nền, có dòng "Đang mã hóa các file cũ trong két…". Đóng trước bước 3 thì không có gì được gửi lên server.
-- **Cổng 6 số**, `VaultGate.tsx`, hiện mỗi lần mở két, kể cả khi app đang mở khóa. Ô nhập 6 chữ số.
+- **Cổng 6 số**, `VaultGate.tsx`, hiện mỗi lần mở két, kể cả khi app đang mở khóa. Sáu ô nhập nằm trên một tấm gỗ đủ rộng, căn giữa. Dòng báo lỗi nằm dưới tấm gỗ, không đè lên.
   - Sai: "Sai PIN. Còn N lần thử." (N là số lần còn lại từ server).
   - Đang khóa: "Sai quá nhiều lần. Thử lại sau N giây.", đếm ngược mỗi 0,5 giây; trong lúc khóa không nhận PIN.
   - Két đã bị xóa bí mật: báo "Nhập sai quá nhiều lần nên két đã bị đặt lại…" và chuyển sang màn khôi phục.
@@ -151,12 +151,14 @@ Giao diện của két là một bộ React dùng chung cho desktop và PWA ([m�
   - Xóa một file trong két đưa nó vào thùng rác của két. Toast có **Hoàn tác** trong 8 giây; Hoàn tác khôi phục file về két, không đưa file ra khỏi két.
 - **Cất vào và lấy ra:**
   - Menu `⋮`, chuột phải, hoặc nút trên thanh chọn nhiều file: "Chuyển vào Két sắt" (từ danh sách chính) và "Đưa ra khỏi Két sắt" (trong két).
-  - Từ danh sách chính khi két đóng: két đã thiết lập thì hỏi PIN trước ("Nhập PIN két sắt để cất các file này vào két."); két chưa thiết lập thì mở trình thiết lập; két đã bị xóa bí mật thì mở màn khôi phục. Cất xong két đóng lại.
-  - Toast hiện tiến trình "Đang chuyển N / M…". Lỗi một file không dừng các file còn lại; file lỗi báo trong toast.
-  - Lấy ra chỉ làm được khi két mở. Mục không đọc được, hoặc đang còn mã hóa dở, không có "Đưa ra khỏi Két sắt".
-  - Trên máy tính, khi két chưa thiết lập, "Chuyển vào Két sắt" vẫn đưa file vào két như cũ (chưa mã hóa), hiện nhãn "đang mã hóa…" cho tới khi việc mã hóa sau thiết lập xong. Bản web không có đường này ([mục 10.3](web.md#103-két-sắt-trên-web)).
+  - Từ danh sách chính khi két đóng: két đã thiết lập thì hỏi PIN trước ("Nhập PIN két sắt để cất các file này vào két."); két chưa thiết lập thì mở trình thiết lập và cất khi thiết lập xong (cả máy tính và bản web); két đã bị xóa bí mật thì mở màn khôi phục. Cất xong két đóng lại.
+  - Mục vừa cất biến mất khỏi danh sách chính ngay khi bắt đầu, và bị ẩn tạm tới khi việc cất kết thúc. Lỗi đã biết: một lần làm mới bắt đầu trước đó có thể làm mục nhấp nháy trên trang chính ([Nợ kỹ thuật](roadmap.md#nợ-kỹ-thuật)).
+  - Toast hiện tiến trình "Đang chuyển N / M…". Lỗi một file không dừng các file còn lại; file lỗi báo trong toast và không tự thử lại trong lượt đó. Lần mở két sau thì cất lại với lần thử mới.
+  - Lấy ra chỉ làm được khi két mở. Mục không đọc được, hoặc đang ở trạng thái đám mây (chưa mã hóa xong), không có "Đưa ra khỏi Két sắt".
 - **Mục trong két:** tên, loại, và URL/tiêu đề liên kết được giải mã trên máy; tìm kiếm và sắp xếp theo tên chạy trên máy.
-  - Mục còn chờ mã hóa hiện nhãn "đang mã hóa…".
+  - Trạng thái mã hóa là một biểu tượng cạnh tên: **đám mây mờ** (tooltip "Chưa mã hóa xong") khi mục đã vào két mà chưa mã hóa xong; **dấu tick xanh** (tooltip "Đã mã hóa") khi đã mã hóa. Mục không đọc được không có biểu tượng này.
+  - Trên điện thoại, biểu tượng nằm ở góc ảnh thu nhỏ, để tên có chỗ.
+  - Cập nhật: danh sách két làm mới khi mở két, mỗi 60 giây và khi cửa sổ lấy lại focus, nên thiết bị khác thấy đổi trạng thái sau tối đa một phút khi két đang mở. Không có kênh thông báo thời gian thực.
   - Mục không giải mã được (dữ liệu hỏng, hoặc khóa khác) hiện "Không đọc được trên thiết bị này" thay cho tên. Bấm vào thì báo, không xem được và không đưa ra được. Các mục khác trong danh sách không bị ảnh hưởng.
   - Ảnh và file trong két xem qua `fatup-vault://` trên desktop (phục vụ từ bộ nhớ, không ghi đĩa) hoặc qua `blob:` trên web.
   - Liên kết trong két có thể giữ ảnh xem trước đã mã hóa. Ảnh xem trước do app tự tải về không bao giờ được lưu cho link trong két ([9.2c](#92c-liên-kết)).

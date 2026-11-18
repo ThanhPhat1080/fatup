@@ -14,11 +14,11 @@
 - **Token trên web (PWA)**: không có keychain, nên token được mã hóa **AES-GCM** bằng khóa dẫn xuất từ PIN (PBKDF2-SHA256, 310.000 vòng) rồi lưu `localStorage`. Mở khóa = giải mã thành công. PIN 4 số chỉ có 10.000 tổ hợp nên chỉ chống người qua đường, **không chống người đọc được dữ liệu trình duyệt**. Không dùng web trên máy dùng chung. Bộ đếm sai PIN của web nằm ở client nên chỉ mang tính nhắc nhở.
 - Presigned URL hết hạn sau 15 phút (upload) hoặc 1 giờ (thumbnail/download). Chữ ký chỉ được kiểm tra lúc request bắt đầu.
 - **Link chia sẻ công khai**: token 192 bit không đoán được, ai có link thì xem/tải được (và chuyển tiếp được), thu hồi bằng hạn hoặc Dừng chia sẻ. Đây là bề mặt công khai duy nhất của API ngoài `/health`, giới hạn ở hai route `/s/...` chỉ đọc. Không lộ lý do khi link chết (mọi lý do cùng một `404`). Không phục vụ HTML/SVG inline trên origin của PWA ([mục 4.2](api.md#42-chia-sẻ-link-công-khai)).
-- Bản web được phục vụ cùng origin với API nên API **không cần CORS**. Riêng R2 thì cần: trình duyệt PUT/GET thẳng tới presigned URL (origin khác), và cần lộ header `ETag` để cất vào két. Xem [mục 10](web.md#10-bản-web-pwa).
+- Bản web được phục vụ cùng origin với API nên API **không cần CORS**. Riêng R2 thì cần: trình duyệt PUT/GET thẳng tới presigned URL (origin khác). Két không cần header `ETag`. Xem [mục 10](web.md#10-bản-web-pwa).
 
 ### 7.1 Két sắt mã hóa phía client (E2EE)
 
-Thiết kế đầy đủ: [design spec](../superpowers/specs/2026-11-17-vault-e2ee-design.md). Lý do chọn: [ADR 0013](../decisions/0013-ket-sat-ma-hoa-phia-client.md) và [ADR 0014](../decisions/0014-mot-nguoi-ghi-moi-muc-khi-cat-vao-ket.md).
+Thiết kế đầy đủ: [design spec](../superpowers/specs/2026-11-17-vault-e2ee-design.md). Lý do chọn: [ADR 0013](../decisions/0013-ket-sat-ma-hoa-phia-client.md); cách cất vào két không ghi đè nhau: [ADR 0015](../decisions/0015-mot-object-rieng-moi-lan-ma-hoa.md) (thay [ADR 0014](../decisions/0014-mot-nguoi-ghi-moi-muc-khi-cat-vao-ket.md)).
 
 **Mối đe dọa được tính tới.** Máy công ty có Zscaler soi HTTPS: admin mạng đọc được mọi request đi qua máy đó, kể cả API token. Mục tiêu: file trong két **không đọc được dù lộ token**, miễn là két chưa từng được mở trên máy bị soi.
 
@@ -99,16 +99,17 @@ Mỗi lần sai được ghi bằng **một câu `UPDATE`** có điều kiện (
 - Liên kết trong két **không được server lấy xem trước**: `POST /links/:id/preview` trả `409 encrypted`, và cột `url` của mục trong két là `NULL`.
 - File **trước khi có mã hóa** nằm trong két có thể đã bị thấy; mã hóa không lấy lại được điều đó.
 
-### 7.6 Ghi chú về ghi đè và giữ chỗ
+### 7.6 Ghi chú về ghi đè
 
-Presigned URL ghi lên R2 không thu hồi được, nên một máy chỉ được ghi `vault/<id>` khi **giữ chỗ** (claim) của mục đó. Claim giữ 2 giờ, cắt xuống "lúc cấp + 16 phút" sau một lần complete bị từ chối, và mọi complete trên mục có claim phải kèm đúng claim. Lý do và các phương án đã loại: [ADR 0014](../decisions/0014-mot-nguoi-ghi-moi-muc-khi-cat-vao-ket.md). Chi tiết API: [api.md mục 4.3](api.md#43-két-sắt-mã-hóa).
+Mỗi lần cất vào két ghi một object riêng, tên `vault/<id>.<attempt>`, với `attempt` là 16 byte ngẫu nhiên. Hai máy (hoặc hai lần thử của một máy) không bao giờ ghi cùng một tên, nên không có ghi đè và không có giữ chỗ. Máy hoàn tất trước thì D1 trỏ tới object của nó (`enc_object`) cùng khóa mã hóa của nó; object của máy kia bị xóa. Chi tiết API: [api.md mục 4.3](api.md#43-két-sắt-mã-hóa). Lý do và các phương án đã loại (giữ chỗ, ETag, thông báo thời gian thực): [ADR 0015](../decisions/0015-mot-object-rieng-moi-lan-ma-hoa.md).
 
 ### 7.7 Giới hạn bảo mật còn lại
 
 - **Mở két trên máy bị soi.** Máy có HTTPS bị soi (ví dụ máy công ty có Zscaler) thấy `S` và `wrapped_mk_pin` lúc mở két. Từ đó, admin mạng thử PIN offline được. **Quy tắc: không mở két trên máy công ty hoặc qua mạng bị soi HTTPS.** Chưa có công tắc chặn trong app ([Nợ kỹ thuật](roadmap.md#nợ-kỹ-thuật)).
 - **Ai đọc được D1** (Cloudflare, người có quyền tài khoản Cloudflare) có `auth_hash` và `kdf_salt`, nên thử được PIN offline mà không cần `S`. Ngoài phạm vi: mối đe dọa đã chốt là mạng bị soi, không phải nhà cung cấp.
-- **Bản rõ sót lại khi lấy ra bị ngắt (N4).** Nếu client chết giữa lúc lấy ra, bản rõ `files/<id>` tồn tại tới lần cron sau (cron chạy lúc 03:00 UTC và dọn bản có `out_started_at` cũ hơn 1 giờ), nên có thể sống tới khoảng **25 giờ**. Trong khoảng đó người có token đọc được bản rõ đó. Mục vẫn mã hóa và không mất dữ liệu.
-- **PUT chậm vượt claim 2 giờ.** Một PUT rất chậm (dưới khoảng 14 KB/s với file 100 MB) có thể kéo dài hơn 2 giờ. Khi đó máy khác có thể đã giữ chỗ, ghi và hoàn tất, rồi PUT chậm mới kết thúc và ghi đè `vault/<id>`. Hậu quả: khóa trong D1 và bản mã trên R2 lệch nhau cho tới lượt complete tiếp theo. Cách triệt để (mỗi claim một key `vault/<id>.<claim>`) nằm ở [Nợ kỹ thuật](roadmap.md#nợ-kỹ-thuật).
+- **Mục ở trạng thái đám mây còn bản rõ.** Từ lúc cất bắt đầu tới khi mã hóa xong (đám mây mờ, `encrypted = 0`), bản rõ vẫn nằm trên R2 và người có token đọc được, như mọi mục chưa mã hóa. Một lần cất bị bỏ dở để mục ở trạng thái này cho tới lần mở két sau.
+- **Bản rõ sót lại khi lấy ra bị ngắt.** Nếu client chết giữa lúc lấy ra, bản rõ `files/<id>` tồn tại tới lần cron sau (cron chạy lúc 03:00 UTC và dọn bản có `out_started_at` cũ hơn 1 giờ), nên có thể sống tới khoảng **25 giờ**. Trong khoảng đó người có token đọc được bản rõ đó. Mục vẫn mã hóa và không mất dữ liệu.
+- **Complete muộn đụng cron (chưa sửa).** Cron xóa object `vault/<id>.<attempt>` tuổi trên 1 giờ khi hàng không trỏ tới nó. Nếu máy của lần đó chỉ hoàn tất hơn 1 giờ sau lúc PUT, và đúng lúc cron đang xóa object ấy (trong khoảng giữa `head()` và câu UPDATE của complete, hoặc ngay sau UPDATE trước khi bản rõ được xóa), thì D1 có thể trỏ tới object đã mất và mục **mất cả bản rõ lẫn bản mã**. Cần cả hai điều kiện cùng lúc và chỉ xảy ra quanh 03:00 UTC, nên hiếm; nhưng code hiện chưa chặn. Hướng sửa ở [Nợ kỹ thuật](roadmap.md#nợ-kỹ-thuật).
 - **Khe cron (M1).** Giữa lúc cron nhả `out_started_at` và lúc xóa object, một lần lấy ra hợp lệ chỉ hoàn tất trong vài giây thì bản rõ mới có thể bị xóa. Chỉ xảy ra lúc 03:00 UTC.
 - **AAD chưa gắn với id (M6).** `enc_meta` và `DEK` không được ràng buộc với id mục. Người ghi được cả D1 lẫn R2 có thể hoán đổi hai mục. Người chỉ có API token thì không làm được. Nâng cấp lên FUV2 nằm ở [Nợ kỹ thuật](roadmap.md#nợ-kỹ-thuật).
 - **Thumbnail trong két** dùng presigned GET 1 giờ, giống thumbnail thường (xem [Nợ kỹ thuật](roadmap.md#nợ-kỹ-thuật), M3).

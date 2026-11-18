@@ -51,8 +51,7 @@ ALTER TABLE files ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;  -- 1 = nội
 ALTER TABLE files ADD COLUMN enc_meta  TEXT;                         -- base64, NULL khi encrypted = 0
 ALTER TABLE files ADD COLUMN enc_key   TEXT;                         -- DEK bọc bằng MK, base64
 ALTER TABLE files ADD COLUMN out_started_at INTEGER;                 -- lúc vault/out gần nhất; vault/out/complete xóa; cron dọn bản rõ sót nếu còn quá 1 giờ
-ALTER TABLE files ADD COLUMN in_claim TEXT;                          -- token của máy được ghi vault/<id> lúc này (vault/in); vault/in/complete xóa
-ALTER TABLE files ADD COLUMN in_claim_until INTEGER;                 -- epoch ms; giữ chỗ hết hiệu lực khi đã qua mốc này
+ALTER TABLE files ADD COLUMN enc_object TEXT;                        -- attempt có object vault/<id>.<attempt>[.thumb] chứa bản mã (vault/in/complete ghi); NULL = khóa cố định vault/<id>
 
 CREATE TABLE vault_keys (
   id                  INTEGER PRIMARY KEY CHECK (id = 1),  -- một người dùng, một két (luôn một dòng)
@@ -71,7 +70,8 @@ CREATE TABLE vault_keys (
 ```
 
 - `kind = 'image'` khi `mime` bắt đầu bằng `image/`, còn lại là `'file'`.
-- R2 key: `files/<id>` cho file gốc, `thumbs/<id>.jpg` cho thumbnail (bản rõ). Mục mã hóa dùng `vault/<id>` và `vault/<id>.thumb` (bản mã FUV1). Cột `encrypted` quyết định cặp nào đang áp dụng.
+- R2 key: `files/<id>` cho file gốc, `thumbs/<id>.jpg` cho thumbnail (bản rõ). Mục mã hóa bằng `vault/<id>.<attempt>` và `vault/<id>.<attempt>.thumb` (bản mã FUV1), với `attempt` là `enc_object` của mục. Mục đưa thẳng vào két khi upload (không qua `vault/in`) có `enc_object` NULL và dùng khóa cố định `vault/<id>` và `vault/<id>.thumb`. Cột `encrypted` quyết định cặp nào đang áp dụng; `enc_object` quyết định tên cặp mã hóa.
+- `enc_object` là tên của lần cất đã thắng (`vault/in/complete`); `vault/out/complete` đặt lại NULL. Mọi chỗ lấy khóa đi qua `objectKeys(row)` (`worker/src/presign.ts`).
 - **Mục đã mã hóa** (`encrypted = 1`): `name = ''`, `mime = 'application/octet-stream'`, `kind = 'file'`, `url = NULL`; giá trị thật nằm trong `enc_meta`. `size` là kích thước bản mã.
 - `in_vault = 1` cũng là thùng rác của két khi `deleted_at` có giá trị. `deleted_at` và `in_vault` là hai cột độc lập: thùng rác thường là `deleted_at IS NOT NULL AND in_vault = 0`.
 - `0009` chỉ thêm cột và bảng, không đổi dữ liệu cũ; mọi dòng hiện có có `encrypted = 0`.

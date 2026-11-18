@@ -37,8 +37,8 @@ Két sắt là mã hóa đầu cuối phía client. Các khóa và định dạn
 12. **Đóng két.** `VaultSession` có bộ đếm thế hệ. `close()` tăng nó, xóa khóa và làm mọi lời gọi mở đang chờ trả `closed`, không giữ khóa.
 13. **Nơi ở của khóa.** `MK` không bao giờ extractable, trừ một bản tạm bên trong `recover` và `changePin` để bọc lại. Desktop giữ `MK` trong main process; web giữ trong bộ nhớ JS. Renderer không nhận `MK`, `DEK` hay `S`. Ảnh và file trong két đi qua `fatup-vault://` (desktop, phục vụ từ bộ nhớ, không ghi đĩa) hoặc `blob:` (web, thu hồi khi đóng).
 14. **Giao thức và app cũ.** Client mới gửi `X-FatUp-Vault: 2`. Khi két đã thiết lập, `GET /files?vault=1` và `PUT /files/:id/vault` trả `426 app_outdated` nếu thiếu header. Trước khi thiết lập, endpoint cũ vẫn chạy như cũ.
-15. **Kiểm tra toàn vẹn khi cất vào.** `vault/in/complete` của file bắt buộc `etag` của PUT. Khác object trên R2 thì trả `409 item_changed` và không ghi D1. Chi tiết và quyền giữ chỗ: [ADR 0014](0014-mot-nguoi-ghi-moi-muc-khi-cat-vao-ket.md).
-16. **Cron.** Chỉ dọn bản rõ sót của hàng `encrypted = 1` có `out_started_at` cũ hơn 1 giờ: nhả cột trước, rồi xóa object. `purge` xóa cả bốn key của mục, theo lô 100 id.
+15. **Cất vào két không ghi đè nhau.** Mỗi lần cất ghi một object riêng `vault/<id>.<attempt>`, và D1 trỏ tới đúng object mà khóa của nó mã hóa (`enc_object`). Không còn ETag, giữ chỗ hay `item_busy`. Thay cho cách làm ở 4.7b/4.7c (ADR 0014, đã bị thay): xem [ADR 0015](0015-mot-object-rieng-moi-lan-ma-hoa.md).
+16. **Cron.** Dọn bản rõ sót của hàng `encrypted = 1` có `out_started_at` cũ hơn 1 giờ: nhả cột trước, rồi xóa object; và dọn object rác dưới `vault/` ([ADR 0015](0015-mot-object-rieng-moi-lan-ma-hoa.md)). `purge` xóa các khóa của mục (kể cả khóa theo `enc_object`), theo lô 100 id.
 17. **Phạm vi.** Android hoãn (không thấy và không mở két). "Tắt két sắt trên thiết bị này" hoãn. Không che kích thước, thời gian, thiết bị, thẻ màu, số mục. Cloudflare và người đọc được D1 ngoài phạm vi mối đe dọa.
 
 ### Ruling trong sổ SDD được chép vào đây
@@ -51,7 +51,7 @@ Các Ruling làm đổi hành vi, gom theo chủ đề (sổ SDD bị gitignore 
 - *Liên kết (Task 6):* liên kết không có object R2, `vault/in` trả `downloadUrl: null`, complete nhận `size: 0`; ảnh xem trước của liên kết đi vào `vault/<id>.thumb`; lấy ra thì bỏ ảnh và để server xem trước lại.
 - *Thùng rác của két (Task 9, sửa `ee8fa86`):* `vault/in` và `vault/in/complete` nhận mục `in_vault = 1` đã xóa; `vault/out` không nhận; `migrateLegacy` chạy sau thiết lập, mở két và khôi phục, một lần, nuốt lỗi; lấy ra mục cũ chưa mã hóa cần két mở.
 - *Phía client (Task 7–8):* `VaultSession` nằm trong `desktop/src/vault-session.ts`, không import Node, web dùng lại; scheme `fatup-vault` trả `cache-control: no-store`; `owns(id)` vẫn đúng sau khi đóng két, để trả `vault_locked` thay vì rơi sang đường tải thường.
-- *Thiết lập và cất (F2):* `moveIn` đọc header `ETag` nguyên văn; thiếu thì mục lỗi, không gọi complete; `409 item_changed` thử lại một lần với `DEK` mới; `moveOut` lỗi sau khi đã PUT bản rõ thì gọi `moveInComplete` không etag để dọn; giữ bản thiết lập đã chuẩn bị sau lỗi mạng; web cần CORS `ExposeHeaders: ETag` (`npm run r2:cors`).
+- *Thiết lập và cất (F2, một phần đã bị thay bởi [0015](0015-mot-object-rieng-moi-lan-ma-hoa.md): không còn ETag và không còn thử lại khi `item_changed`):* `moveIn` đọc header `ETag` nguyên văn; thiếu thì mục lỗi, không gọi complete; `409 item_changed` thử lại một lần với `DEK` mới; `moveOut` lỗi sau khi đã PUT bản rõ thì gọi `moveInComplete` không etag để dọn; giữ bản thiết lập đã chuẩn bị sau lỗi mạng; web từng cần CORS `ExposeHeaders: ETag`, nay không còn cần.
 
 ## Hệ quả
 

@@ -73,7 +73,7 @@ Phân tích yêu cầu **không** là agent: nó cần hỏi qua lại với ng�
 - File không đi qua Worker (presigned URL của R2), **trừ** link chia sẻ công khai `/s/<token>`. Xem ADR 0002.
 - Đổi schema D1 = thêm một file đánh số mới trong `worker/migrations/`, không bao giờ sửa file cũ. Thứ tự nâng cấp luôn là **migrate rồi mới deploy**; ghi rõ trong `CHANGELOG.md` → "Nâng cấp".
 - PIN app 4 số chỉ khóa giao diện, không bao giờ gửi lên server. Renderer của desktop không bao giờ thấy token API.
-- Két sắt mã hóa (ADR 0013, 0014): PIN két 6 số chỉ đi lên dưới dạng `authKey` dẫn xuất; `MK`, `DEK`, `S`, PIN và bản rõ tên/URL của mục két không bao giờ lên server, không ra renderer, không ghi xuống đĩa hay bộ nhớ đệm. Đổi bộ đếm sai hoặc giữ chỗ (claim) thì đọc ADR trước.
+- Két sắt mã hóa (ADR 0013, 0015): PIN két 6 số chỉ đi lên dưới dạng `authKey` dẫn xuất; `MK`, `DEK`, `S`, PIN và bản rõ tên/URL của mục két không bao giờ lên server, không ra renderer, không ghi xuống đĩa hay bộ nhớ đệm. Đổi bộ đếm sai, hoặc cách đặt tên object của két (`attempt`, `enc_object`), thì đọc ADR trước.
 - Chuỗi hiển thị cho người dùng phải có cả `en` và `vi` trong `desktop/src/renderer/src/lib/i18n.ts`.
 - Chỉ commit hoặc push khi người dùng yêu cầu. Tạo nhánh từ `main` trước.
 

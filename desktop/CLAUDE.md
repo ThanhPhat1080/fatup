@@ -24,7 +24,7 @@ Spec: `docs/spec/desktop-ui.md` (màn hình, liên kết, chia sẻ, lightbox, u
 | `src/renderer/src/components/VaultGate.tsx`, `LockWizard` (dùng chung với cổng két) | cổng 6 số của két sắt, có ông phù thủy và hiệu ứng nổ |
 | `src/renderer/src/components/VaultSetup.tsx`, `VaultRecover.tsx`, `VaultPinChange.tsx` | trình thiết lập hai bước (PIN, recovery key, xác nhận 2 nhóm), màn khôi phục, đổi PIN két trong Cài đặt |
 | `src/renderer/src/components/VaultTrash.tsx`, `VaultTrashIcon.tsx`, `VaultFrame.tsx` | thùng rác của két (sidebar 70% / toàn màn hình ≤ 720 px), icon của nó, khung chế độ két (`vault-mode`) |
-| `src/renderer/src/lib/vault.ts` | hàm thuần của két: bước thiết lập, thông báo cổng và lỗi, kế hoạch cất vào két, xác nhận recovery key — có unit test. Logic giao diện két đặt ở đây, không ở component |
+| `src/renderer/src/lib/vault.ts` | hàm thuần của két: bước thiết lập, thông báo cổng và lỗi, kế hoạch cất vào két (`vaultMoveInPlan`: chưa thiết lập thì mở trình thiết lập trước), trạng thái mục (`vaultItemState`: đám mây mờ = `pending`, tick xanh = `encrypted`), xác nhận recovery key — có unit test. Logic giao diện két đặt ở đây, không ở component |
 | `src/renderer/src/lib/format.ts` | hàm thuần: nhóm, sắp xếp, lọc, dung lượng — có unit test |
 | `src/renderer/src/lib/i18n.ts` | từ điển `en` và `vi` |
 | `src/main/web-globals.d.ts` | khai báo kiểu `CryptoKey`, `BodyInit` cho các test (project không có DOM lib) |

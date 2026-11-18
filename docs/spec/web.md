@@ -9,7 +9,7 @@
 - Cài được như app: manifest + service worker (chỉ cache app shell và asset; **không cache API, không cache presigned URL**).
 - Có: xem, **upload**, tải về, đổi tên, thẻ màu, xóa, thùng rác, két sắt, chọn nhiều, sắp xếp, dung lượng, dark mode. **Không có:** kiểm tra cập nhật (web tự cập nhật qua service worker), QR ghép Android.
 - Tải về bằng thẻ `<a download>` (presigned URL đã có `Content-Disposition: attachment`).
-- **CORS của R2 là bắt buộc để upload** (`npm run r2:cors` áp dụng `worker/r2-cors.json`: `GET`, `HEAD`, `PUT`, header `content-type`, và lộ header `ETag`). Thiếu thì upload báo lỗi mạng. "Copy ảnh" cũng cần CORS; thiếu thì copy ảnh xem trước. Thiếu `ETag` thì cất vào két lỗi `no_etag` ([mục 10.3](#103-két-sắt-trên-web)).
+- **CORS của R2 là bắt buộc để upload** (`npm run r2:cors` áp dụng `worker/r2-cors.json`: `GET`, `HEAD`, `PUT`, header `content-type`). Thiếu thì upload báo lỗi mạng. "Copy ảnh" cũng cần CORS; thiếu thì copy ảnh xem trước. Két không cần CORS riêng nào thêm (không đọc `ETag`, xem [mục 10.3](#103-két-sắt-trên-web)).
 - Lưu ý bảo mật của token trên web: xem [mục 7](security.md#7-bảo-mật).
 
 - **Nhận link từ Chia sẻ (Web Share Target):** manifest có `share_target` (`GET /` với `title`, `text`, `url`). Android Chrome thường để link trong `text`, nên `takeSharedLink` (`web/src/share.ts`) ưu tiên `url` rồi tách link từ `text`. Link được giữ trong `sessionStorage` **qua màn hình khóa PIN** (token chỉ giải mã được sau PIN), thanh địa chỉ được dọn, và khi app mở khóa thì gọi `addLink`, hiện toast và chuyển sang tab Liên kết. Chia sẻ không có link thì toast báo không tìm thấy. Android cập nhật mục Chia sẻ của PWA đã cài khá chậm (tới ~1 ngày), có thể phải cài lại PWA.
@@ -24,7 +24,7 @@
 
 ### 10.2 Giao diện điện thoại
 
-- Thanh trên: hàng 1 là logo, thanh Store và các nút (Tải lên, két sắt, thùng rác, cài đặt), hàng 2 là ô tìm kiếm. Lưới 2 cột, nút bấm tối thiểu 40–44px, tôn trọng safe-area của tai thỏ, chiều cao theo `dvh`.
+- Thanh trên gồm **hai hàng**: hàng 1 là logo và các nút (Tải lên, két sắt, thùng rác, cài đặt); hàng 2 là ô tìm kiếm và số liệu dung lượng (thanh Store). Lưới 2 cột, nút bấm tối thiểu 40–44px, tôn trọng safe-area của tai thỏ, chiều cao theo `dvh`.
 - Không có hover nên: bút chì ở lưới luôn hiện; **giữ lâu 450ms** một file để chọn (rung nhẹ), đã có file được chọn thì **chạm** để chọn/bỏ chọn. Chuột và bút cảm ứng giữ hành vi cũ.
 - Trình xem ảnh: ẩn nút zoom và mũi tên; **chụm hai ngón** để zoom, **vuốt ngang** chuyển ảnh, **vuốt xuống** đóng; bảng Chi tiết trượt từ đáy.
 - Màn hình khóa dọc: cảnh 16:9 được cắt vào giữa cổng (rộng 140% chiều cao màn hình) để ô PIN đủ lớn; Gollum nằm ngoài khung hình trên điện thoại.
@@ -35,5 +35,6 @@
 - `MK` và tên đã giải mã chỉ nằm trong bộ nhớ JS. **Không ghi** vào `localStorage`, IndexedDB hay Cache Storage, và mục két không đi vào kho ảnh xem trước. Service worker không cache API, presigned URL hay `/s/`.
 - Ảnh và file trong két hiện qua **`blob:` URL** làm từ byte đã giải mã. Đóng két (khóa app, đăng xuất, bấm logo, nút đóng két) thu hồi **mọi** `blob:` URL ngay lập tức, đồng bộ, và xóa khóa khỏi bộ nhớ. Đóng tab cũng mất khóa; mở lại cần PIN.
 - **Giới hạn bộ nhớ:** file được mã hóa và giải mã **trong bộ nhớ** trên mọi trình duyệt, nên giới hạn là `MAX_FILE_SIZE` = 100 MB. Không ghi luồng xuống đĩa và không dùng `showSaveFilePicker`. Tải về đi qua `<a download>`.
-- **CORS của R2** phải lộ header `ETag` (xem đầu mục 10). Cất vào két đọc `ETag` của lần PUT; thiếu header này thì báo `no_etag`.
-- **Khác với desktop:** khi két chưa thiết lập, "Chuyển vào Két sắt" trên web báo `vault_locked` và không chuyển file. Desktop thì chuyển như cũ ([mục 5.2](lifecycle.md#52-két-sắt-secret-vault)). Hai hành vi chưa thống nhất ([Nợ kỹ thuật](roadmap.md#nợ-kỹ-thuật)).
+- **Cất vào két không cần ETag.** Mỗi lần cất ghi object riêng của lần thử (`vault/<id>.<attempt>`), nên không có đọc header `ETag` và không có lỗi `no_etag` ([ADR 0015](../decisions/0015-mot-object-rieng-moi-lan-ma-hoa.md)).
+- **Két chưa thiết lập:** "Chuyển vào Két sắt" trên web mở trình thiết lập trước, rồi cất khi thiết lập xong, như desktop ([mục 5.2](lifecycle.md#52-két-sắt-secret-vault)). Không còn báo `vault_locked` ở đường này.
+- **Trạng thái mã hóa và làm mới:** cùng biểu tượng đám mây mờ / tick xanh như desktop ([9.11](desktop-ui.md#911-két-sắt-mã-hóa)); làm mới bằng polling 60 giây và khi lấy lại focus, như desktop.

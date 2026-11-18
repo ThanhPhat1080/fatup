@@ -42,7 +42,7 @@ Chuyển ảnh và file giữa **điện thoại Android** và **máy tính** (m
 ```
 
 - File **không đi qua Worker**: Worker chỉ cấp presigned URL (ký bằng `aws4fetch`) nên không dính giới hạn request body của Worker. **Ngoại lệ duy nhất: link chia sẻ công khai** (`/s/<token>`), nơi Worker truyền file từ R2 để kiểm tra D1 ở từng lượt và thu hồi được ngay ([mục 4.2](docs/spec/api.md#42-chia-sẻ-link-công-khai)).
-- Cron mỗi ngày (03:00 UTC) dọn file ở thùng rác quá 30 ngày (kể cả thùng rác của két), upload dở dang, và bản rõ sót lại khi lấy ra khỏi két bị ngắt (file ngoài thùng rác không bao giờ hết hạn) (xem [mục 6](docs/spec/lifecycle.md#6-vòng-đời-file-thùng-rác-và-dọn-dẹp)).
+- Cron mỗi ngày (03:00 UTC) dọn file ở thùng rác quá 30 ngày (kể cả thùng rác của két), upload dở dang, bản rõ sót lại khi lấy ra khỏi két bị ngắt, và object mã hóa thừa dưới `vault/` (file ngoài thùng rác không bao giờ hết hạn) (xem [mục 6](docs/spec/lifecycle.md#6-vòng-đời-file-thùng-rác-và-dọn-dẹp)).
 - Két sắt mã hóa phía client: file trong két được mã hóa trên máy, server chỉ thấy bản mã ([mục 7.1](docs/spec/security.md#71-két-sắt-mã-hóa-phía-client-e2ee)).
 
 ### Monorepo

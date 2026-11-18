@@ -82,7 +82,7 @@ npm run db:migrate:remote
 npm run deploy
 ```
 
-Ghi chú riêng của từng bản nằm ở mục **Nâng cấp** trong [CHANGELOG.md](CHANGELOG.md). Bản 0.5.0 (két mã hóa) có thêm bước `npm run r2:cors` và các bước kiểm tra sau deploy: làm theo đúng mục đó.
+Ghi chú riêng của từng bản nằm ở mục **Nâng cấp** trong [CHANGELOG.md](CHANGELOG.md). Bản 0.5.0 (két mã hóa) có thêm các bước kiểm tra sau deploy: làm theo đúng mục đó.
 
 ## Bảo mật
 

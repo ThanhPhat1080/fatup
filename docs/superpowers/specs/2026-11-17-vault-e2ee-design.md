@@ -1,6 +1,6 @@
 # Mã hóa Két sắt phía client (E2EE): thiết kế
 
-Trạng thái: **đã duyệt và đã triển khai** (nhánh `feat/vault-e2ee`; chưa phát hành). Viết ngày 2026-11-17 sau một buổi hỏi đáp thiết kế; người dùng đã đồng ý các câu Q1 đến Q7 ở mục 3. Các quyết định kỹ thuật ở mục 4 do Claude đề xuất và nằm ở mục 7 để người dùng xem lại. Thay đổi quyết định thì sửa file này trước, code sau; khi làm xong phải cập nhật `docs/spec/lifecycle.md` (5.2), `security.md`, `api.md`, `data.md`, `desktop-ui.md`, `web.md`, và viết ADR mới thay một phần ADR 0006.
+Trạng thái: **đã duyệt và đã triển khai** (nhánh `feat/vault-e2ee`; chưa phát hành; Task 17: object riêng mỗi lần thử, thay 4.7b phần ETag và 4.7c, xem 4.7d và [ADR 0015](../../decisions/0015-mot-object-rieng-moi-lan-ma-hoa.md)). Viết ngày 2026-11-17 sau một buổi hỏi đáp thiết kế; người dùng đã đồng ý các câu Q1 đến Q7 ở mục 3. Các quyết định kỹ thuật ở mục 4 do Claude đề xuất và nằm ở mục 7 để người dùng xem lại. Thay đổi quyết định thì sửa file này trước, code sau; khi làm xong phải cập nhật `docs/spec/lifecycle.md` (5.2), `security.md`, `api.md`, `data.md`, `desktop-ui.md`, `web.md`, và viết ADR mới thay một phần ADR 0006.
 
 ## 1. Mục đích
 

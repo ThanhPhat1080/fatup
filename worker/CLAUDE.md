@@ -12,7 +12,7 @@ Spec: `docs/spec/data.md` (schema D1), `docs/spec/api.md` (API, liên kết, lin
 | `src/vault.ts` | két sắt mã hóa: `/vault/*` (trạng thái, thiết lập, mở két có bộ đếm sai, khôi phục, đổi PIN) và `/files/:id/vault/in`, `/vault/out` (mỗi lần cất vào là một `attempt` với object riêng `vault/<id>.<attempt>`, `in` đặt `in_vault = 1` ngay, complete ghi `enc_object`; dọn bản rõ sót). `registerVaultRoutes` được gọi trong `app.ts`. Đếm sai: `WRONG_ATTEMPT_SQL` |
 | `src/presign.ts` | presigned URL S3 SigV4 (`aws4fetch`), `fileKey`/`thumbKey`, `vaultFileKey`/`vaultThumbKey`, `objectKeys` (cặp key theo `encrypted` và `enc_object`), `contentDisposition` theo RFC 5987 |
 | `src/preview.ts` | xem trước link: tải trang, đọc tiêu đề/og:image (có giới hạn dung lượng và thời gian) |
-| `src/cleanup.ts` | cron: xóa file trong thùng rác > 30 ngày (kể cả thùng rác của két), upload dở > 24 giờ, bản rõ sót khi lấy ra khỏi két (`out_started_at` > 1 giờ), dòng `shares` hết hạn. `purge` xóa mọi key của hàng (kể cả theo `enc_object`), theo lô 100 id; cron cũng dọn object rác dưới `vault/` (hàng đã mất hoặc attempt khác `enc_object`, tuổi > 1 giờ) |
+| `src/cleanup.ts` | cron: xóa file trong thùng rác > 30 ngày (kể cả thùng rác của két), upload dở > 24 giờ, bản rõ sót khi lấy ra khỏi két (`out_started_at` > 1 giờ), dòng `shares` hết hạn. `purge` xóa mọi key của hàng (kể cả theo `enc_object`), theo lô 100 id; `sweepVaultGarbage` (gọi cuối `cleanup`) dọn object rác dưới `vault/` (hàng đã mất hoặc attempt khác `enc_object`, tuổi > 1 giờ) |
 | `src/env.ts` | binding: `DB`, `BUCKET`, secret `API_TOKEN`, `R2_*`, tùy chọn `R2_QUOTA_GB` |
 | `migrations/NNNN_*.sql` | schema D1, áp dụng theo thứ tự |
 | `public/` | bản build của `web/` (gitignore); phục vụ dạng file tĩnh |

@@ -66,7 +66,7 @@ cd android && ./gradlew testDebugUnitTest assembleDebug
 
 Từ thư mục gốc: `npm run release:worker` (migrate D1 trên server rồi deploy Worker kèm bản web). Hoặc từng bước: `npm run db:migrate`, rồi `npm run deploy:worker`.
 
-CORS của bucket R2 (bản web tải file thẳng lên R2, và cất vào két cần lộ header `ETag`): trong `worker/`, `npm run r2:cors` áp dụng `worker/r2-cors.json`. Chạy lại mỗi khi file đó đổi. Các bước nâng cấp của từng bản nằm ở [CHANGELOG.md](../CHANGELOG.md).
+CORS của bucket R2 (bản web tải file thẳng lên R2): trong `worker/`, `npm run r2:cors` áp dụng `worker/r2-cors.json`. Chạy lại mỗi khi file đó đổi. Các bước nâng cấp của từng bản nằm ở [CHANGELOG.md](../CHANGELOG.md).
 
 ## Build app máy tính
 

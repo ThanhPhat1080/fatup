@@ -12,10 +12,10 @@ Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy
   - Thiết lập lần đầu theo hai bước: đặt PIN, rồi nhận **recovery key** (hiện một lần, có nút sao chép) và gõ lại hai nhóm ngẫu nhiên để xác nhận. Các file đã có trong két được mã hóa dần, có tiến trình.
   - **Recovery key** dùng khi quên PIN: màn khôi phục đặt PIN mới, không mã hóa lại file. Đổi PIN két trong Cài đặt (cần PIN cũ hoặc recovery key).
   - **Thùng rác riêng của két**: khôi phục, xóa vĩnh viễn, dọn sạch, Hoàn tác 8 giây; file tự xóa sau 30 ngày.
-  - Cất vào két từ danh sách chính qua cổng PIN. File đang mã hóa có nhãn; file không đọc được hiện "Không đọc được trên thiết bị này".
+  - Cất vào két từ danh sách chính qua cổng PIN. Mục vừa cất rời danh sách chính ngay. Trong két, mục chưa mã hóa xong hiện **biểu tượng đám mây mờ**, và đổi thành **dấu tick xanh** khi đã mã hóa xong; các máy khác thấy đổi khi làm mới. File không đọc được hiện "Không đọc được trên thiết bị này".
   - Tải file lên thẳng vào két khi két đang mở.
   - Bản web: két chạy trong bộ nhớ trang. Khóa và dữ liệu két không ghi vào `localStorage`, IndexedDB hay Cache Storage.
-  - Tài liệu: [mục 7.1–7.7 của security](docs/spec/security.md), [ADR 0013](docs/decisions/0013-ket-sat-ma-hoa-phia-client.md) và [ADR 0014](docs/decisions/0014-mot-nguoi-ghi-moi-muc-khi-cat-vao-ket.md).
+  - Tài liệu: [mục 7.1–7.7 của security](docs/spec/security.md), [ADR 0013](docs/decisions/0013-ket-sat-ma-hoa-phia-client.md) và [ADR 0015](docs/decisions/0015-mot-object-rieng-moi-lan-ma-hoa.md).
 
 ### Đổi
 - **Xóa một file trong két** đưa nó vào **thùng rác của két**, không còn vào thùng rác thường. File vẫn ở trong két.
@@ -23,7 +23,9 @@ Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy
 - **PIN két là 6 số**, tách khỏi PIN app. PIN app vẫn là 4 số và vẫn không rời khỏi thiết bị.
 - **Két sắt không còn chỉ là lớp che giao diện.** File trong két không đọc được bằng API token nữa.
 - **Ứng dụng cũ** (không gửi header `X-FatUp-Vault: 2`): khi két đã được thiết lập, các thao tác với két trả lỗi "Cần cập nhật app" (HTTP 426). Cập nhật app để dùng két.
-- **Máy tính, khi két chưa thiết lập:** "Chuyển vào Két sắt" vẫn hoạt động như trước. File được mã hóa sau khi bạn thiết lập két.
+- **Chuyển vào Két sắt khi két chưa thiết lập** (máy tính và bản web): app mở trình thiết lập trước, rồi mới cất file. File được mã hóa ngay khi két được thiết lập.
+- **Hai máy cùng cất một file** không còn chặn nhau hay báo lỗi "đang được chuyển ở máy khác". Mỗi lần cất được làm riêng; cất dở thì lần mở két sau làm lại.
+- **Giao diện điện thoại:** thanh trên gồm hai hàng (logo và các nút; ô tìm kiếm và dung lượng). Biểu tượng trạng thái két nằm ở góc ảnh thu nhỏ để tên không bị chật. Cổng PIN két có tấm gỗ rộng hơn cho đủ 6 ô.
 - **Android chưa thấy và chưa mở được két.** File trong két không hiện trên Android. Đây là nợ kỹ thuật, xem [roadmap](docs/spec/roadmap.md).
 
 ### Nâng cấp
@@ -32,12 +34,13 @@ Thứ tự: **migrate trước, deploy sau**. Có một migration mới, `0009_v
 1. Sao lưu D1 trước khi làm bước nào khác.
 2. Trong `worker/`: `npm run db:migrate:remote` (gõ `y` khi được hỏi).
 3. Sau đó mới deploy Worker: `npm run deploy` trong `worker/`.
-4. Nếu bucket R2 chưa có CORS với `ExposeHeaders: ETag`: trong `worker/`, chạy `npm run r2:cors` (áp dụng `worker/r2-cors.json`). Thiếu bước này thì cất vào két trên bản web báo lỗi `no_etag`.
+4. Không bắt buộc: két không còn đọc header `ETag` nên không cần `npm run r2:cors` cho két. Chỉ chạy `npm run r2:cors` (trong `worker/`, áp dụng `worker/r2-cors.json`) nếu bucket R2 chưa có CORS cho bản web tải file lên, như các bản trước.
 5. Cập nhật app máy tính lên bản mới trên **mọi** máy (Cài đặt → Kiểm tra cập nhật, hoặc tải bản mới). Mở lại bản web (PWA) hai lần để service worker nhận bản mới.
-6. Trên máy cá nhân: mở két → thiết lập → **cất recovery key vào trình quản lý mật khẩu** → chờ tới khi không còn mục nào hiện "đang mã hóa".
-7. **Kiểm sau deploy** (thay cho bước chạy thử với Worker và R2 thật, đã bỏ qua theo quyết định của người dùng):
-   - Object `vault/<id>` trên R2 bắt đầu bằng 4 byte `FUV1`.
-   - Object `files/<id>` của mục đó đã bị xóa.
+6. Trên máy cá nhân: mở két → thiết lập → **cất recovery key vào trình quản lý mật khẩu** → chờ tới khi mọi mục trong két đều có dấu tick xanh (không còn đám mây mờ).
+7. **Kiểm sau deploy** (thay cho bước chạy thử với Worker và R2 thật, đã bỏ qua theo quyết định của người dùng). Tên object của một mục là `vault/<id>.<enc_object>` (lấy `enc_object` của mục từ D1):
+   - Object `vault/<id>.<enc_object>` trên R2 bắt đầu bằng 4 byte `FUV1`.
+   - Object `files/<id>` (bản rõ) của mục đó đã bị xóa khi mục có tick xanh.
+   - Một mục có ảnh thu nhỏ, sau khi mã hóa, vẫn có ảnh thu nhỏ trong két (object `vault/<id>.<enc_object>.thumb` tồn tại, và ảnh hiện trong danh sách).
    - Gọi `GET /vault` và `GET /files?vault=1` bằng token: không có giá trị nào đủ để thử PIN. `GET /vault` chỉ trả muối, số vòng, số lần sai và trạng thái.
 8. **Không mở két trên máy công ty hoặc qua mạng bị soi HTTPS (ví dụ Zscaler).** Mở két ở đó sẽ lộ khóa và cho phép thử PIN offline.
 9. App bản cũ, sau khi két đã được thiết lập, báo "Cần cập nhật app" khi dùng két. Đó là đúng; cập nhật app là xong.

@@ -112,25 +112,30 @@ Mọi route dưới đây đòi Bearer token như các route khác. Thiết kế
 | Method | Path | Body | Trả về |
 |---|---|---|---|
 | `POST` | `/uploads` | Thêm `vault: { encMeta, encKey }`. `name` và `mime` vẫn bắt buộc (client gửi `''` và `application/octet-stream`); `size` là kích thước **bản mã** | `201 { id, uploadUrl (vault/<id>), thumbUploadUrl? (vault/<id>.thumb) }` |
-| `POST` | `/files/:id/vault/in` | — | `{ uploadUrl, thumbUploadUrl, downloadUrl, thumbUrl, claim }`: địa chỉ ghi `vault/<id>` (và thumb), địa chỉ đọc bản gốc. Liên kết không có object nên `downloadUrl` là `null`. Mục đang có `claim` còn hạn của máy khác: `409 item_busy` |
-| `POST` | `/files/:id/vault/in/complete` | `{ encMeta, encKey, size, hasThumb, etag?, claim? }` | `FileItem` (đã mã hóa) |
-| `POST` | `/files/:id/vault/out` | — | `{ uploadUrl (files/<id>), thumbUploadUrl, downloadUrl (vault/<id>), thumbUrl }`. Ghi `out_started_at` |
+| `POST` | `/files/:id/vault/in` | — | `VaultMoveUrls` = `{ uploadUrl, thumbUploadUrl, downloadUrl, thumbUrl, attempt }`. `uploadUrl` và `thumbUploadUrl` ghi `vault/<id>.<attempt>` (và `.thumb`); `downloadUrl` và `thumbUrl` đọc bản gốc. `attempt` là 16 byte ngẫu nhiên (base64url), sinh mới mỗi lần gọi. Liên kết không có object nên `downloadUrl` là `null`. Route không ghi gì về `attempt` vào D1, nhưng đặt `in_vault = 1` ngay (mục rời danh sách chính, link chết) |
+| `POST` | `/files/:id/vault/in/complete` | `{ encMeta, encKey, size, hasThumb, attempt }` | `FileItem` (đã mã hóa) |
+| `POST` | `/files/:id/vault/out` | — | `{ uploadUrl (files/<id>), thumbUploadUrl, downloadUrl (object mã hóa của mục), thumbUrl }`. Object mã hóa là `vault/<id>.<enc_object>` (hoặc `vault/<id>` khi `enc_object` NULL). Ghi `out_started_at` |
 | `POST` | `/files/:id/vault/out/complete` | `{ name, mime, size, hasThumb }`. Liên kết gửi `{ url, title? }` (có `url` thì là liên kết, `name` và `mime` bị bỏ qua) | `FileItem` (dạng rõ) |
 
 *`vault/in/complete`:*
 
-- Mục đã mã hóa: trả `FileItem` ngay (idempotent) và dọn bản rõ còn sót.
-- Mục chưa mã hóa, không phải liên kết: `etag` là bắt buộc (`400` nếu thiếu; dạng có hoặc không có ngoặc kép đều được). `size` phải khớp kích thước object (`size_mismatch`). `etag` phải khớp object hiện có (`item_changed`).
-- Liên kết: không cần `etag`, `size` lưu là `0`. Ảnh xem trước (nếu có) được mã hóa vào `vault/<id>.thumb`.
-- Hàng đang có `claim`: body phải kèm đúng `claim` và giữ chỗ còn hạn, không thì `409 item_busy` và không đổi gì.
-- Thành công: một câu `UPDATE` ghi `encrypted = 1`, `in_vault = 1`, `name = ''`, `mime = 'application/octet-stream'`, `kind = 'file'`, `url = NULL`, `enc_meta`, `enc_key`, xóa `claim`. Sau đó mới xóa `files/<id>` và `thumbs/<id>.jpg` (và `vault/<id>.thumb` nếu không dùng).
-- `item_changed` và `size_mismatch` không xóa giữ chỗ; giữ chỗ được rút xuống còn 16 phút tính từ lúc cấp, nên mọi `vault/in` trong thời gian đó nhận `item_busy`. `size_mismatch` xóa `vault/<id>`.
-- `too_large` (`413`): bản mã vượt `vaultCiphertextSize(100 MB)`; `vault/<id>` bị xóa.
+- `attempt`: chuỗi 16–64 ký tự `[A-Za-z0-9_-]`, đúng dạng `vault/in` trả về. Bắt buộc với mục chưa mã hóa (kể cả liên kết). Với mục đã mã hóa thì có thể bỏ, nhưng nếu gửi thì phải đúng dạng. Thiếu với mục chưa mã hóa, hoặc sai dạng: `400 bad_request`. Lời gọi dọn sau khi lấy ra bị lỗi (`vault/in/complete` trên mục đã mã hóa) không gửi `attempt`.
+- **Mục đã mã hóa** (`encrypted = 1`):
+  - Không có `attempt` (lời gọi dọn sau khi lấy ra bị lỗi): xóa `files/<id>` và `thumbs/<id>.jpg`, trả `FileItem`.
+  - `attempt` trùng `enc_object`: trả `200 FileItem` (idempotent), dọn bản rõ còn sót, không đổi gì khác.
+  - `attempt` khác `enc_object` (máy thua cuộc): xóa đúng `vault/<id>.<attempt>` và `.thumb` của lần đó, trả `200 FileItem`. `enc_key`, `enc_meta` và object của máy thắng không đổi.
+- **Mục chưa mã hóa, còn `in_vault = 1`** (`vault/in` đã đặt): server `head()` đúng `vault/<id>.<attempt>`; liên kết không có object nên bỏ qua bước này.
+  - Không có object (`not_uploaded`), hoặc `size` không khớp kích thước object (`size_mismatch`, object của lần đó bị xóa): `409`.
+  - `size` vượt `vaultCiphertextSize(100 MB)`: `413 too_large`, object của lần đó bị xóa.
+  - Liên kết: `size` lưu là `0`. Ảnh xem trước (nếu có) được mã hóa vào `vault/<id>.<attempt>.thumb`.
+- **Thành công:** một câu `UPDATE ... WHERE id = ? AND encrypted = 0 AND in_vault = 1 AND status = 'ready'` đặt `encrypted = 1`, `enc_object = attempt`, `enc_meta`, `enc_key`, `name = ''`, `mime = 'application/octet-stream'`, `kind = 'file'`, `url = NULL`. Khóa luôn khớp đúng object mà `enc_object` nêu. Sau đó mới xóa `files/<id>` và `thumbs/<id>.jpg`; thumb mã hóa của lần đó được giữ nếu có ảnh xem trước, không thì xóa.
+- **Máy thua cuộc trong cùng lần cất** (UPDATE không đổi dòng, mục đã mã hóa bởi máy khác): trả `200 FileItem`, xóa object của chính lần đó nếu `attempt` khác `enc_object`. Không lỗi.
+- **`409 item_changed`:** mục không còn trên đường vào két (đã lấy ra, hoặc `in_vault` không còn là 1) khi complete đến: object của lần đó bị xóa, hàng không đổi. Đây là "complete muộn" của máy đã bỏ dở.
 
 *`vault/out` và `vault/out/complete`:*
 
 - `vault/out` chỉ cho mục đã mã hóa (`not_encrypted` nếu không) và ghi `out_started_at`. Từ đó bản rõ có thể xuất hiện ở `files/<id>`; cron dọn nếu lượt này không hoàn tất ([mục 6](lifecycle.md#6-vòng-đời-file-thùng-rác-và-dọn-dẹp)).
-- `vault/out/complete` trên mục đã mã hóa và còn `out_started_at`: một câu `UPDATE` ghi lại bản rõ (`encrypted = 0`, `in_vault = 0`, xóa `enc_meta`, `enc_key`, `out_started_at`), rồi xóa `vault/<id>` và thumb mã hóa.
+- `vault/out/complete` trên mục đã mã hóa và còn `out_started_at`: một câu `UPDATE` ghi lại bản rõ (`encrypted = 0`, `in_vault = 0`, `enc_object = NULL`, xóa `enc_meta`, `enc_key`, `out_started_at`), rồi xóa object mã hóa của mục (`vault/<id>.<enc_object>` và thumb, hoặc khóa cố định khi `enc_object` NULL).
 - Mục đã rõ, `in_vault = 0`, cùng tên/loại (hoặc cùng URL với liên kết) và cùng kích thước: đây là lần thử lại của lượt đã xong. Dọn bản mã còn sót và trả `FileItem`.
 - Mục mã hóa mà `out_started_at` là `NULL` (cron đã nhả): `409 item_changed`, không đổi gì.
 - `size_mismatch` và `not_uploaded` áp dụng cho `files/<id>`; object sai kích thước thì bị xóa.
@@ -165,17 +170,18 @@ Giới hạn độ dài: `encMeta` ≤ 8192 ký tự, `encKey` ≤ 512 ký tự,
 | `vault_busy` | 409 | Két đổi giữa lúc kiểm tra (request song song) | Thử lại |
 | `app_outdated` | 426 | Thiếu `X-FatUp-Vault: 2` khi két đã thiết lập (`GET /files?vault=1`, `PUT /files/:id/vault`) | Cập nhật app |
 | `forbidden` | 403 | `rkAuth` sai (`recover`, `PUT /vault/pin` bằng `rkAuth`) | Kiểm tra recovery key |
-| `item_busy` | 409 | Mục đang được máy khác giữ để ghi (claim còn hạn), hoặc `vault/in/complete` thiếu, sai hoặc hết hạn claim | Thử lại sau. Mục chưa được cất lần này |
-| `item_changed` | 409 | `etag` không khớp object (`vault/in/complete`); `out_started_at` không còn (`vault/out/complete`); mục đổi giữa chừng | Làm lại từ đầu |
-| `size_mismatch` | 409 | Kích thước object không khớp body | Làm lại |
-| `not_uploaded` | 409 | Object chưa được PUT, hoặc complete trước khi PUT | Làm lại PUT |
+| `item_changed` | 409 | `vault/in/complete` đến khi mục không còn trên đường vào két (đã lấy ra); `out_started_at` không còn (`vault/out/complete`); mục đổi giữa chừng. Đây là complete muộn của lần cất bị bỏ dở | Không cần làm gì: lần mở két sau cất lại với `attempt` mới |
+| `size_mismatch` | 409 | Kích thước object của `attempt` không khớp body | Làm lại |
+| `not_uploaded` | 409 | Object của `attempt` (hoặc `files/<id>` khi lấy ra) chưa được PUT, hoặc complete trước khi PUT | Làm lại PUT |
 | `already_encrypted` | 409 | `vault/in` cho mục đã mã hóa | Không cần làm gì (mục đã trong két) |
 | `not_encrypted` | 409 | `vault/out` hoặc `vault/out/complete` cho mục không mã hóa | Không cần làm gì |
 | `encrypted` | 409 | `PATCH` đổi `name`/`url` dạng rõ trên mục mã hóa; `POST /links/:id/preview` trên mục mã hóa | Gửi `encMeta` |
-| `too_large` | 413 | Bản mã (`vault/in`, upload vào két) hoặc bản rõ (`vault/out/complete`) vượt giới hạn | — |
-| `bad_request` | 400 | JSON sai, thiếu trường, `etag` thiếu với file, `encMeta`/`encKey` quá dài | Sửa request |
+| `too_large` | 413 | Bản mã (`vault/in/complete`, upload vào két) hoặc bản rõ (`vault/out/complete`) vượt giới hạn | — |
+| `bad_request` | 400 | JSON sai, thiếu trường, `attempt` thiếu (mục chưa mã hóa) hoặc sai dạng, `encMeta`/`encKey` quá dài | Sửa request |
 | `bad_url` | 400 | Liên kết trong `vault/out/complete` có URL không hợp lệ | — |
 | (phẳng) | 403 | `authKey` sai: body `{ remaining, lockedUntil }` | Nhập lại PIN |
 | (phẳng) | 423 | Két đang khóa do sai nhiều: body `{ remaining, lockedUntil }` | Chờ `lockedUntil` |
 
-`vault_locked` không phải mã HTTP: đó là lỗi phía client khi két đang đóng trong app (desktop, web). Lỗi `no_etag` cũng phía client: R2 không trả header `ETag` cho trình duyệt (xem [mục 10](web.md#10-bản-web-pwa), CORS `ExposeHeaders: ETag`).
+`vault_locked` không phải mã HTTP: đó là lỗi phía client khi két đang đóng trong app (desktop, web). Các lỗi `bad_item`, `unreadable`, `bad_response`, `network`, `upload_failed` cũng phía client, không có trong bảng này.
+
+*Cron và object mã hóa:* cron xóa object rác dưới `vault/` (lần cất bỏ dở hoặc thua) sau 1 giờ; một complete đến sau mốc đó có thể không còn object để `head()`. Chi tiết và rủi ro: [mục 6](lifecycle.md#6-vòng-đời-file-thùng-rác-và-dọn-dẹp), [mục 7.7](security.md#77-giới-hạn-bảo-mật-còn-lại).

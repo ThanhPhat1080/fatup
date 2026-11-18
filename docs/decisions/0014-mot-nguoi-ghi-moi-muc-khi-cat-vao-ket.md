@@ -1,8 +1,8 @@
 # 0014. Một người ghi mỗi mục khi cất vào két: giữ chỗ 2 giờ, không nhả sớm
 
-- Trạng thái: Đã chốt
+- Trạng thái: Bị thay bởi [0015](0015-mot-object-rieng-moi-lan-ma-hoa.md) (giữ chỗ và ETag bị bỏ; mỗi lần cất dùng một object riêng)
 - Ngày: 2026-11-17
-- Nguồn: design spec `docs/superpowers/specs/2026-11-17-vault-e2ee-design.md` (mục 4.7b C1, 4.7c N1/N3/N5/N7); sổ SDD `.superpowers/sdd/2026-11-17-vault-e2ee/progress.md` (Review lần 2 và 3, F1, F4a, F5); commit `c17ea99`, `e3a9a4e`, `7ed2df2`, `2afb891`
+- Nguồn: design spec `docs/superpowers/specs/2026-11-17-vault-e2ee-design.md` (mục 4.7b C1, 4.7c N1/N3/N5/N7; 4.7c đã bị thay bởi 4.7d); sổ SDD `.superpowers/sdd/2026-11-17-vault-e2ee/progress.md` (Review lần 2 và 3, F1, F4a, F5); commit `c17ea99`, `e3a9a4e`, `7ed2df2`, `2afb891`
 - Phạm vi: worker, desktop, web
 
 ## Bối cảnh

@@ -35,20 +35,25 @@ Các mục liên quan đến két sắt mã hóa (từ bản 0.5.0):
 - **Endpoint két kiểu cũ `PUT /files/:id/vault` còn giữ lại tạm thời.** Khi két chưa thiết lập, nó chạy như cũ để app bản cũ không hỏng; sau đó nó luôn trả `426 app_outdated`. Khi mọi máy đã lên bản có mã hóa thì xóa hẳn endpoint này (và nhánh xử lý `GET /files?vault=1` cho app cũ).
 - **Chưa có "Tắt két sắt trên thiết bị này".** Máy bị soi HTTPS (ví dụ máy công ty có Zscaler) chỉ an toàn cho két nếu **không bao giờ mở két trên máy đó**, và hiện chỉ dựa vào việc người dùng tự nhớ. Hướng đã bàn: công tắc trong Cài đặt, lưu cục bộ (không đồng bộ), khi bật thì ẩn két và không gọi API két; bật lại cần PIN app (kiểm tra cục bộ, không qua server); trình thiết lập két hỏi "máy công ty/dùng chung?" để tắt sẵn.
 - **Chạy thử với Worker và R2 thật (Task 14 của plan) đã bỏ qua** theo quyết định của người dùng. Thay bằng bước kiểm sau deploy trong mục Nâng cấp của [CHANGELOG 0.5.0](../../CHANGELOG.md). Việc này nên làm khi có thời gian.
-- **Thiếu chuỗi lỗi cho một số mã mới.** Không có chuỗi `en`/`vi` riêng cho `item_busy`, `size_mismatch`, `not_uploaded`, `already_encrypted`, `not_encrypted`, `forbidden`, `bad_item`; các mã này rơi về thông báo chung ([mục 4.3](api.md#43-két-sắt-mã-hóa)).
-- **Bản web và desktop khác nhau khi két chưa thiết lập.** Desktop đưa file vào két như cũ (chưa mã hóa); web báo `vault_locked`. Cần chọn một hành vi ([mục 5.2](lifecycle.md#52-két-sắt-secret-vault), [mục 10.3](web.md#103-két-sắt-trên-web)).
-- **N2, thumbnail không kiểm ETag.** Ảnh xem trước của mục két không được kiểm bằng ETag như file. Nếu hai máy cùng cất (đã có claim chặn), thumbnail có thể không giải mã được; file vẫn đúng.
+- **Thiếu chuỗi lỗi cho một số mã mới.** Không có chuỗi `en`/`vi` riêng cho `size_mismatch`, `not_uploaded`, `already_encrypted`, `not_encrypted`, `forbidden`, `bad_item`; các mã này rơi về thông báo chung. Chúng chỉ hiện dưới dạng số mục thất bại, nên ít khi tới người dùng ([mục 4.3](api.md#43-két-sắt-mã-hóa)).
 - **N6, hai `prepareSetup` chồng nhau.** Hai lần chuẩn bị thiết lập song song có thể lệch thứ tự. Giao diện đã chặn việc này, chưa chặn ở lớp session.
 - **N8, D1 local phải reset.** `0009` đã bị sửa tại chỗ trước khi merge, nên D1 local đã migrate trước đó phải reset (xóa `worker/.wrangler/state`). Bản triển khai thật không bị ảnh hưởng vì chưa áp dụng ở đâu.
 - **N10, màn khởi đầu lặp `vault_exists`.** Nếu `POST /vault/setup` đã thành công nhưng phản hồi bị mất, lần thử lại nhận `vault_exists` và màn khởi đầu hiện lại thông báo đó. Két đã có trên server; phiên chưa mở, cần mở bằng PIN.
 - **M1, khe cron 03:00 UTC.** Giữa lúc cron nhả `out_started_at` và lúc xóa object, một lần lấy ra hợp lệ hoàn tất trong vài giây có thể bị cron xóa bản rõ. Xem [mục 7.7](security.md#77-giới-hạn-bảo-mật-còn-lại).
-- **M2, thông điệp `item_busy` khi claim hết hạn.** `vault/in/complete` trả `item_busy` cả khi giữ chỗ của chính máy này đã hết hạn (máy hoàn tất quá 2 giờ); thông điệp hiện là "máy khác đang chuyển", không đúng.
 - **M3, thumbnail hết hạn sau 1 giờ.** Thumbnail trong danh sách là presigned URL của lần liệt kê, sống 1 giờ. Danh sách mở lâu hơn thì ảnh không tải tới khi làm mới.
 - **M6 / FUV2, AAD chưa gắn với id.** Gắn `enc_meta` và `DEK` với id mục (định dạng FUV2) để người ghi được cả D1 lẫn R2 không hoán đổi được hai mục ([mục 7.7](security.md#77-giới-hạn-bảo-mật-còn-lại)).
 - **Số vòng KDF tối thiểu phía server.** Server không kiểm `kdfIterations`; chỉ kiểm là số nguyên dương. Đề xuất: từ chối dưới 100 000 vòng.
 - **Checksum của recovery key chưa bắt được đổi chỗ 2 ký tự cách nhau 16 giá trị.** Checksum là tổng có trọng số lẻ mod 32, bắt được mọi lỗi một ký tự nhưng không bắt được hoán đổi kiểu này ([mục 7.4](security.md#74-recovery-key)).
-- **Key object mỗi claim.** Ghi `vault/<id>.<claim>` thay vì ghi đè một key sẽ loại hẳn rủi ro PUT chậm vượt claim ([mục 7.7](security.md#77-giới-hạn-bảo-mật-còn-lại)).
 - **Đóng két ngay sau cất từ danh sách chính** có thể cắt việc mã hóa nền; lần mở két sau tự chạy tiếp.
 - **Chưa có ảnh chụp dòng "Đang tạo két sắt…"** trong bộ ảnh e2e.
-- **E2E `vault` đôi khi timeout ở bước `.vault-key`** khi chạy cạnh việc khác. Chập chờn, chưa điều tra.
+- **E2E `vault` chập chờn.** Đôi khi timeout ở bước `.vault-key` khi chạy cạnh việc khác, và một lần treo ở máy của agent. Chưa điều tra.
+- **N3, mục nhấp nháy ở trang chính.** Một lần làm mới bắt đầu trước `vault/in` mà trả về sau khi mục đã được ẩn có thể làm mục hiện lại một lúc. Cần bộ đếm thế hệ cho làm mới ([mục 9.11](desktop-ui.md#911-két-sắt-mã-hóa)).
+- **N4, cất và chuyển đổi chạy đôi.** `migrateLegacy` và `moveInAndClose` có thể cùng chạy trên một mục ngay sau khi thiết lập. Kết quả đúng nhưng tốn công. `leaveVault()` có thể cắt một lượt chuyển đổi đang chạy; lần mở két sau làm lại.
+- **N5, thiếu test cho cron.** Chưa có test chứng minh cron để yên các key `vault/` sai dạng (không khớp `VAULT_KEY`) ([mục 6](lifecycle.md#6-vòng-đời-file-thùng-rác-và-dọn-dẹp)).
+- **Complete muộn đụng cron.** Một `vault/in/complete` đến sau hơn 1 giờ kể từ lúc PUT, đúng lúc cron xóa object đó, có thể làm mục mất cả bản rõ lẫn bản mã ([mục 7.7](security.md#77-giới-hạn-bảo-mật-còn-lại)). Hướng sửa, chưa chọn: cron kiểm lại hàng ngay trước khi xóa, hoặc `vault/in/complete` kiểm lại object sau UPDATE và không xóa bản rõ nếu object đã mất.
+- **Đổi tên lúc đang chuyển.** `PATCH` đổi tên một mục đang ở trạng thái đám mây, trong lúc chuyển đổi chạy, có thể bị `encMeta` cũ của lần cất ghi đè tên mới. Chưa kiểm chứng.
+- **`r2-cors.json` còn `exposeHeaders: etag`.** Không còn cần cho két; vô hại. Bỏ khi cập nhật file đó lần sau.
+- **Ảnh thu nhỏ mất sau khi mã hóa (trong mock e2e).** Trong dữ liệu mock, ảnh thu nhỏ của mục sau khi mã hóa thành 476 B (icon chung). Chưa biết do mock hay do chuyển đổi; cần kiểm trên R2 thật.
+- **Icon trạng thái chưa kiểm bằng mắt ở chế độ tối.**
+- **Cột "Tải lên" trong danh sách trên điện thoại bị xuống dòng.**
 - **E2E `share` đôi khi hỏng ở bước `tooltip shows on hover`** (`desktop/e2e/areas/share.mjs`): bước rê chuột rồi chờ cố định 600 ms trước khi đọc độ mờ của tooltip. Quan sát 1 lần hỏng trong 4 lần chạy lại (3 lần pass), cả khi chạy toàn bộ lẫn khi chạy riêng. Chưa kiểm trên `main`, nên chưa biết lỗi có từ trước hay không. Nên chờ theo điều kiện (poll độ mờ) thay vì chờ cố định.
