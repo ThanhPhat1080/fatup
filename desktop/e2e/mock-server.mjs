@@ -81,6 +81,9 @@ export function startMockServer(realNow = Date.now()) {
     img: mime.startsWith('image/') ? imageIndex++ : -1,
   }));
 
+  // Images another app dropped into the bucket folder: `POST /import/sync` moves them into the list, like the Worker does.
+  const pendingImports = [['Screenshot d30.png', 'image/png', 520_000]];
+
   // A few saved links, returned only for `GET /files?kind=link`. Titles are in a mixed order so sorting by platform visibly moves them.
   const linkSeed = [
     ['Cách nấu phở ngon', 'https://www.youtube.com/watch?v=abc', 'youtube'],
@@ -135,8 +138,43 @@ export function startMockServer(realNow = Date.now()) {
       return send(200, `fake contents of ${f.name}`, 'text/plain');
     }
 
+    // Where a thumbnail made later is PUT (the real one is a presigned R2 URL).
+    if (req.method === 'PUT' && /^\/thumb-put\/\w+$/.test(url.pathname)) {
+      req.resume();
+      return req.on('end', () => send(200, '', 'text/plain'));
+    }
+
     if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(401, { error: { code: 'unauthorized', message: 'bad token' } });
     if (url.pathname === '/me') return send(200, { ok: true });
+    if (url.pathname === '/import/sync' && req.method === 'POST') {
+      const moved = pendingImports.splice(0).map(([name, mime, size]) => ({
+        id: `d30${files.length}`.padStart(26, '0'),
+        name,
+        mime,
+        size,
+        kind: 'image',
+        device: 'd30',
+        createdAt: Date.now(),
+        deletedAt: null,
+        inVault: false,
+        tags: [],
+        url: null,
+        site: null,
+        previewed: false,
+        hasThumb: false,
+        img: imageIndex++,
+      }));
+      files.unshift(...moved);
+      return send(200, { imported: moved.length, more: false });
+    }
+    if ((m = /^\/files\/(\w+)\/thumb(\/complete)?$/.exec(url.pathname)) && req.method === 'POST') {
+      const f = files.find((x) => x.id === m[1]);
+      if (!f) return send(404, { error: { code: 'not_found', message: 'nope' } });
+      if (!m[2]) return send(200, { thumbUploadUrl: `${base}/thumb-put/${f.id}` });
+      f.hasThumb = true;
+      const { img, ...item } = f;
+      return send(200, { ...item, shared: shares.has(f.id), thumbUrl: `${base}/thumb/${img}.svg` });
+    }
     if (url.pathname === '/files' && req.method === 'GET') {
       // Links are only returned when asked for.
       if (url.searchParams.get('kind') === 'link') return send(200, { items: links.map((l) => ({ ...l, thumbUrl: null })), nextCursor: null });

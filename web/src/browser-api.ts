@@ -291,6 +291,8 @@ export function installBrowserApi(): void {
 
     usage: () => guarded(() => client().usage()),
 
+    importSync: () => guarded(() => client().importSync()),
+
     restore: (id) =>
       guarded(async () => {
         await client().restore(id);

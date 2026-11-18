@@ -90,7 +90,9 @@ describe('uploads', () => {
     const { id } = (await res.json()) as CreateUploadResponse;
     await env.BUCKET.put(fileKey(id), 'x');
     const item = (await (await call(`/uploads/${id}/complete`, { method: 'POST' })).json()) as FileItem;
-    expect(item.thumbUrl).toBeNull();
+    // No thumbnail was uploaded: clients show the original, and the desktop app makes the thumbnail later.
+    expect(item.hasThumb).toBe(false);
+    expect(item.thumbUrl).toContain(`files/${id}`);
 
     const doc = await upload('../../etc/report.pdf', 'application/pdf');
     expect(doc.kind).toBe('file');

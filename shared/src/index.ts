@@ -5,6 +5,14 @@ export const TRASH_RETENTION_DAYS = 30;
 export const PENDING_TTL_HOURS = 24;
 export const DEFAULT_PAGE_SIZE = 100;
 export const MAX_PAGE_SIZE = 200;
+/** Clients ask the server to import images from the shared bucket folder at most this often (ms). */
+export const IMPORT_SYNC_MIN_GAP_MS = 30_000;
+
+/** Answer of `POST /import/sync`: images made ready by this call, and whether more are waiting for the next one. */
+export type ImportSyncResponse = { imported: number; more: boolean };
+
+/** Answer of `POST /files/:id/thumb`: where to PUT the JPEG thumbnail of an image that has none. */
+export type ThumbUploadResponse = { thumbUploadUrl: string };
 
 export type FileKind = 'image' | 'file' | 'text' | 'link';
 export type KindFilter = 'all' | 'image' | 'file' | 'link';
@@ -102,8 +110,10 @@ export type FileItem = {
   mime: string;
   size: number;
   kind: FileKind;
-  /** Presigned URL to a small JPEG preview, valid for about an hour. */
+  /** Presigned URL to a small JPEG preview, valid for about an hour. An image that has no preview yet shows its original here. */
   thumbUrl: string | null;
+  /** True when a real thumbnail exists (a `thumbUrl` of an image without one points at the original). Optional for older servers. */
+  hasThumb?: boolean;
   device: string | null;
   /** Epoch milliseconds at which the upload completed. */
   createdAt: number;

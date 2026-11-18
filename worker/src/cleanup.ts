@@ -20,6 +20,24 @@ export async function purge(env: Env, ids: string[]): Promise<void> {
 }
 
 /**
+ * Deletes abandoned uploads (rows still `pending`). The row goes first and only while it is still `pending`: an import may complete one of
+ * these rows at this very moment, and a row that became `ready` meanwhile must keep its row and its objects. Returns how many rows went.
+ */
+export async function purgePending(env: Env, ids: string[]): Promise<number> {
+  let removed = 0;
+  for (let i = 0; i < ids.length; i += BATCH) {
+    const chunk = ids.slice(i, i + BATCH);
+    const { results } = await env.DB.prepare(`DELETE FROM files WHERE status = 'pending' AND id IN (${chunk.map(() => '?').join(',')}) RETURNING id`)
+      .bind(...chunk)
+      .all<{ id: string }>();
+    if (results.length === 0) continue;
+    await env.BUCKET.delete(results.flatMap((r) => [fileKey(r.id), thumbKey(r.id)]));
+    removed += results.length;
+  }
+  return removed;
+}
+
+/**
  * Removes files that sat in the trash for 30 days and abandoned uploads.
  * A finished file outside the trash is never removed, however old it is: only the user's own
  * delete (which moves it to the trash) starts the 30-day clock.
@@ -34,19 +52,23 @@ export async function cleanup(env: Env, now = Date.now()): Promise<number> {
   await env.DB.prepare('DELETE FROM shares WHERE expires_at IS NOT NULL AND expires_at < ?').bind(now).run();
 
   for (;;) {
-    const { results } = await env.DB.prepare(
-      `SELECT id FROM files
-       WHERE (status = 'ready' AND deleted_at IS NOT NULL AND deleted_at < ?)
-          OR (status = 'pending' AND created_at < ?)
-       LIMIT ?`,
-    )
-      .bind(trashCutoff, pendingCutoff, BATCH)
+    const { results } = await env.DB.prepare(`SELECT id FROM files WHERE status = 'ready' AND deleted_at IS NOT NULL AND deleted_at < ? LIMIT ?`)
+      .bind(trashCutoff, BATCH)
       .all<{ id: string }>();
     if (results.length === 0) break;
 
     await purge(env, results.map((r) => r.id));
     total += results.length;
     if (results.length < BATCH) break;
+  }
+
+  for (;;) {
+    const { results } = await env.DB.prepare(`SELECT id FROM files WHERE status = 'pending' AND created_at < ? LIMIT ?`).bind(pendingCutoff, BATCH).all<{ id: string }>();
+    if (results.length === 0) break;
+
+    const removed = await purgePending(env, results.map((r) => r.id));
+    total += removed;
+    if (results.length < BATCH || removed === 0) break;
   }
   return total;
 }

@@ -4,6 +4,7 @@ import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shar
 import { DEFAULT_QUOTA_BYTES, isShareable, type TagColor } from '@fatup/shared';
 import { DEFAULT_SORT, groupByDay, groupByDomain, inTab, matchesLink, matchesQuery, matchesSite, matchesTags, singleGroup, siteCounts, sortItems, type SiteFilter, type SortKey, type SortState } from '../lib/format';
 import { errorText, useI18n } from '../lib/i18n';
+import { shouldSyncImport } from '../lib/import-sync';
 import { AddLinkDialog } from './AddLinkDialog';
 import { ConfirmDialog } from './Dialog';
 import { EmptyState, FileGrid, FileList } from './Files';
@@ -89,6 +90,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   }, [usage, items, trashItems, vaultItems]);
   const lastPicked = useRef<string | null>(null);
   const lastRefresh = useRef(0);
+  const lastImportSync = useRef(0);
+  const refreshRef = useRef<() => Promise<void>>(async () => {});
   const searchRef = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -117,7 +120,16 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     } else {
       setError(errorText(t, res.error));
     }
+    // Ask the server to bring in images other apps dropped into its bucket folder. The list is read again only when some arrived
+    // (that second refresh is inside the minimum gap, so it does not ask again); a failure is ignored and retried at the next refresh.
+    if (shouldSyncImport(Date.now(), lastImportSync.current)) {
+      lastImportSync.current = Date.now();
+      void window.fatup.importSync().then((r) => {
+        if (r.ok && r.value.imported > 0) void refreshRef.current();
+      });
+    }
   }, [onLocked, t, vaultActive]);
+  refreshRef.current = refresh;
 
   useEffect(() => {
     refresh();

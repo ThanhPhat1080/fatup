@@ -8,4 +8,6 @@ export type Env = {
   R2_BUCKET_NAME: string;
   /** Optional override of the storage limit shown to clients, in GB. Defaults to the R2 free tier (10 GB). */
   R2_QUOTA_GB?: string;
+  /** Bucket folder whose images are moved into Fatup (for example "d30/"). Empty or unset turns the import off. */
+  IMPORT_PREFIX?: string;
 };

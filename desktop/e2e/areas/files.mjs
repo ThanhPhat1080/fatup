@@ -19,6 +19,10 @@ export async function run(h) {
   assert.equal(new Set(pencilXs).size, 1, `pencils line up on file rows (${pencilXs})`);
   assert.equal(await page.locator('.list__name .rename-btn').count(), 0, 'no pencil inside the name cell');
 
+  // The first refresh asked the server to import the bucket folder; the image it brought shows up without any click.
+  h.log('image imported from the bucket folder');
+  await page.getByText('Screenshot d30.png', { exact: true }).first().waitFor();
+
   h.log('tabs');
   await kind(page, 'File').click();
   assert.equal(await page.getByText('IMG_20261112_0832.jpg', { exact: true }).count(), 0, 'images hidden in File tab');

@@ -185,7 +185,7 @@ export class UploadManager {
   }
 }
 
-async function putThumb(url: string, bytes: Buffer, fetchImpl: typeof fetch = fetch): Promise<void> {
+export async function putThumb(url: string, bytes: Buffer, fetchImpl: typeof fetch = fetch): Promise<void> {
   const res = await fetchImpl(url, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: new Uint8Array(bytes) });
   if (!res.ok) throw new ApiError('upload_failed', `HTTP ${res.status}`, res.status);
 }

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, Menu, nativeImage, nativeTheme, protocol, safeStorage, session, shell, type NativeImage } from 'electron';
 import { hostname } from 'node:os';
 import { createWriteStream, existsSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -16,7 +16,8 @@ import { uniqueFileName } from './filename';
 import { checkPin, hashPin, isValidPin } from './pin';
 import { PreviewCache, fetchPicture } from '../preview-cache';
 import { FilePreviewStore, PREVIEW_SCHEME } from './previews';
-import { UploadManager } from './uploader';
+import { UploadManager, putThumb } from './uploader';
+import { createThumbBackfill } from './thumb-backfill';
 import { fetchLatestRelease, isNewer, type ReleaseInfo } from './updater';
 
 if (process.env.FATUP_USER_DATA) app.setPath('userData', process.env.FATUP_USER_DATA);
@@ -41,14 +42,25 @@ let previews: PreviewCache;
 
 const THUMB_EDGE = 400;
 /** 400px JPEG preview, same as the Android app. Returns null for formats Electron can't decode. */
+function shrinkToThumbnail(image: NativeImage): Buffer | null {
+  if (image.isEmpty()) return null;
+  const { width, height } = image.getSize();
+  const scale = Math.min(1, THUMB_EDGE / Math.max(width, height));
+  const small = scale < 1 ? image.resize({ width: Math.round(width * scale), height: Math.round(height * scale), quality: 'good' }) : image;
+  return small.toJPEG(80);
+}
+
 function makeThumbnail(path: string): Buffer | null {
   try {
-    const image = nativeImage.createFromPath(path);
-    if (image.isEmpty()) return null;
-    const { width, height } = image.getSize();
-    const scale = Math.min(1, THUMB_EDGE / Math.max(width, height));
-    const small = scale < 1 ? image.resize({ width: Math.round(width * scale), height: Math.round(height * scale), quality: 'good' }) : image;
-    return small.toJPEG(80);
+    return shrinkToThumbnail(nativeImage.createFromPath(path));
+  } catch {
+    return null;
+  }
+}
+
+function makeThumbnailFromBytes(bytes: Uint8Array): Buffer | null {
+  try {
+    return shrinkToThumbnail(nativeImage.createFromBuffer(Buffer.from(bytes)));
   } catch {
     return null;
   }
@@ -62,6 +74,14 @@ const uploads = new UploadManager({
   device: DEVICE_NAME,
   thumbnail: makeThumbnail,
   onChange: (jobs) => mainWindow?.webContents.send('uploads', jobs),
+});
+
+// Images that arrived without a thumbnail (imported from the bucket folder) get theirs made here, in the background; the list picks it up on its next refresh.
+const thumbBackfill = createThumbBackfill({
+  client: () => client(),
+  fetchBytes,
+  thumbnail: makeThumbnailFromBytes,
+  putThumb: (url, bytes) => putThumb(url, bytes),
 });
 
 /**
@@ -258,7 +278,9 @@ function registerIpc() {
       itemCache.clear();
       for (const it of items) itemCache.set(it.id, it);
       const downloaded = new Set(config.snapshot.downloaded);
-      return previews.decorate(items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) })));
+      const listed = await previews.decorate(items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) })));
+      thumbBackfill.run(listed);
+      return listed;
     }),
   );
 
@@ -351,6 +373,11 @@ function registerIpc() {
   ipcMain.handle(
     'usage',
     guarded(async () => client().usage()),
+  );
+
+  ipcMain.handle(
+    'importSync',
+    guarded(async () => client().importSync()),
   );
 
   ipcMain.handle(

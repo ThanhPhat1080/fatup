@@ -1,5 +1,5 @@
 /** Contract between the preload bridge and the renderer. */
-import type { FileItem, FrameCheck, ShareExpiryDays, ShareInfo, TagColor, UsageResponse } from '@fatup/shared';
+import type { FileItem, FrameCheck, ImportSyncResponse, ShareExpiryDays, ShareInfo, TagColor, UsageResponse } from '@fatup/shared';
 
 export type Lang = 'auto' | 'en' | 'vi';
 export type Theme = 'system' | 'light' | 'dark';
@@ -79,6 +79,8 @@ export type FatupApi = {
   list(): Promise<Result<Item[]>>;
   listTrash(): Promise<Result<Item[]>>;
   usage(): Promise<Result<Usage>>;
+  /** Asks the server to move images other apps dropped into its bucket folder into Fatup. `imported` is how many became ready; refresh the list when it is above 0. */
+  importSync(): Promise<Result<ImportSyncResponse>>;
   /** Re-checks the PIN and opens the Vault for this session. Shares the PIN attempt limit with the lock screen. */
   vaultOpen(pin: string): Promise<UnlockResult>;
   vaultClose(): Promise<void>;
