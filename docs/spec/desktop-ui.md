@@ -129,7 +129,7 @@ Hai màn hình nhập PIN vẽ hoàn toàn bằng **SVG + CSS** (không có file
 Giao diện của két là một bộ React dùng chung cho desktop và PWA ([mục 10](web.md#10-bản-web-pwa)). Logic nằm ở `lib/vault.ts` (hàm thuần, có test) và ở `VaultSession`. Mô hình mã hóa: [mục 7.1](security.md#71-két-sắt-mã-hóa-phía-client-e2ee).
 
 - **Thiết lập (lần đầu)**, `VaultSetup.tsx`, toàn màn hình, ba bước:
-  1. Nhập PIN két 6 số hai lần. PIN sai định dạng, quá dễ, hoặc trùng 4 số đầu/cuối của PIN app thì báo ngay.
+  1. Nhập PIN két 6 số hai lần. PIN sai định dạng, quá dễ, hoặc trùng 4 số đầu/cuối của PIN app thì báo ngay. Sáu ô PIN nằm giữa thẻ tối của màn hình (căn giữa trong `.vault-card`).
   2. Hiện **recovery key** một lần, nhóm theo nhóm 4 ký tự, có nút **Sao chép** (chữ đọc được trên thẻ tối), kèm cảnh báo "Hãy cất key này ở nơi an toàn".
   3. Gõ lại **2 nhóm ngẫu nhiên** để xác nhận. Sai thì báo và giữ nguyên màn hình.
 
@@ -140,7 +140,7 @@ Giao diện của két là một bộ React dùng chung cho desktop và PWA ([m�
   - Két đã bị xóa bí mật: báo "Nhập sai quá nhiều lần nên két đã bị đặt lại…" và chuyển sang màn khôi phục.
   - Đúng: hiệu ứng nổ ("Fire in the hole", [9.10](#910-màn-hình-khóa-có-hoạt-họa)) rồi két mở.
   - "← Quay lại" thoát màn Két sắt: bỏ quyền xem nhưng giữ khóa 6 giờ ([9.11](#911-két-sắt-mã-hóa), mục 5.2 của [lifecycle](lifecycle.md#52-két-sắt-secret-vault)). Không có chuyển hướng sang màn khác khi cất file.
-- **Khôi phục**, `VaultRecover.tsx`: nhập recovery key, rồi PIN mới hai lần (kiểm tra như thiết lập). Recovery key sai: "Recovery key không đúng…". Thành công thì két mở để xem. Không file nào được mã hóa lại.
+- **Khôi phục**, `VaultRecover.tsx`: nhập recovery key, rồi PIN mới hai lần (kiểm tra như thiết lập; sáu ô PIN căn giữa thẻ như ở thiết lập). Recovery key sai: "Recovery key không đúng…". Thành công thì két mở để xem. Không file nào được mã hóa lại.
 - **Đổi PIN két**, `VaultPinChange.tsx`, trong Cài đặt (khi két đã được thiết lập): nhập PIN hiện tại, hoặc chọn "Dùng recovery key thay thế"; rồi nhập PIN mới hai lần. **Không cần mở két:** làm được khi app đang mở khóa, kể cả khi két đang đóng. Lỗi được báo theo bước (PIN cũ, PIN mới, két đóng). Thành công: "Đã đổi PIN két sắt". Không file nào được mã hóa lại.
 - **Chế độ két:** khi đang xem két, khung app có class `vault-mode`: viền trên thanh trên cùng 3 px **vàng đồng**, nền panel ngả vàng rất nhẹ, và nhãn "🔒 Két sắt · đã mã hóa" trên thanh. Có bản tối. Thoát màn Két sắt thì chế độ này tắt (khóa vẫn được giữ).
 - **Thùng rác của két**, `VaultTrash.tsx` và `VaultTrashIcon.tsx`: nút icon chỉ hiện khi két đang mở, cạnh nút đóng két. Mở bằng nút này **không đóng két**.
@@ -155,6 +155,12 @@ Giao diện của két là một bộ React dùng chung cho desktop và PWA ([m�
   - Mục vừa cất biến mất khỏi danh sách chính ngay khi bắt đầu, và bị ẩn tạm tới khi việc cất kết thúc. Lỗi đã biết: một lần làm mới bắt đầu trước đó có thể làm mục nhấp nháy trên trang chính ([Nợ kỹ thuật](roadmap.md#nợ-kỹ-thuật)).
   - Toast hiện tiến trình "Đang chuyển N / M…". Lỗi một file không dừng các file còn lại. Khi có file không cất được, toast nói rõ: file đã vào két sẽ hiện đám mây mờ và được mã hóa lại tự động; file còn ở danh sách chính thì thử cất lại sau. File lỗi không tự thử lại trong lượt đó. Lần mở két sau thì cất lại với lần thử mới.
   - Lấy ra chỉ làm được khi đang xem két (sau PIN ở màn Két sắt). Mục không đọc được, hoặc đang ở trạng thái đám mây (chưa mã hóa xong), không có "Đưa ra khỏi Két sắt".
+  - **Lấy ra đổi giao diện ngay** (plan `2026-11-18-vault-lay-ra-optimistic`, [ADR 0017](../decisions/0017-lay-ra-khoi-ket-doi-giao-dien-ngay.md)): bấm "Đưa ra khỏi Két sắt" thì các mục đã chọn rời danh sách két ngay và hiện ở danh sách chính như **bản giả** (`inVault: false`, tên đã giải mã giữ nguyên, ảnh thu nhỏ bỏ đi nên hiện icon loại file, hoặc logo trang với liên kết). Bản giả nằm đầu danh sách chính và không có trong danh sách két.
+    - Khi lượt lấy ra thành công, làm mới thay bản giả bằng mục thật (có ảnh thu nhỏ của chính nó). Toast "Đã đưa N file ra khỏi Két sắt" hiện khi lượt xong.
+    - Khi lấy ra thất bại (mục nằm trong `failed`, hoặc cả lượt bị từ chối): bản giả bị bỏ khỏi danh sách chính và mục quay lại danh sách két, kèm toast lỗi. Việc đưa lại bằng tay chỉ làm khi két đang mở và đang xem; nếu không, làm mới kế tiếp nạp lại từ server. Lỗi `locked` và `vault_locked` không đưa lại bằng tay (két đã đóng).
+    - Trong lúc lượt đang chạy, một làm mới đến sớm (poll, focus, nút làm mới) không làm mục nhảy ngược: danh sách két không hiện các id đang lấy ra, danh sách chính giữ bản giả. Mỗi lần làm mới có số thế hệ; câu trả lời của một lần làm mới đã bị lần mới hơn thay thế thì bị bỏ, để câu trả lời cũ không ghi đè trạng thái mới.
+    - Hàm thuần trong `lib/vault.ts`: `leavingGhost`, `withoutIds`, `mergeGhosts`, `restoreAfterFailedMoveOut` (có unit test).
+  - Popup cất vào két (`VaultPinDialog`) giữ ô PIN căn trái có chủ ý, khác với thẻ thiết lập và khôi phục (căn giữa).
 - **Mục trong két:** tên, loại, và URL/tiêu đề liên kết được giải mã trên máy; tìm kiếm và sắp xếp theo tên chạy trên máy.
   - Trạng thái mã hóa là một biểu tượng cạnh tên: **đám mây mờ** (tooltip "Chưa mã hóa xong") khi mục đã vào két mà chưa mã hóa xong; **dấu tick xanh** (tooltip "Đã mã hóa") khi đã mã hóa. Mục không đọc được không có biểu tượng này.
   - Trên điện thoại, biểu tượng nằm ở góc ảnh thu nhỏ, để tên có chỗ.

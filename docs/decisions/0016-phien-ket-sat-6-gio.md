@@ -42,6 +42,7 @@ c. **`serve` và `plainBytes` đang tải dở khi `vaultLeave` chạy** vẫn c
 d. **`changePin` được phép khi app đã mở khóa,** kể cả khi két đang đóng hoặc chỉ đang giữ khóa. Ai biết PIN cũ thì đổi được PIN.
 e. `lock`, `reset`, hết hạn và `vaultClose` tường minh vẫn xóa mọi thứ: khóa, danh sách, địa chỉ, quyền xem.
 f. **`listVault` thử lại mục đám mây mờ** (chưa mã hóa xong) mỗi lần danh sách két được tải. Việc này chỉ cần khóa để chạy, nhưng danh sách chỉ tải khi có quyền xem, nên không mở thêm quyền nào.
+g. **Bản giả của mục đang lấy ra** (ADR 0017) giữ tên đã giải mã trong danh sách chính cho tới khi lượt lấy ra kết thúc, kể cả khi rời màn Két sắt giữa chừng. Đây là ngoại lệ duy nhất của việc rời két xóa danh sách đã giải mã; khóa app vẫn xóa hết.
 
 **Điều agent KHÔNG được làm vì quyết định này:**
 

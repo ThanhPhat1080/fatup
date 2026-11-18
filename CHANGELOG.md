@@ -30,6 +30,8 @@ Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy
 - **Hai máy cùng cất một file** không còn chặn nhau hay báo lỗi "đang được chuyển ở máy khác". Mỗi lần cất được làm riêng; cất dở thì lần mở két sau làm lại.
 - **Giao diện điện thoại:** thanh trên gồm hai hàng (logo và các nút; ô tìm kiếm và dung lượng). Biểu tượng trạng thái két nằm ở góc ảnh thu nhỏ để tên không bị chật. Cổng PIN két có tấm gỗ rộng hơn cho đủ 6 ô.
 - **Android chưa thấy và chưa mở được két.** File trong két không hiện trên Android. Đây là nợ kỹ thuật, xem [roadmap](docs/spec/roadmap.md).
+- **Lấy ra khỏi Két sắt đổi giao diện ngay.** File rời danh sách két và hiện ở danh sách chính ngay khi bấm, không chờ server. Nếu lấy ra thất bại, file quay về két kèm thông báo lỗi.
+- **Sáu ô PIN** ở màn thiết lập và khôi phục két nằm giữa thẻ.
 
 ### Nâng cấp
 Thứ tự: **migrate trước, deploy sau**. Có một migration mới, `0009_vault_e2ee.sql`: thêm cột vào `files` và tạo bảng `vault_keys`. Migration không đổi dữ liệu cũ.

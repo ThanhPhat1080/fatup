@@ -61,6 +61,17 @@ Các mục liên quan đến két sắt mã hóa (từ bản 0.5.0):
 - **Cột "Tải lên" trong danh sách trên điện thoại bị xuống dòng.**
 - **E2E `share` đôi khi hỏng ở bước `tooltip shows on hover`** (`desktop/e2e/areas/share.mjs`): bước rê chuột rồi chờ cố định 600 ms trước khi đọc độ mờ của tooltip. Quan sát 1 lần hỏng trong 4 lần chạy lại (3 lần pass), cả khi chạy toàn bộ lẫn khi chạy riêng. Chưa kiểm trên `main`, nên chưa biết lỗi có từ trước hay không. Nên chờ theo điều kiện (poll độ mờ) thay vì chờ cố định.
 
+Lấy ra khỏi két, đổi giao diện ngay (chi tiết và các ngoại lệ: [ADR 0017](../decisions/0017-lay-ra-khoi-ket-doi-giao-dien-ngay.md)):
+
+- **Bản giả bấm được trong lúc lấy ra.** Vài giây của lượt, bản giả trong danh sách chính vẫn mở, đổi tên, xóa và cất vào két được, và trả lỗi khó hiểu vì server còn ghi mục là trong két. Cần chặn các thao tác này trên bản giả đang lấy ra.
+- **Tên đã giải mã của bản giả nằm trong danh sách chính suốt lượt, kể cả sau khi rời màn Két sắt.** Đây là chủ ý, không phải lỗi: không ghi xuống đâu, và khóa app đóng màn chính nên mất ngay ([ADR 0017](../decisions/0017-lay-ra-khoi-ket-doi-giao-dien-ngay.md) mục b). Ghi ở đây để không bị coi là rò rỉ.
+- **Lỗi chung khi cả lượt bị từ chối.** Khi lượt lấy ra bị từ chối trước khi xử lý từng file, người dùng chỉ thấy thông báo lỗi chung, không thấy "Không đưa ra được N file khỏi Két sắt" (`movedOutOfVaultFailed`). `moveBetween` trả mã lỗi nhưng `removeFromVault` không dùng để đếm số file.
+- **Khôi phục sau lỗi dùng sắp xếp mặc định.** `restoreAfterFailedMoveOut` đưa mục về theo `DEFAULT_SORT`, không theo sắp xếp mà người dùng đã chọn cho danh sách két.
+- **`enteringVault` có cùng race làm mới đến muộn.** Lấy ra đã sửa bằng bộ đếm thế hệ cho làm mới và giữ các id đã xong tới làm mới cuối cùng. Cất vào két chưa có cách sửa tương tự, nên một làm mới bắt đầu trước khi cất xong có thể làm mục hiện lại (xem thêm mục N3).
+- **Chưa có test tự động cho hai chỗ vừa sửa.** Không có test cho việc bỏ ảnh thu nhỏ của bản giả (`thumbUrl` null, `failedSrc` trong `Files.tsx`), cũng không có test cho thứ tự làm mới cũ và mới (bộ đếm thế hệ trong `Main.tsx`).
+- **Seed e2e không có ảnh có ảnh thu nhỏ để lấy ra.** Nhánh bản giả hiện icon thay cho ảnh thu nhỏ chưa được e2e phủ bằng một ảnh thật có thumbnail.
+- **E2E căn giữa ô PIN chỉ đo chiều rộng desktop.** Bước kiểm trong vùng `vault` chỉ đo ở màn rộng. Popup `VaultPinDialog` giữ ô PIN căn trái có chủ ý ([9.11](desktop-ui.md#911-két-sắt-mã-hóa)).
+
 Nhập ảnh từ `d30/` (thiết kế: [2026-11-18-nhap-anh-tu-thu-muc-bucket-design.md](../superpowers/specs/2026-11-18-nhap-anh-tu-thu-muc-bucket-design.md), chưa cài đặt):
 
 - **Hai máy làm mới cùng lúc, cùng nhập một ảnh.** Id của dòng được tính từ object nguồn (key + etag) nên `INSERT OR IGNORE` chặn dòng trùng, nhưng chưa có test với hai request song song thật trên D1/R2 thật, và các bước copy/xóa bản gốc của hai máy có thể chồng nhau (copy hai lần cùng một đích, xóa bản gốc hai lần). Người dùng cho phép để lại ở đây. Nếu thấy một ảnh ở bucket thành hai dòng ở Fatup thì đây là chỗ nghi đầu tiên.
