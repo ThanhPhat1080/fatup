@@ -7,13 +7,11 @@ import type { Item, Result, VaultSetupCommitResult, VaultUnlockResult } from './
 import type { VaultChangePinResult, VaultRecoverResult, VaultSession, VaultSetupResult } from './vault-session';
 import { ApiError, type ApiClient } from './main/api';
 
-/** The scheme the desktop renderer loads decrypted Vault pictures and files through: fatup-vault://thumb/<id>, fatup-vault://file/<id>. */
+/** The scheme the desktop renderer loads decrypted Vault pictures and files through: fatup-vault://file/<id>. */
 export const VAULT_SCHEME = 'fatup-vault';
 
-/** How decrypted pictures and files are handed to the page. Everything it makes must be dropped by `closeAll`. */
+/** How decrypted files are handed to the page. Everything it makes must be dropped by `closeAll`. */
 export type VaultViews = {
-  /** The address of an item's thumbnail: `current` is what the session shows (null = the item has none), `load` fetches and decrypts the picture. */
-  thumbnail(id: string, current: string | null, load: () => Promise<Uint8Array>): Promise<string | null>;
   /** The address the page opens a file from; `load` fetches and decrypts it. */
   preview(id: string, mime: string, load: () => Promise<Uint8Array>): Promise<string>;
   /** These items left the Vault (moved out): drop what was made for them. */
@@ -24,7 +22,6 @@ export type VaultViews = {
 
 /** The desktop strategy: the main process serves the bytes itself under `fatup-vault://`, so nothing is fetched until the page asks. */
 export const schemeViews: VaultViews = {
-  thumbnail: async (_id, current) => current,
   preview: async (id) => `${VAULT_SCHEME}://file/${id}`,
   forget: () => undefined,
   closeAll: () => undefined,
@@ -57,9 +54,6 @@ export type VaultProtocolResponse = { status: number; body?: Uint8Array; type?: 
 /** What is remembered about an encrypted item seen by `listVault`: the raw row (for its file key and thumbnail address) and its real name and type. */
 type Entry = { raw: FileItem; name: string; mime: string };
 
-/** How many thumbnails are fetched and decrypted at once while listing. */
-const THUMB_CONCURRENCY = 6;
-
 /** The `code` of an error (ApiError, VaultLockedError, VaultCryptoError…), or `unknown`. */
 const codeOf = (err: unknown): string => {
   const code = (err as { code?: unknown } | null)?.code;
@@ -71,20 +65,6 @@ const failure = (err: unknown): { ok: false; error: string; detail?: string } =>
   error: codeOf(err),
   detail: err instanceof ApiError ? err.message : undefined,
 });
-
-/** Runs `fn` over `items` with at most `limit` in flight, keeping the order of the results. */
-async function pool<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
-}
 
 export function createVaultCore(deps: VaultCoreDeps) {
   const { session } = deps;
@@ -153,33 +133,25 @@ export function createVaultCore(deps: VaultCoreDeps) {
   }
 
   /**
-   * Decrypts the encrypted rows and gives their thumbnails the host's kind of address; remembers the rows once everything is done.
-   * Throws `vault_locked` (and remembers nothing) when the Vault was closed while a step was awaited: the close already cleared what
-   * it knew, so a row kept after it would outlive the key it was read with.
+   * Decrypts the encrypted rows; remembers them once everything is done. The Vault shows NO thumbnail for any item (a picture can be
+   * sensitive, and nothing is fetched or decrypted until the user opens it), so every item's `thumbUrl` is null, a not yet encrypted
+   * one included.
+   * Throws `vault_locked` (and remembers nothing) when the Vault was closed while the rows were being decrypted: the close already
+   * cleared what it knew, so a row kept after it would outlive the key it was read with.
    */
   async function present(rows: FileItem[]): Promise<Item[]> {
     const at = epoch;
-    const closed = () => new ApiError('vault_locked', 'The Vault is locked');
     const shown = await session.decryptList(rows);
-    if (at !== epoch) throw closed();
+    if (at !== epoch) throw new ApiError('vault_locked', 'The Vault is locked');
     const byId = new Map(rows.map((r) => [r.id, r]));
-    const staged = new Map<string, Entry>();
-    const items = await pool(shown, THUMB_CONCURRENCY, async (it): Promise<Item> => {
+    const items: Item[] = [];
+    for (const it of shown) {
       const row = byId.get(it.id);
-      if (!row?.encrypted || !row.encMeta || !row.encKey) return { ...it, downloaded: isDownloaded(it.id) };
-      const entry: Entry = { raw: row, name: it.name, mime: it.mime };
-      staged.set(it.id, entry);
-      let thumbUrl: string | null = null;
-      if (it.thumbUrl && row.thumbUrl) {
-        const source = row.thumbUrl;
-        thumbUrl = await views.thumbnail(it.id, it.thumbUrl, () => fetchPlain(entry, source)).catch(() => null);
-      }
-      return { ...it, thumbUrl, downloaded: isDownloaded(it.id) };
-    });
-    if (at !== epoch) throw closed();
-    for (const [id, entry] of staged) {
-      entries.set(id, entry);
-      known.add(id);
+      const item: Item = { ...it, thumbUrl: null, downloaded: isDownloaded(it.id) };
+      items.push(item);
+      if (!row?.encrypted || !row.encMeta || !row.encKey) continue;
+      entries.set(it.id, { raw: row, name: it.name, mime: it.mime });
+      known.add(it.id);
     }
     return items;
   }
@@ -402,17 +374,18 @@ export function createVaultCore(deps: VaultCoreDeps) {
       }
     },
 
-    /** The decrypted bytes of an item's file or thumbnail, for a host that serves them itself (`fatup-vault://`). 404 unless the app is unlocked and the Vault open. */
+    /** The decrypted bytes of an item's file (never a thumbnail: the Vault has none), for a host that serves them itself (`fatup-vault://`). 404 unless the app is unlocked and the Vault open. */
     async serve(id: string, kind: 'file' | 'thumb'): Promise<VaultProtocolResponse> {
       const notFound: VaultProtocolResponse = { status: 404 };
-      if (!deps.isUnlocked() || !viewable()) return notFound;
+      // There is no thumbnail to serve: the Vault never shows one.
+      if (kind === 'thumb' || !deps.isUnlocked() || !viewable()) return notFound;
       const entry = entries.get(id);
       if (!entry) return notFound;
-      const source = kind === 'thumb' ? entry.raw.thumbUrl : await deps.client().downloadUrl(id).catch(() => null);
+      const source = await deps.client().downloadUrl(id).catch(() => null);
       if (!source) return notFound;
       try {
         const body = await fetchPlain(entry, source);
-        return { status: 200, body, type: kind === 'thumb' ? 'image/jpeg' : entry.mime };
+        return { status: 200, body, type: entry.mime };
       } catch {
         return { status: 500 };
       }

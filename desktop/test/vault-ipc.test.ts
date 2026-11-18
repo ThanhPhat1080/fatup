@@ -467,8 +467,8 @@ describe('listVault', () => {
       ['I1', 'Hợp đồng.pdf', 'application/pdf', 'file'],
       ['I2', 'photo.jpg', 'image/jpeg', 'image'],
     ]);
-    expect(items[0].thumbUrl).toBeNull();
-    expect(items[1].thumbUrl).toBe('fatup-vault://thumb/I2');
+    // The Vault never shows thumbnails (they can be sensitive): not even an item that has one gets an address.
+    expect(items.map((i) => i.thumbUrl)).toEqual([null, null]);
   });
 
   it('asks for the Vault trash with trash: true', async () => {
@@ -508,7 +508,7 @@ describe('listVault', () => {
     const w = await world();
     w.raw.push(storedItem({ id: 'OLD', name: 'old.txt', mime: 'text/plain', encrypted: false, thumbUrl: 'https://r2.test/thumbs/OLD.jpg' }));
     const res = await w.handlers.listVault({});
-    expect(res).toMatchObject({ ok: true, value: [{ id: 'OLD', name: 'old.txt', mime: 'text/plain', thumbUrl: 'https://r2.test/thumbs/OLD.jpg', downloaded: false }] });
+    expect(res).toMatchObject({ ok: true, value: [{ id: 'OLD', name: 'old.txt', mime: 'text/plain', thumbUrl: null, downloaded: false }] });
     expect(w.handlers.owns('OLD')).toBe(false);
   });
 
@@ -651,24 +651,22 @@ describe('the fatup-vault:// scheme', () => {
     expect(dec(res.body!)).toBe('the real pdf');
   });
 
-  it('serves a thumbnail decrypted, as image/jpeg whatever the file type is', async () => {
+  it('serves no thumbnail at all: fatup-vault://thumb/<id> is 404 and nothing is fetched, even for an item that has one', async () => {
     const w = await world();
     await w.addItem('I2', { name: 'clip.png', mime: 'image/png', kind: 'image' }, enc('png bytes'), { thumb: enc('jpeg thumb') });
     await w.handlers.listVault({});
     const res = await w.handlers.vaultProtocol('fatup-vault://thumb/I2');
-    expect(res.status).toBe(200);
-    expect(res.type).toBe('image/jpeg');
-    expect(dec(res.body!)).toBe('jpeg thumb');
-    expect(String(w.fetchImpl.mock.calls[0]![0])).toBe('https://r2.test/vault/I2.thumb');
+    expect(res.status).toBe(404);
+    expect(res.body === undefined || res.body.length === 0).toBe(true);
+    expect(w.fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('serves the address that listVault gave for a thumbnail', async () => {
+  it('listing never fetches a thumbnail: the only request is the list itself', async () => {
     const w = await world();
     await w.addItem('I2', PHOTO, enc('jpg'), { thumb: enc('jpeg thumb') });
-    const listed = await w.handlers.listVault({});
-    const thumbUrl = listed.ok ? listed.value[0].thumbUrl : null;
-    expect(thumbUrl).toBe('fatup-vault://thumb/I2');
-    expect(dec((await w.handlers.vaultProtocol(thumbUrl!)).body!)).toBe('jpeg thumb');
+    await w.addItem('I3', PHOTO, enc('jpg2'), { thumb: enc('jpeg thumb 2') });
+    await w.handlers.listVault({});
+    expect(w.fetchImpl).not.toHaveBeenCalled();
   });
 
   it('never writes anything to disk', async () => {
@@ -1021,41 +1019,6 @@ describe('listVault while the Vault is closed in the middle of it (review M4)', 
     const res = await pending;
     expect(res).toMatchObject({ ok: false, error: 'vault_locked' });
     await gone(w, ['I1', 'I2']);
-  });
-
-  it('answers vault_locked and keeps nothing when vaultClose runs while a thumbnail is being fetched (the web strategy)', async () => {
-    const w = await world();
-    await w.addItem('I2', PHOTO, enc('b'), { thumb: enc('t') });
-    const gate = latch();
-    const reached = latch();
-    const core = createVaultCore({
-      session: w.session,
-      client: () => w.client,
-      isUnlocked: () => true,
-      saveDownload: async () => 'x',
-      fetchImpl: w.fetchImpl as unknown as typeof fetch,
-      views: {
-        thumbnail: async (_id, current, load) => {
-          reached.open();
-          await gate.wait;
-          await load().catch(() => undefined);
-          return current;
-        },
-        preview: async (id) => `blob:${id}`,
-        forget: () => undefined,
-        closeAll: () => undefined,
-      },
-    });
-    await core.vaultUnlock(PIN, 'view'); // this core is a different one than w.handlers: it needs its own view right
-    const pending = core.listVault({});
-    await reached.wait;
-    core.vaultClose();
-    gate.open();
-    expect(await pending).toMatchObject({ ok: false, error: 'vault_locked' });
-    expect(core.owns('I2')).toBe(false);
-    expect(core.rawItem('I2')).toBeUndefined();
-    expect(await core.serve('I2', 'file')).toMatchObject({ status: 404 });
-    expect(await core.serve('I2', 'thumb')).toMatchObject({ status: 404 });
   });
 
   it('lists normally again after the Vault is reopened, and claims the items of the new listing', async () => {

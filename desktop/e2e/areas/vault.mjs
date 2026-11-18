@@ -123,8 +123,11 @@ export async function run(h) {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
   }, picture);
   await page.locator('.upload-btn').click();
-  await vaultRow().locator('img.list__mini[src^="fatup-vault://thumb/"]').waitFor({ timeout: 30_000 });
+  await vaultRow().locator('[data-vault-state="encrypted"]').waitFor({ timeout: 30_000 });
   assert.equal(await vaultRow().count(), 1, 'the picture is listed once, in the Vault');
+  // The Vault shows no thumbnail, not even for a picture that has one: the row has the file icon and no <img> from fatup-vault://.
+  assert.equal(await page.locator('img[src^="fatup-vault://"]').count(), 0, 'the Vault list loads no thumbnail');
+  assert.equal(await vaultRow().locator('img').count(), 0, 'the picture row shows an icon, not a picture');
   await h.shot(page, '13b-vault-list');
 
   h.log('vault: delete, Undo toast');
