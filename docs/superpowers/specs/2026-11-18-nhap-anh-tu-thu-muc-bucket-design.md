@@ -64,12 +64,12 @@ Id của dòng là một ULID **tính ra từ chính object nguồn**: phần th
 
 1. Tính id. Nếu đã có dòng `ready`: bản gốc là phần sót của lần nhập trước, chỉ **xóa bản gốc** rồi xong.
 2. `INSERT OR IGNORE` dòng `pending` (`device = 'd30'`, `created_at = now`, `has_thumb = 0`). Nếu đã có dòng `pending` thì làm tiếp từ bước 3 (lần trước bị ngắt).
-3. **Copy trong R2** `d30/...` sang `files/<id>` (S3 `CopyObject`, dữ liệu không đi qua Worker, đúng ADR 0002). Nguồn đã biến mất (máy khác nhập xong trước) thì bỏ qua.
+3. **Copy trong R2** `d30/...` sang `files/<id>` (S3 `CopyObject`, dữ liệu không đi qua Worker, đúng ADR 0002), **chỉ phiên bản đã liệt kê** (`x-amz-copy-source-if-match` = etag). Nguồn đã biến mất (máy khác nhập xong trước) thì bỏ qua. Nguồn đã bị ghi đè (`412`) thì bỏ dòng `pending` của id cũ; bản mới được nhập ở lần sau dưới id riêng.
 4. Kiểm `files/<id>` có kích thước đúng.
 5. `UPDATE ... SET status = 'ready', created_at = <uploaded của object>` `WHERE id = ? AND status = 'pending'`. Dùng giờ upload của object để ảnh nằm đúng chỗ theo thời gian.
-6. **Xóa bản gốc** (chỉ sau bước 5).
+6. **Xóa bản gốc** (chỉ sau bước 5, và chỉ khi etag đọc lại còn khớp). Xóa thất bại không làm mất số ảnh đã nhập: lần quét sau thấy dòng `ready` và chỉ xóa bản gốc.
 
-Bị ngắt ở bất kỳ bước nào: bản gốc còn nguyên, lần quét sau làm tiếp, không tạo dòng mới, không mất ảnh. Dòng `pending` kẹt quá 24 giờ bị cron hiện có xóa (cùng `files/<id>` thừa); bản gốc vẫn còn nên lần quét sau nhập lại sạch sẽ.
+Bị ngắt ở bất kỳ bước nào: bản gốc còn nguyên, lần quét sau làm tiếp, không tạo dòng mới, không mất ảnh. Dòng `pending` kẹt quá 24 giờ bị cron hiện có xóa (cùng `files/<id>` thừa) — cron xóa **dòng trước, chỉ khi còn `pending`**, rồi mới xóa object, và lần nhập thấy dòng đã mất thì tự xóa bản copy của mình và để bản gốc; bản gốc vẫn còn nên lần quét sau nhập lại sạch sẽ.
 
 ### 4.5 Thumbnail (desktop)
 
@@ -92,6 +92,10 @@ Không có migration. Cron hiện có không đổi. Chỉ có một cách xóa:
 7. **"Hiện ảnh gốc" làm ở server:** với ảnh thường (không mã hóa) chưa có thumbnail, `thumbUrl` của `FileItem` là presigned GET của `files/<id>`; `FileItem` thêm `hasThumb: boolean` để desktop biết mục nào cần thumbnail bù. Hệ quả: mọi ảnh thường chưa có thumbnail (không riêng ảnh nhập) đều được hiện bằng ảnh gốc và được desktop làm thumbnail bù. Ảnh gốc không giải mã được trong `<img>` (HEIC) vẫn rơi về biểu tượng file.
 8. **Trước khi xóa bản gốc, đọc lại etag** (`HEAD`) và chỉ xóa nếu còn trùng: app kia ghi đè cùng tên giữa lúc copy và lúc xóa thì bản mới được giữ lại và nhập ở lần sau.
 9. **Prefix bị từ chối:** rỗng, `/`, `files/`, `thumbs/`, `vault/` (tránh nhập chính object của Fatup); thiếu `/` cuối thì thêm vào để `d30` không khớp `d300/`.
+10. **Copy có điều kiện etag** (bổ sung sau review): không có điều kiện này, ảnh bị ghi đè cùng kích thước ngay trước lúc copy sẽ làm id cũ giữ nội dung mới và ảnh mới bị nhập lần nữa thành dòng thứ hai.
+11. **Cron xóa dòng `pending` trước, có điều kiện `status = 'pending'`** (`purgePending`), rồi mới xóa object của những dòng thật sự đã xóa: tránh việc cron và một lần nhập vừa hoàn tất cùng một dòng làm mất ảnh. Cặp khóa cố định `vault/<id>` cũng bị xóa (upload thẳng vào két cũng là dòng `pending`).
+12. **Một ảnh lỗi thì dừng lượt và trả tiến độ** `{ imported, more: true }` thay vì ném lỗi, để client vẫn tải lại danh sách khi đã có ảnh được nhập. Lô giảm xuống **10** ảnh vì mỗi ảnh tốn 4 lời gọi S3 và Worker gói miễn phí chỉ được 50 subrequest.
+13. **URL ảnh gốc ổn định theo giờ** (ký từ đầu giờ, sống 2 giờ) để danh sách làm mới mỗi phút không làm trình duyệt tải lại ảnh gốc (thumbnail thật vẫn dùng URL một giờ như trước).
 
 ## 6. Việc để người xây dựng quyết định / kiểm tra
 
