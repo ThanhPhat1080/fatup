@@ -120,3 +120,41 @@ describe('Vault mode and Vault trash rules', () => {
     expect(header, 'a .vault-trash rule with border-left: 4px solid var(--danger)').toBeDefined();
   });
 });
+
+describe('Vault PIN popup', () => {
+  it('centres the row of PIN cells (the dialog text is left aligned, the cells must not hug the left edge)', () => {
+    const cells = RULES.find((r) => r.media === '' && r.selectors.includes('.vault-pin .pin__cells'));
+    expect(cells, 'top-level .vault-pin .pin__cells rule').toBeDefined();
+    expect(cells!.body).toMatch(/justify-content:\s*center/);
+  });
+});
+
+describe('Vault gate on a phone is a still picture', () => {
+  // The same query as PHONE_QUERY in lib/media.ts: a narrow window, or a touch screen turned on its side.
+  const onPhone = (selector: string) =>
+    RULES.find((r) => r.media.includes('(max-width: 720px)') && r.media.includes('(max-height: 520px) and (pointer: coarse)') && r.selectors.includes(selector));
+
+  it('removes the fire, ash, embers, sparks and meteors under the gate (display: none, so nothing animates or paints)', () => {
+    const sky = onPhone('.vaultscreen .lockbg > *');
+    expect(sky, '.vaultscreen .lockbg > * inside @media (max-width: 720px)').toBeDefined();
+    expect(sky!.body).toMatch(/display:\s*none/);
+  });
+
+  it('turns the orange glow at the bottom of the sky into a plain dark sky', () => {
+    const sky = onPhone('.vaultscreen .lockbg');
+    expect(sky, '.vaultscreen .lockbg inside @media (max-width: 720px)').toBeDefined();
+    expect(sky!.body).toMatch(/background:/);
+    expect(sky!.body).not.toMatch(/rgba\(255,\s*106,\s*26/);
+    expect(sky!.body).not.toMatch(/#3a1913/);
+  });
+
+  it('stops every animation of the wizard scene and hides the firelight washed over the bridge and the wizard', () => {
+    const still = onPhone('.vaultscreen .lockheist *');
+    expect(still, '.vaultscreen .lockheist * inside @media (max-width: 720px)').toBeDefined();
+    expect(still!.body).toMatch(/animation:\s*none\s*!important/);
+    const light = onPhone('.vaultscreen .lockheist__firelight');
+    expect(light, 'firelight rule on a phone').toBeDefined();
+    expect(light!.body).toMatch(/display:\s*none/);
+    expect(light!.selectors).toContain('.vaultscreen .wizard__firelit');
+  });
+});

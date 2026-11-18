@@ -4,12 +4,11 @@ import { BOMB_LANDS_S, LockWizard } from './LockWizard';
 import { ArrowLeft } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
 import { gateMessage, vaultText, VAULT_PIN_LENGTH, type GateMessage } from '../lib/vault';
+import { stillGate } from '../lib/motion';
 import { PinInput } from './PinInput';
 
 const BOOM_MS = Math.round((BOMB_LANDS_S + 0.95) * 1000);
 const LEAVE_MS = 3400; // long enough to read what the wizard says
-
-const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
 /**
  * Shown every time the Vault is opened: the PIN has to be entered again. `hint` says why it is asked (moving files in from the list).
@@ -30,7 +29,7 @@ export function VaultGate({ onUnlocked, onBack, onRecover, hint }: { onUnlocked:
   function goBack() {
     if (leaving || boom) return;
     setLeaving(true);
-    boomTimer.current = setTimeout(onBack, prefersReducedMotion() ? 0 : LEAVE_MS);
+    boomTimer.current = setTimeout(onBack, stillGate() ? 0 : LEAVE_MS);
   }
 
   useEffect(() => {
@@ -52,7 +51,7 @@ export function VaultGate({ onUnlocked, onBack, onRecover, hint }: { onUnlocked:
     }
     if (res.ok) {
       // The right PIN blows the safe open; the Vault shows once the blast is over.
-      if (prefersReducedMotion()) return onUnlocked();
+      if (stillGate()) return onUnlocked();
       setBoom(true);
       boomTimer.current = setTimeout(onUnlocked, BOOM_MS);
       return;
