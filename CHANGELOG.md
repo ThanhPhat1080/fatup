@@ -4,6 +4,15 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [0.5.2] — 2026-11-18
+
+### Sửa
+- **Cổng Két sắt trên điện thoại không còn giật.** Trên điện thoại (cửa sổ hẹp ≤ 720 px, hoặc màn cảm ứng nằm ngang) cổng là **bức tranh tĩnh**: không lửa ở đáy, tro, tia lửa, sao băng hay ánh lửa trên cầu, ông phù thủy đứng yên. PIN đúng mở két ngay (không còn bom), nút Quay lại thoát ngay. Máy tính để bàn giữ nguyên cảnh hoạt họa.
+- **Hàng sáu ô PIN trong popup "Mở Két sắt" được căn giữa** (trước đây lệch trái so với hộp thoại).
+
+### Nâng cấp
+Không có migration, không đổi server. Chỉ cần phát hành app máy tính mới và deploy lại PWA (mở lại PWA hai lần để service worker nhận bản mới).
+
 ## [0.5.1] — 2026-11-18
 
 ### Thêm
