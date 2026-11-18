@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { FatupApi, UpdateProgress, UploadJob, WebPreviewState } from '../shared-ipc';
+import type { FatupApi, UpdateProgress, UploadJob, VaultProgress, WebPreviewState } from '../shared-ipc';
 
 const api: FatupApi = {
   getState: () => ipcRenderer.invoke('state'),
@@ -14,10 +14,22 @@ const api: FatupApi = {
   list: () => ipcRenderer.invoke('list'),
   listTrash: () => ipcRenderer.invoke('listTrash'),
   usage: () => ipcRenderer.invoke('usage'),
-  vaultOpen: (pin) => ipcRenderer.invoke('vaultOpen', pin),
-  vaultClose: () => ipcRenderer.invoke('vaultClose'),
-  listVault: () => ipcRenderer.invoke('listVault'),
-  setVault: (id, inVault) => ipcRenderer.invoke('setVault', id, inVault),
+  vaultStatus: () => ipcRenderer.invoke('vaultStatus'),
+  vaultSetup: (pin) => ipcRenderer.invoke('vaultSetup', pin),
+  vaultSetupPrepare: (pin) => ipcRenderer.invoke('vaultSetupPrepare', pin),
+  vaultSetupCommit: () => ipcRenderer.invoke('vaultSetupCommit'),
+  vaultUnlock: (pin, purpose) => ipcRenderer.invoke('vaultUnlock', pin, purpose),
+  vaultRecover: (recoveryKey, newPin) => ipcRenderer.invoke('vaultRecover', recoveryKey, newPin),
+  vaultChangePin: (oldPin, newPin) => ipcRenderer.invoke('vaultChangePin', oldPin, newPin),
+  vaultLeave: () => ipcRenderer.invoke('vaultLeave'),
+  listVault: (opts) => ipcRenderer.invoke('listVault', opts),
+  vaultMoveIn: (ids) => ipcRenderer.invoke('vaultMoveIn', ids),
+  vaultMoveOut: (ids) => ipcRenderer.invoke('vaultMoveOut', ids),
+  onVaultProgress: (cb) => {
+    const handler = (_e: Electron.IpcRendererEvent, p: VaultProgress) => cb(p);
+    ipcRenderer.on('vaultProgress', handler);
+    return () => ipcRenderer.removeListener('vaultProgress', handler);
+  },
   updateFile: (id, patch) => ipcRenderer.invoke('updateFile', id, patch),
   getShare: (id) => ipcRenderer.invoke('getShare', id),
   setShare: (id, days) => ipcRenderer.invoke('setShare', id, days),

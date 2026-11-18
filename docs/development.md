@@ -49,7 +49,7 @@ npm run docs:check          # cảnh báo khi code đổi mà tài liệu không
 **E2E desktop** (Playwright điều khiển app đã build, dùng API giả):
 
 ```bash
-npm run e2e                     # mọi vùng: setup, files, share, links, settings
+npm run e2e                     # mọi vùng: setup, files, share, links, settings, vault
 npm run e2e -- links share      # chỉ các vùng này (hoặc E2E_ONLY=links,share)
 npm run -w @fatup/desktop e2e:lock   # màn hình khóa trên khung điện thoại
 ```
@@ -65,6 +65,8 @@ cd android && ./gradlew testDebugUnitTest assembleDebug
 ## Deploy server từ máy dev
 
 Từ thư mục gốc: `npm run release:worker` (migrate D1 trên server rồi deploy Worker kèm bản web). Hoặc từng bước: `npm run db:migrate`, rồi `npm run deploy:worker`.
+
+CORS của bucket R2 (bản web tải file thẳng lên R2): trong `worker/`, `npm run r2:cors` áp dụng `worker/r2-cors.json`. Chạy lại mỗi khi file đó đổi. Các bước nâng cấp của từng bản nằm ở [CHANGELOG.md](../CHANGELOG.md).
 
 ## Build app máy tính
 

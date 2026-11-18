@@ -1,7 +1,7 @@
-// E2E area "share": Public share links: dialog, shared icon and tooltip, popover, Shared filter, grid, revocation on trash; Trash and Vault titles.
+// E2E area "share": Public share links: dialog, shared icon and tooltip, popover, Shared filter, grid, revocation on trash; Trash title. (The Vault's title is checked in the vault area: it needs a set-up Vault.)
 // Run alone: npm run e2e -- share   (see ../smoke.mjs)
 import assert from 'node:assert/strict';
-import { kind, showAll, typePin } from '../harness.mjs';
+import { kind, showAll } from '../harness.mjs';
 
 /** @param {Awaited<ReturnType<typeof import('../harness.mjs').createHarness>>} h */
 export async function run(h) {
@@ -104,16 +104,6 @@ export async function run(h) {
     await page.locator('.view-title', { hasText: 'Thùng rác' }).waitFor();
     assert.equal(await page.locator('.kind-tabs [aria-pressed="true"]').count(), 0, 'no kind is toggled in the trash');
     await h.shot(page, '02h-trash-title');
-    await page.getByRole('button', { name: 'Quay lại danh sách file' }).first().click();
-    assert.equal((await page.locator('.view-title').textContent())?.trim(), 'Tất cả');
-
-    // The Vault too: it opens on everything, and its name sits above the table.
-    await kind(page, 'Ảnh').click();
-    await page.getByRole('button', { name: 'Két sắt', exact: true }).first().click();
-    await typePin(page, '1234');
-    await page.locator('.view-title', { hasText: 'Két sắt' }).waitFor();
-    assert.equal(await page.locator('.kind-tabs [aria-pressed="true"]').count(), 0, 'no kind is toggled in the Vault');
-    await h.shot(page, '02i-vault-title');
     await page.getByRole('button', { name: 'Quay lại danh sách file' }).first().click();
     assert.equal((await page.locator('.view-title').textContent())?.trim(), 'Tất cả');
   }

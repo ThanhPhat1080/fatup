@@ -3,20 +3,28 @@ import { stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { Readable } from 'node:stream';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
-import { MAX_FILE_SIZE, type CreateUploadRequest, type CreateUploadResponse } from '@fatup/shared';
+import { MAX_FILE_SIZE, encryptBytes, encryptStream, vaultCiphertextSize, type CreateUploadRequest, type CreateUploadResponse, type FileKind } from '@fatup/shared';
 import type { UploadJob } from '../shared-ipc';
+import type { VaultSession } from '../vault-session';
+
+/** The file-key type, as the shared crypto functions declare it. */
+type FileKey = Parameters<typeof encryptStream>[0];
 import { ApiError } from './api';
 import { mimeFromName } from './mime';
 
-/** PUTs a file to a presigned URL, streaming from disk and reporting bytes sent. */
+/**
+ * PUTs a file to a presigned URL, streaming from disk and reporting bytes sent.
+ * With `dek` the bytes are encrypted on the way (FUV1, streamed): `size` stays the plain size, the body and Content-Length are
+ * `vaultCiphertextSize(size)`, and progress counts plain bytes read.
+ */
 export async function putFile(
   url: string,
   path: string,
   size: number,
   mime: string,
-  opts: { signal?: AbortSignal; onProgress?: (sent: number) => void; fetchImpl?: typeof fetch } = {},
+  opts: { signal?: AbortSignal; onProgress?: (sent: number) => void; fetchImpl?: typeof fetch; dek?: FileKey } = {},
 ): Promise<void> {
-  const { signal, onProgress, fetchImpl = fetch } = opts;
+  const { signal, onProgress, fetchImpl = fetch, dek } = opts;
   let sent = 0;
   const counter = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
@@ -25,12 +33,17 @@ export async function putFile(
       controller.enqueue(chunk);
     },
   });
-  const body = size === 0 ? new Uint8Array() : (Readable.toWeb(createReadStream(path)) as WebReadableStream<Uint8Array>).pipeThrough(counter);
+  let body: Uint8Array | ReadableStream<Uint8Array>;
+  if (size === 0) body = dek ? await encryptBytes(new Uint8Array(), dek) : new Uint8Array();
+  else {
+    const plain = (Readable.toWeb(createReadStream(path)) as WebReadableStream<Uint8Array>).pipeThrough(counter);
+    body = dek ? plain.pipeThrough(encryptStream(dek)) : plain;
+  }
   let res: Response;
   try {
     res = await fetchImpl(url, {
       method: 'PUT',
-      headers: { 'Content-Type': mime, 'Content-Length': String(size) },
+      headers: { 'Content-Type': mime, 'Content-Length': String(dek ? vaultCiphertextSize(size) : size) },
       body,
       // Node's fetch needs this to send a stream.
       duplex: 'half',
@@ -47,12 +60,15 @@ export type UploadDeps = {
   client(): {
     createUpload(req: CreateUploadRequest): Promise<CreateUploadResponse>;
     complete(id: string): Promise<unknown>;
-    setVault(id: string, inVault: boolean): Promise<unknown>;
+    /** Legacy (plain) move into the Vault. No longer used by uploads: Vault uploads are encrypted and created inside the Vault. */
+    setVault?(id: string, inVault: boolean): Promise<unknown>;
   };
   device: string | null;
   /** JPEG preview bytes for an image, or null when it can't be decoded. */
   thumbnail(path: string): Buffer | null;
   onChange(jobs: UploadJob[]): void;
+  /** The open Vault session, for uploads into the Vault. Without it (or with the Vault closed) a Vault upload fails with `vault_locked`. */
+  vault?: Pick<VaultSession, 'isOpen' | 'encryptMetaFor'>;
   concurrency?: number;
   fetchImpl?: typeof fetch;
 };
@@ -73,7 +89,7 @@ export class UploadManager {
     return this.jobs.map(({ path: _p, abort: _a, vault: _v, ...job }) => ({ ...job }));
   }
 
-  /** `vault: true` files are moved into the Vault as soon as they finish uploading. */
+  /** `vault: true` files are encrypted on this machine and uploaded straight into the Vault. */
   add(paths: string[], vault = false): void {
     for (const path of paths) {
       this.jobs.push({
@@ -126,6 +142,8 @@ export class UploadManager {
 
   private async run(job: Internal): Promise<void> {
     try {
+      // Checked first: a closed Vault must not create, encrypt or upload anything.
+      if (job.vault && !this.deps.vault?.isOpen()) throw new ApiError('vault_locked', 'The Vault is locked');
       const info = await stat(job.path).catch(() => null);
       if (!info) throw new ApiError('not_found', 'File not found');
       if (!info.isFile()) throw new ApiError('not_a_file', 'Not a file');
@@ -134,14 +152,34 @@ export class UploadManager {
       this.emit(true);
 
       const mime = mimeFromName(job.name);
-      const thumb = mime.startsWith('image/') ? this.deps.thumbnail(job.path) : null;
+      let thumb = mime.startsWith('image/') ? this.deps.thumbnail(job.path) : null;
       const api = this.deps.client();
-      const ticket = await api.createUpload({ name: job.name, mime, size: info.size, hasThumb: thumb !== null, device: this.deps.device ?? undefined });
+
+      // Into the Vault: the real name and type travel only inside `encMeta`; the server sees an opaque object.
+      let dek: FileKey | undefined;
+      let ticket: CreateUploadResponse;
+      if (job.vault) {
+        const kind: FileKind = mime.startsWith('image/') ? 'image' : 'file';
+        const sealed = await this.deps.vault!.encryptMetaFor({ name: job.name, mime, kind });
+        dek = sealed.dek;
+        if (thumb) thumb = Buffer.from(await encryptBytes(thumb, dek));
+        ticket = await api.createUpload({
+          name: '',
+          mime: 'application/octet-stream',
+          size: vaultCiphertextSize(info.size),
+          hasThumb: thumb !== null,
+          device: this.deps.device ?? undefined,
+          vault: { encMeta: sealed.encMeta, encKey: sealed.encKey },
+        });
+      } else {
+        ticket = await api.createUpload({ name: job.name, mime, size: info.size, hasThumb: thumb !== null, device: this.deps.device ?? undefined });
+      }
       if (job.abort.signal.aborted) return;
 
-      await putFile(ticket.uploadUrl, job.path, info.size, mime, {
+      await putFile(ticket.uploadUrl, job.path, info.size, dek ? 'application/octet-stream' : mime, {
         signal: job.abort.signal,
         fetchImpl: this.deps.fetchImpl,
+        dek,
         onProgress: (sent) => {
           job.sent = sent;
           this.emit(false);
@@ -150,10 +188,9 @@ export class UploadManager {
       if (thumb && ticket.thumbUploadUrl) {
         // A missing preview is not worth failing the upload for.
         const url = ticket.thumbUploadUrl;
-        await putThumb(url, thumb, this.deps.fetchImpl).catch(() => undefined);
+        await putThumb(url, thumb, dek ? 'application/octet-stream' : 'image/jpeg', this.deps.fetchImpl).catch(() => undefined);
       }
       await api.complete(ticket.id);
-      if (job.vault) await api.setVault(ticket.id, true);
       job.sent = job.size;
       if (job.state === 'uploading') job.state = 'done';
     } catch (err) {
@@ -162,7 +199,8 @@ export class UploadManager {
         return;
       }
       job.state = 'error';
-      job.error = err instanceof ApiError ? err.code : 'upload_failed';
+      // `vault_locked` also comes from the session itself (VaultLockedError) when the Vault closes while the key is being made.
+      job.error = err instanceof ApiError || codeOf(err) === 'vault_locked' ? codeOf(err) : 'upload_failed';
     }
   }
 
@@ -185,7 +223,12 @@ export class UploadManager {
   }
 }
 
-async function putThumb(url: string, bytes: Buffer, fetchImpl: typeof fetch = fetch): Promise<void> {
-  const res = await fetchImpl(url, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: new Uint8Array(bytes) });
+const codeOf = (err: unknown): string | undefined => {
+  const code = (err as { code?: unknown } | null)?.code;
+  return typeof code === 'string' ? code : undefined;
+};
+
+async function putThumb(url: string, bytes: Buffer, contentType: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const res = await fetchImpl(url, { method: 'PUT', headers: { 'Content-Type': contentType }, body: new Uint8Array(bytes) });
   if (!res.ok) throw new ApiError('upload_failed', `HTTP ${res.status}`, res.status);
 }

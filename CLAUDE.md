@@ -58,11 +58,23 @@ Android là project Gradle riêng: `cd android && ./gradlew testDebugUnitTest`. 
 
 Phân tích yêu cầu **không** là agent: nó cần hỏi qua lại với người dùng, điều subagent không làm được.
 
+**Model cho agent (bắt buộc, người dùng chốt):**
+
+| Việc | Model |
+|---|---|
+| Phân tích yêu cầu, design spec, plan, quyết định "Ruling", agent `reviewer` | **Opus** |
+| Task nặng hoặc đụng logic dùng chung: `shared/`, lõi mã hóa/bảo mật, schema D1, hợp đồng API/IPC mà nhiều package phụ thuộc | **Sonnet** |
+| Task nhẹ hơn: giao diện, CSS, chuỗi i18n, mock/e2e, tài liệu (`doc-keeper`), `e2e-verifier` | **Haiku** |
+
+`test-writer` và agent cài đặt dùng model của task (plan ghi `Model:` ở mỗi task; khi gọi Agent thì truyền `model` tương ứng). Không chắc task thuộc loại nào thì chọn model cao hơn.
+
 ## Quy tắc dễ vi phạm
 
 - File không đi qua Worker (presigned URL của R2), **trừ** link chia sẻ công khai `/s/<token>`. Xem ADR 0002.
 - Đổi schema D1 = thêm một file đánh số mới trong `worker/migrations/`, không bao giờ sửa file cũ. Thứ tự nâng cấp luôn là **migrate rồi mới deploy**; ghi rõ trong `CHANGELOG.md` → "Nâng cấp".
-- PIN chỉ khóa giao diện, không bao giờ gửi lên server. Renderer của desktop không bao giờ thấy token API.
+- PIN app 4 số chỉ khóa giao diện, không bao giờ gửi lên server. Renderer của desktop không bao giờ thấy token API.
+- Két sắt: "giữ khóa" (6 giờ sau PIN đúng, để cất file) khác "quyền xem" (chỉ có khi nhập PIN ở màn Két sắt). Cất không hỏi PIN khi đang giữ khóa; xem luôn hỏi PIN. Xem ADR 0016.
+- Két sắt mã hóa (ADR 0013, 0015): PIN két 6 số chỉ đi lên dưới dạng `authKey` dẫn xuất; `MK`, `DEK`, `S`, PIN và bản rõ tên/URL của mục két không bao giờ lên server, không ra renderer, không ghi xuống đĩa hay bộ nhớ đệm. Đổi bộ đếm sai, hoặc cách đặt tên object của két (`attempt`, `enc_object`), thì đọc ADR trước.
 - Chuỗi hiển thị cho người dùng phải có cả `en` và `vi` trong `desktop/src/renderer/src/lib/i18n.ts`.
 - Chỉ commit hoặc push khi người dùng yêu cầu. Tạo nhánh từ `main` trước.
 

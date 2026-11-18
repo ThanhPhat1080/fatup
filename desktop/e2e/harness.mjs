@@ -39,12 +39,12 @@ export function appEnv(extra) {
  * Starts a mock server and temp folders for one area. Call `close()` when the area is done (pass or fail).
  * `log(step)` names the current step and arms a watchdog: a hung step kills the app and fails the run with that name.
  */
-export async function createHarness(area) {
+export async function createHarness(area, mockOptions = {}) {
   const shots = process.env.SCREENSHOT_DIR;
   if (shots) mkdirSync(shots, { recursive: true });
   const userData = mkdtempSync(join(tmpdir(), `fatup-e2e-${area}-data-`));
   const downloads = mkdtempSync(join(tmpdir(), `fatup-e2e-${area}-dl-`));
-  const { server, url } = await startMockServer();
+  const { server, url } = await startMockServer(undefined, mockOptions);
 
   let current;
   let currentProc; // kept separately: app.process() throws once the app is closed

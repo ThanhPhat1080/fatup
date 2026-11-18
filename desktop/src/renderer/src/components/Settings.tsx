@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import type { VaultState } from '@fatup/shared';
 import { Download, KeyRound, Languages, Moon, Sun, Loader2, Lock as LockIcon, LogOut, QrCode, RefreshCw, Server } from 'lucide-react';
 import type { AppState, Lang, Prefs } from '../../../shared-ipc';
 import { useI18n } from '../lib/i18n';
 import { isDark, useSystemDark } from '../lib/theme';
 import { ConfirmDialog, Dialog } from './Dialog';
 import { PinInput } from './PinInput';
+import { VaultPinChange } from './VaultPinChange';
 
 type Props = {
   state: AppState;
@@ -13,6 +15,8 @@ type Props = {
   onToast: (text: string, error?: boolean) => void;
   onLock: () => void;
   onSignOut: () => void;
+  /** Opens the Vault's recovery screen (used when the current Vault PIN is not at hand). */
+  onVaultRecover: () => void;
 };
 
 type UpdateUi =
@@ -26,7 +30,7 @@ type UpdateUi =
 
 type Panel = null | 'qr' | 'pin';
 
-export function Settings({ state, onClose, onPrefs, onToast, onLock, onSignOut }: Props) {
+export function Settings({ state, onClose, onPrefs, onToast, onLock, onSignOut, onVaultRecover }: Props) {
   const { t } = useI18n();
   const [panel, setPanel] = useState<Panel>(null);
   const [qr, setQr] = useState<string | null>(null);
@@ -38,6 +42,13 @@ export function Settings({ state, onClose, onPrefs, onToast, onLock, onSignOut }
   const dark = isDark(state.prefs.theme, systemDark);
   const [version, setVersion] = useState('');
   const [update, setUpdate] = useState<UpdateUi>({ s: 'idle' });
+  const [vaultState, setVaultState] = useState<VaultState | null>(null);
+
+  useEffect(() => {
+    void window.fatup.vaultStatus().then((res) => {
+      if (res.ok) setVaultState(res.value.state);
+    });
+  }, []);
 
   useEffect(() => {
     window.fatup.appVersion().then(setVersion);
@@ -214,6 +225,8 @@ export function Settings({ state, onClose, onPrefs, onToast, onLock, onSignOut }
             {pinError && <p className="error">{pinError}</p>}
           </div>
         )}
+
+        {vaultState !== null && vaultState !== 'none' && <VaultPinChange onRecover={onVaultRecover} onToast={onToast} />}
 
         <button className="settings__row settings__row--btn" onClick={onLock}>
           <LockIcon size={20} className="settings__icon" />

@@ -1,4 +1,4 @@
-import { MAX_FILE_SIZE, type CreateUploadRequest, type CreateUploadResponse } from '@fatup/shared';
+import { MAX_FILE_SIZE, encryptBytes, vaultCiphertextSize, type CreateUploadRequest, type CreateUploadResponse, type FileKind, type VaultMeta } from '@fatup/shared';
 import type { UploadJob } from '../../desktop/src/shared-ipc';
 import { ApiError } from '../../desktop/src/main/api';
 import { mimeFromName } from '../../desktop/src/main/mime';
@@ -59,7 +59,8 @@ export type WebUploadDeps = {
   client(): {
     createUpload(req: CreateUploadRequest): Promise<CreateUploadResponse>;
     complete(id: string): Promise<unknown>;
-    setVault(id: string, inVault: boolean): Promise<unknown>;
+    /** Never called: a Vault upload is encrypted and goes straight into the Vault (the plain move is refused by the Worker). Listed so tests can prove it. */
+    setVault?(id: string, inVault: boolean): Promise<unknown>;
   };
   device: string | null;
   onChange(jobs: UploadJob[]): void;
@@ -67,6 +68,14 @@ export type WebUploadDeps = {
   put?: typeof putBlob;
   thumbnail?: (file: File) => Promise<Blob | null>;
   mimeOf?: (file: File) => string;
+  /**
+   * The open Vault session, for uploads into the Vault (what `createWebVault().uploadEncryptor()` returns). Without it, or with the
+   * Vault closed, a Vault upload fails with `vault_locked` and nothing is created.
+   */
+  vault?: {
+    isOpen(): boolean;
+    encryptMetaFor(meta: VaultMeta): Promise<{ encMeta: string; encKey: string; dek: CryptoKey }>;
+  };
 };
 
 type Internal = UploadJob & { file: File; abort: AbortController; vault: boolean };
@@ -87,7 +96,7 @@ export class WebUploadManager {
     return this.jobs.map(({ file: _f, abort: _a, vault: _v, ...job }) => ({ ...job }));
   }
 
-  /** `vault: true` files are moved into the Vault as soon as they finish uploading. */
+  /** `vault: true` files are encrypted in this page (name, type, content and thumbnail) and uploaded straight into the Vault. */
   add(files: File[], vault = false): void {
     for (const file of files) {
       this.jobs.push({ id: String(this.nextId++), file, name: file.name, size: file.size, sent: 0, state: 'queued', abort: new AbortController(), vault });
@@ -131,8 +140,13 @@ export class WebUploadManager {
   private async run(job: Internal): Promise<void> {
     const put = this.deps.put ?? putBlob;
     try {
+      if (job.vault && !this.deps.vault?.isOpen()) throw new ApiError('vault_locked', 'The Vault is locked');
       if (job.file.size > MAX_FILE_SIZE) throw new ApiError('too_large', 'Too large');
       const mime = (this.deps.mimeOf ?? mimeFromFile)(job.file);
+      if (job.vault) {
+        await this.runVault(job, mime, put);
+        return;
+      }
       const thumb = mime.startsWith('image/') ? await (this.deps.thumbnail ?? makeThumbnail)(job.file) : null;
       const api = this.deps.client();
       const ticket = await api.createUpload({ name: job.name, mime, size: job.file.size, hasThumb: thumb !== null, device: this.deps.device ?? undefined });
@@ -150,7 +164,6 @@ export class WebUploadManager {
         await put(ticket.thumbUploadUrl, thumb, 'image/jpeg').catch(() => undefined);
       }
       await api.complete(ticket.id);
-      if (job.vault) await api.setVault(ticket.id, true);
       job.sent = job.size;
       if (job.state === 'uploading') job.state = 'done';
     } catch (err) {
@@ -159,8 +172,50 @@ export class WebUploadManager {
         return;
       }
       job.state = 'error';
-      job.error = err instanceof ApiError ? err.code : 'upload_failed';
+      // `vault_locked` also comes from the session itself (VaultLockedError) when the Vault closes while the key is being made.
+      const code = (err as { code?: unknown } | null)?.code;
+      job.error = err instanceof ApiError || code === 'vault_locked' ? String(code) : 'upload_failed';
     }
+  }
+
+  /**
+   * An upload into the encrypted Vault. The file and its thumbnail are encrypted here, in memory (files are at most MAX_FILE_SIZE), under
+   * one file key; the server gets a placeholder name and type, the ciphertext size and the sealed metadata, and never a plain byte.
+   */
+  private async runVault(job: Internal, mime: string, put: typeof putBlob): Promise<void> {
+    const kind: FileKind = mime.startsWith('image/') ? 'image' : 'file';
+    // Fails with vault_locked before any request when the Vault closes while the key is being made.
+    const sealed = await this.deps.vault!.encryptMetaFor({ name: job.name, mime, kind });
+    const thumb = kind === 'image' ? await (this.deps.thumbnail ?? makeThumbnail)(job.file) : null;
+    const body = await encryptBytes(new Uint8Array(await job.file.arrayBuffer()), sealed.dek);
+    const thumbBody = thumb ? await encryptBytes(new Uint8Array(await thumb.arrayBuffer()), sealed.dek) : null;
+    if (job.abort.signal.aborted) return;
+    const api = this.deps.client();
+    const ticket = await api.createUpload({
+      name: '',
+      mime: 'application/octet-stream',
+      size: vaultCiphertextSize(job.file.size),
+      hasThumb: thumbBody !== null,
+      device: this.deps.device ?? undefined,
+      vault: { encMeta: sealed.encMeta, encKey: sealed.encKey },
+    });
+    if (job.abort.signal.aborted) return;
+
+    await put(ticket.uploadUrl, new Blob([body as BlobPart]), 'application/octet-stream', {
+      signal: job.abort.signal,
+      // Progress counts ciphertext bytes sent; the job shows plain bytes.
+      onProgress: (sent) => {
+        job.sent = Math.min(job.size, sent);
+        this.emit(false);
+      },
+    });
+    if (thumbBody && ticket.thumbUploadUrl) {
+      // A missing preview is not worth failing the upload for.
+      await put(ticket.thumbUploadUrl, new Blob([thumbBody as BlobPart]), 'application/octet-stream').catch(() => undefined);
+    }
+    await api.complete(ticket.id);
+    job.sent = job.size;
+    if (job.state === 'uploading') job.state = 'done';
   }
 
   /** Progress updates are throttled; state changes go out immediately. */

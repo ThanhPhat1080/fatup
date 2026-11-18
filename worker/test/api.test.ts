@@ -270,14 +270,16 @@ describe('vault', () => {
     expect((await setVault(a.id, true)).status).toBe(404);
   });
 
-  it('takes a file out of the vault when it is deleted, so it shows up (and restores) in the normal trash', async () => {
+  it('keeps a deleted vault file in the vault trash (not the normal trash), and restores it into the vault', async () => {
     const a = await upload('secret.txt', 'text/plain');
     await setVault(a.id, true);
     await call(`/files/${a.id}`, { method: 'DELETE' });
     expect((await list('/files?vault=1'))).toEqual([]);
-    expect((await list('/files?trash=1')).map((i) => i.id)).toEqual([a.id]);
+    expect((await list('/files?trash=1'))).toEqual([]);
+    expect((await list('/files?vault=1&trash=1')).map((i) => i.id)).toEqual([a.id]);
     await call(`/files/${a.id}/restore`, { method: 'POST' });
-    expect((await list('/files')).map((i) => i.id)).toEqual([a.id]);
+    expect((await list('/files'))).toEqual([]);
+    expect((await list('/files?vault=1')).map((i) => i.id)).toEqual([a.id]);
   });
 });
 
@@ -448,7 +450,7 @@ describe('links', () => {
     expect(((await again.json()) as FileItem).id).not.toBe(a.id);
   });
 
-  it('keeps links out of kind=all but lists them with kind=link, in the vault and in the trash', async () => {
+  it('keeps links out of kind=all but lists them with kind=link, in the vault and in the vault trash', async () => {
     await upload('a.txt', 'text/plain');
     const link = await addLink('https://a.com');
     const all = (await (await call('/files')).json()) as ListFilesResponse;
@@ -459,8 +461,11 @@ describe('links', () => {
     expect(((await (await call('/files?kind=link')).json()) as ListFilesResponse).items).toHaveLength(0);
     expect(((await (await call('/files?vault=1&kind=link')).json()) as ListFilesResponse).items).toHaveLength(1);
     await call(`/files/${link.id}`, { method: 'DELETE' });
+    // A link deleted in the vault goes to the vault trash, not the normal one.
     const trash = (await (await call('/files?trash=1')).json()) as ListFilesResponse;
-    expect(trash.items.map((i) => i.id)).toEqual([link.id]);
+    expect(trash.items).toEqual([]);
+    const vaultTrash = (await (await call('/files?vault=1&trash=1')).json()) as ListFilesResponse;
+    expect(vaultTrash.items.map((i) => i.id)).toEqual([link.id]);
   });
 
   it('cannot be downloaded and does not count towards usage', async () => {
