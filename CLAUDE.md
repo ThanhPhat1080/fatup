@@ -14,7 +14,7 @@ File này là **bộ chỉ đường**: nó cho biết cần đọc gì, không 
 | Sửa type/hằng số dùng chung nhiều package | `shared/CLAUDE.md` |
 | Sửa Android | `android/CLAUDE.md`, `docs/spec/android.md` |
 | Thực hiện một plan | plan trong `docs/superpowers/plans/`, và sổ ghi `.superpowers/sdd/<plan>/progress.md` nếu có |
-| Phát hành / deploy | `docs/development.md` (chạy local, phát hành), `docs/spec/build-release.md`, `README.md` (cài server, nâng cấp) và `CHANGELOG.md` (định dạng + mục "Nâng cấp") |
+| Phát hành / deploy | `docs/development.md` (chạy local, phát hành), `docs/spec/build-release.md`, `docs/install/server.md` (cài server từng bước), `README.md` (nâng cấp) và `CHANGELOG.md` (định dạng + mục "Nâng cấp") |
 | Hỏi "vì sao lại làm thế này?" | `docs/decisions/README.md` (danh sách ADR) trước khi đoán |
 
 Câu hỏi về cấu trúc ("cái gì gọi X", "cái gì phụ thuộc Y"): nếu có `graphify-out/graph.json` thì chạy `graphify query "<câu hỏi>"` trước; graph có thể đã cũ, nên xác nhận lại bằng `grep` trước khi sửa.

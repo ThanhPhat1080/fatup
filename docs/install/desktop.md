@@ -1,6 +1,6 @@
 # Cài app máy tính (macOS, Windows, Linux)
 
-App máy tính (Electron) có cùng giao diện với bản web, thêm hai thứ: **kiểm tra cập nhật** và **mã QR để ghép app Android**. Cần có server trước: xem [README](../../README.md#cài-đặt).
+App máy tính (Electron) có cùng giao diện với bản web, thêm hai thứ: **kiểm tra cập nhật** và **mã QR để ghép app Android**. Cần có server trước: xem [Cài server](server.md).
 
 ## Tải và cài
 

@@ -28,36 +28,9 @@ FatUp gồm một server (Cloudflare Worker) trong tài khoản của bạn, và
 
 ### 1. Tạo server
 
-```bash
-git clone https://github.com/ThanhPhat1080/fatup && cd fatup
-npm install
-cd worker                                   # mọi lệnh tiếp theo chạy trong worker/
-npx wrangler login                          # trình duyệt mở ra, bấm Allow
-npx wrangler r2 bucket create fatup-files   # nơi chứa file
-npx wrangler d1 create fatup                # nơi lưu thông tin file
-```
+Làm theo **[Hướng dẫn cài server](docs/install/server.md)**: từng bước, có giải thích. Tóm tắt: tải code, đăng nhập Cloudflare bằng `wrangler`, tạo bucket R2 và database D1, đặt các secret, rồi `npm run deploy`.
 
-Lệnh cuối in ra `database_id = "…"`. Chép giá trị đó vào dòng `database_id` trong `worker/wrangler.toml`, rồi tạo bảng:
-
-```bash
-npm run db:migrate:remote                   # gõ y khi được hỏi
-```
-
-Tạo **R2 API token**: Dashboard → **R2** → **Manage API tokens** → **Create API token**, quyền **Object Read & Write**, chỉ cho bucket `fatup-files`. Giữ lại *Access Key ID*, *Secret Access Key* (chỉ hiện một lần) và *Account ID*. Sau đó:
-
-```bash
-npx wrangler secret put R2_ACCESS_KEY_ID      # dán Access Key ID
-npx wrangler secret put R2_SECRET_ACCESS_KEY  # dán Secret Access Key
-npx wrangler secret put R2_ACCOUNT_ID         # dán Account ID
-npm run token:new                             # in ra token đăng nhập của bạn: cất kỹ
-npx wrangler secret put API_TOKEN             # dán token vừa tạo
-npm run r2:cors                               # cho trình duyệt tải file thẳng lên R2
-npm run deploy                                # build bản web và deploy Worker
-```
-
-Mỗi lệnh `secret put` hỏi `Enter a secret value:`: dán giá trị rồi Enter (màn hình không hiện ký tự). Nếu wrangler hỏi có tạo Worker mới không, chọn **Yes**.
-
-`npm run deploy` in ra địa chỉ dạng `https://fatup.<tên-bạn>.workers.dev`. Kiểm tra: `curl https://fatup.<tên-bạn>.workers.dev/health` phải trả `{"ok":true}`.
+Xong bước này bạn có một địa chỉ dạng `https://fatup.<tên-bạn>.workers.dev` (kiểm tra: `/health` trả `{"ok":true}`) và một **token đăng nhập**. Cất kỹ token.
 
 ### 2. Mở bản web và cài như app
 
