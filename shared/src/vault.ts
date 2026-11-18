@@ -60,6 +60,12 @@ export type VaultStatus = {
   remaining: number;
 };
 
+/** How long the Vault key is kept after the last successful opening (PIN or recovery key). Fixed: using the Vault never extends it. */
+export const VAULT_SESSION_MS = 6 * 60 * 60 * 1000;
+
+/** What the app's own `vaultStatus` answers: the server's status plus whether this app holds the Vault key now (the server cannot know). */
+export type VaultClientStatus = VaultStatus & { open: boolean };
+
 /** Plaintext of an encrypted item's `encMeta`. */
 export type VaultMeta = {
   name: string;

@@ -26,6 +26,7 @@
 //       -> the result shapes of vault-ipc (desktop/test/vault-ipc.test.ts). While the app is locked: `{ok:false, error:'locked'}`,
 //          and for the two PIN checks `{ok:false, reason:'error', error:'locked'}`; the client is not touched.
 //     vaultClose(): void                  // SYNCHRONOUS, never refused: forgets the key and revokes EVERY object URL created so far
+//     vaultLeave(): void                  // SYNCHRONOUS: view-only close (plan 2026-11-18-vault-session-6h): revokes the URLs, keeps the key
 //     listVault({ trash? }): Result<Item[]>   // decrypted; no `encMeta`/`encKey`; thumbnails are `blob:` URLs of the DECRYPTED picture
 //     vaultMoveIn(ids) / vaultMoveOut(ids): Result<{ done: number; failed: string[] }>   // createVaultMover semantics
 //     onVaultProgress(cb): () => void     // one call per item of a move or of the legacy conversion: { done, total, current? }
@@ -45,6 +46,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   LINK_MIME,
+  VAULT_SESSION_MS,
   decryptBytes,
   decryptMeta,
   derivePinKeys,
@@ -445,6 +447,24 @@ describe('web Vault: status, setup and PIN checks', () => {
       w.vault.vaultClose();
       expect(await w.vault.vaultSetupCommit()).toEqual({ ok: false, error: 'no_prepared_setup' });
       expect(w.client.vaultSetup).not.toHaveBeenCalled();
+    });
+
+    it('vaultLeave discards the prepared setup too (the wizard cancels with it): a commit after it posts nothing and the Vault stays closed', async () => {
+      const w = await fresh();
+      await w.vault.vaultSetupPrepare(PIN);
+      w.vault.vaultLeave();
+      expect(await w.vault.vaultSetupCommit()).toEqual({ ok: false, error: 'no_prepared_setup' });
+      expect(w.client.vaultSetup).not.toHaveBeenCalled();
+      expect(w.server.state.req).toBeNull();
+      expect(w.vault.uploadEncryptor().isOpen()).toBe(false);
+      expect(await w.vault.listVault()).toEqual({ ok: false, error: 'vault_locked' });
+    });
+
+    it('vaultSetupCommit gives the view right at once: listVault works right after', async () => {
+      const w = await fresh();
+      await w.vault.vaultSetupPrepare(PIN);
+      expect(await w.vault.vaultSetupCommit()).toEqual({ ok: true });
+      expect((await w.vault.listVault()).ok).toBe(true);
     });
 
     it('refuses both steps with "locked" while the app is locked, and does not touch the server', async () => {
@@ -1080,5 +1100,308 @@ describe('web Vault: the encryptor for uploads', () => {
     w.vault.vaultClose();
     expect(encryptor.isOpen()).toBe(false);
     await expect(encryptor.encryptMetaFor({ name: 'a', mime: 'x/y', kind: 'file' })).rejects.toMatchObject({ code: 'vault_locked' });
+  });
+});
+
+// Plan 2026-11-18-vault-session-6h: the page keeps the Vault open for 6 hours after a successful opening, and says so in `vaultStatus`.
+describe('web Vault: the 6-hour session (plan 2026-11-18-vault-session-6h)', () => {
+  const HOUR = 60 * 60 * 1000;
+  const T0 = 1_700_000_000_000;
+
+  /**
+   * A closed Vault with one encrypted photo that has a thumbnail. The fake clock starts only after the world is built (its setup
+   * waits on a real timer), and the Vault is then opened under it, so the session timer is a fake one.
+   */
+  async function openedUnderFakeTime() {
+    const w = await world({ open: false });
+    await w.addItem('P1', PHOTO_META, PHOTO, { thumb: THUMB });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    vi.setSystemTime(T0);
+    expect(await w.vault.vaultUnlock(PIN)).toEqual({ ok: true });
+    return w;
+  }
+  const isOpen = async (w: Awaited<ReturnType<typeof world>>) => {
+    const res = await w.vault.vaultStatus();
+    return res.ok ? (res.value as { open?: boolean }).open : undefined;
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('adds open to the status: false while closed, true after unlock, false after vaultClose', async () => {
+    const w = await world({ open: false });
+    expect(await w.vault.vaultStatus()).toEqual({ ok: true, value: expect.objectContaining({ state: 'ready', open: false }) });
+    await w.vault.vaultUnlock(PIN);
+    expect(await w.vault.vaultStatus()).toEqual({ ok: true, value: expect.objectContaining({ open: true }) });
+    w.vault.vaultClose();
+    expect(await w.vault.vaultStatus()).toEqual({ ok: true, value: expect.objectContaining({ open: false }) });
+  });
+
+  it('is open right after setup (setup opens the Vault)', async () => {
+    const w = await world();
+    expect(await w.vault.vaultStatus()).toEqual({ ok: true, value: expect.objectContaining({ open: true }) });
+  });
+
+  it('is open until the last millisecond of the 6 hours and closed at the sixth hour', async () => {
+    const w = await openedUnderFakeTime();
+    vi.advanceTimersByTime(VAULT_SESSION_MS - 1);
+    expect(await isOpen(w)).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(await isOpen(w)).toBe(false);
+  });
+
+  it('revokes every blob: URL it made, and lists as vault_locked, when the timer ends the session', async () => {
+    const w = await openedUnderFakeTime();
+    const listed = await w.vault.listVault();
+    expect(listed.ok && listed.value[0].thumbUrl).toMatch(/^blob:/);
+    expect(w.made.length).toBeGreaterThan(0);
+    expect(w.revoked).toEqual([]);
+    vi.advanceTimersByTime(VAULT_SESSION_MS);
+    expect(w.revoked).toEqual(w.made.map((m) => m.url));
+    expect(await w.vault.listVault()).toEqual({ ok: false, error: 'vault_locked' });
+  });
+
+  it('answers vault_locked on use, and revokes the blob: URLs, when the clock is past the 6 hours but the throttled tab ran no timer', async () => {
+    const w = await openedUnderFakeTime();
+    await w.vault.listVault();
+    vi.setSystemTime(T0 + VAULT_SESSION_MS);
+    expect(await w.vault.listVault()).toEqual({ ok: false, error: 'vault_locked' });
+    expect(w.revoked).toEqual(w.made.map((m) => m.url));
+    expect(await isOpen(w)).toBe(false);
+  });
+
+  it('does not stop the uploader from seeing a closed Vault after expiry (uploadEncryptor().isOpen() is false)', async () => {
+    const w = await openedUnderFakeTime();
+    expect(w.vault.uploadEncryptor().isOpen()).toBe(true);
+    vi.advanceTimersByTime(VAULT_SESSION_MS);
+    expect(w.vault.uploadEncryptor().isOpen()).toBe(false);
+  });
+
+  it('does not extend the 6 hours when the Vault is used', async () => {
+    const w = await openedUnderFakeTime();
+    vi.advanceTimersByTime(5 * HOUR);
+    expect((await w.vault.listVault()).ok).toBe(true);
+    vi.advanceTimersByTime(HOUR);
+    expect(await isOpen(w)).toBe(false);
+  });
+
+  it('opens again for another 6 hours with a new unlock after the session ended', async () => {
+    const w = await openedUnderFakeTime();
+    vi.advanceTimersByTime(VAULT_SESSION_MS);
+    expect(await w.vault.vaultUnlock(PIN)).toEqual({ ok: true });
+    vi.advanceTimersByTime(VAULT_SESSION_MS - 1);
+    expect(await isOpen(w)).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(await isOpen(w)).toBe(false);
+  });
+
+  it('keeps the Vault open across listings and trash listings (nothing but vaultClose and expiry closes it)', async () => {
+    const w = await openedUnderFakeTime();
+    await w.vault.listVault();
+    await w.vault.listVault({ trash: true });
+    vi.advanceTimersByTime(3 * HOUR);
+    await w.vault.listVault();
+    expect(await isOpen(w)).toBe(true);
+    expect(w.revoked).toEqual([]);
+  });
+
+  it('retries a legacy (not yet encrypted) Vault item found by listVault in an open session', async () => {
+    const w = await openedUnderFakeTime();
+    w.addPlain('LEG', { name: 'old.txt', mime: 'text/plain', inVault: true }, enc('written before encryption'));
+    expect(w.completesIn).toEqual([]);
+    await w.vault.listVault();
+    // The conversion runs in the background (crypto + fake fetch). setImmediate is not faked here, so wait on it without moving the fake clock.
+    for (let i = 0; i < 300 && w.completesIn.length === 0; i++) await new Promise<void>((resolve) => (globalThis as unknown as { setImmediate(cb: () => void): void }).setImmediate(resolve));
+    expect(w.completesIn.map((c) => c.id)).toEqual(['LEG']);
+  });
+});
+
+// Plan 2026-11-18-vault-session-6h (rewritten decisions 3 to 5): viewing the Vault always needs the PIN; only moving files in skips it
+// for 6 hours. `vaultUnlock(pin, 'view' | 'move')`, `vaultLeave()` (view-only close, key kept), `vaultClose()` (full close).
+describe('web Vault: viewing and moving are separate rights', () => {
+  const T0 = 1_700_000_000_000;
+
+  async function closedWorld() {
+    const w = await world({ open: false });
+    await w.addItem('P1', PHOTO_META, PHOTO, { thumb: THUMB });
+    await w.addItem('D1', PDF_META, PDF);
+    w.addPlain('PLAIN', { name: 'a.txt', mime: 'text/plain' }, enc('plain text'));
+    return w;
+  }
+  const status = async (w: Awaited<ReturnType<typeof world>>) => {
+    const res = await w.vault.vaultStatus();
+    return res.ok ? (res.value as { open?: boolean }).open : undefined;
+  };
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  describe('vaultLeave', () => {
+    it('is synchronous, revokes every blob: URL, and makes listVault answer vault_locked without a request', async () => {
+      const w = await closedWorld();
+      await w.vault.vaultUnlock(PIN);
+      expect((await w.vault.listVault()).ok).toBe(true);
+      expect(w.made.length).toBeGreaterThan(0);
+      expect(w.vault.vaultLeave()).toBeUndefined();
+      expect(w.revoked).toEqual(w.made.map((m) => m.url));
+      w.client.listEverything.mockClear();
+      expect(await w.vault.listVault()).toEqual({ ok: false, error: 'vault_locked' });
+      expect(w.client.listEverything).not.toHaveBeenCalled();
+    });
+
+    it('keeps the key: the status still says open, and moving a plain file in still works with no PIN', async () => {
+      const w = await closedWorld();
+      await w.vault.vaultUnlock(PIN);
+      w.vault.vaultLeave();
+      expect(await status(w)).toBe(true);
+      expect(await w.vault.vaultMoveIn(['PLAIN'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
+      expect(w.completesIn.map((c) => c.id)).toEqual(['PLAIN']);
+    });
+
+    it('refuses everything that needs the view right, with vault_locked and no network call', async () => {
+      const w = await closedWorld();
+      await w.vault.vaultUnlock(PIN);
+      await w.vault.listVault();
+      w.vault.vaultLeave();
+      w.client.downloadUrl.mockClear();
+      w.client.update.mockClear();
+      w.client.createUpload.mockClear();
+      w.client.moveOut.mockClear();
+      expect(await w.vault.fileBytes('D1')).toEqual({ ok: false, error: 'vault_locked' });
+      expect(await w.vault.copyImageBytes('P1')).toEqual({ ok: false, error: 'vault_locked' });
+      expect(await w.vault.download('D1')).toEqual({ ok: false, error: 'vault_locked' });
+      expect(await w.vault.previewUrl('D1')).toEqual({ ok: false, error: 'vault_locked' });
+      expect(await w.vault.updateFile('D1', { name: 'x.pdf' })).toEqual({ ok: false, error: 'vault_locked' });
+      expect(await w.vault.addLink('https://example.com')).toEqual({ ok: false, error: 'vault_locked' });
+      expect(await w.vault.vaultMoveOut(['D1'])).toEqual({ ok: false, error: 'vault_locked' });
+      expect(w.client.downloadUrl).not.toHaveBeenCalled();
+      expect(w.client.update).not.toHaveBeenCalled();
+      expect(w.client.createUpload).not.toHaveBeenCalled();
+      expect(w.client.moveOut).not.toHaveBeenCalled();
+      expect(w.saved).toEqual([]);
+    });
+
+    it('changing the PIN is not gated on the view right: after vaultLeave the right old PIN works, a wrong one is the server answer, the new PIN opens', async () => {
+      const w = await closedWorld();
+      await w.vault.vaultUnlock(PIN);
+      w.vault.vaultLeave();
+      expect(await w.vault.vaultChangePin(PIN2, '864209')).toMatchObject({ ok: false, reason: 'wrong' });
+      expect(await w.vault.vaultChangePin(PIN, PIN2)).toEqual({ ok: true });
+      w.vault.vaultClose();
+      expect(await w.vault.vaultUnlock(PIN2, 'view')).toEqual({ ok: true });
+      expect((await w.vault.listVault()).ok).toBe(true);
+    });
+
+    it('keeps owning the ids it listed, so the plain paths never take them', async () => {
+      const w = await closedWorld();
+      await w.vault.vaultUnlock(PIN);
+      await w.vault.listVault();
+      w.vault.vaultLeave();
+      expect(w.vault.owns('D1')).toBe(true);
+    });
+
+    it('is undone by a view unlock, which lists again with the real names', async () => {
+      const w = await closedWorld();
+      await w.vault.vaultUnlock(PIN);
+      w.vault.vaultLeave();
+      expect(await w.vault.vaultUnlock(PIN, 'view')).toEqual({ ok: true });
+      const listed = await w.vault.listVault();
+      expect(listed.ok && listed.value.map((i) => i.name).sort()).toEqual([PDF_META.name, PHOTO_META.name].sort());
+    });
+  });
+
+  describe("vaultUnlock(pin, 'move')", () => {
+    it('holds the key (open: true) but the Vault cannot be viewed: listVault answers vault_locked', async () => {
+      const w = await closedWorld();
+      expect(await w.vault.vaultUnlock(PIN, 'move')).toEqual({ ok: true });
+      expect(await status(w)).toBe(true);
+      w.client.listEverything.mockClear();
+      expect(await w.vault.listVault()).toEqual({ ok: false, error: 'vault_locked' });
+      expect(await w.vault.listVault({ trash: true })).toEqual({ ok: false, error: 'vault_locked' });
+      expect(w.client.listEverything).not.toHaveBeenCalled();
+    });
+
+    it('changing the PIN works after a move unlock with the right old PIN, and a wrong one gets the server answer', async () => {
+      const w = await closedWorld();
+      await w.vault.vaultUnlock(PIN, 'move');
+      expect(await w.vault.vaultChangePin(PIN2, '864209')).toMatchObject({ ok: false, reason: 'wrong' });
+      expect(await w.vault.vaultChangePin(PIN, PIN2)).toEqual({ ok: true });
+      w.vault.vaultClose();
+      expect(await w.vault.vaultUnlock(PIN2, 'move')).toEqual({ ok: true });
+    });
+
+    it('moves a plain file in, which is what the popup is for', async () => {
+      const w = await closedWorld();
+      await w.vault.vaultUnlock(PIN, 'move');
+      expect(await w.vault.vaultMoveIn(['PLAIN'])).toEqual({ ok: true, value: { done: 1, failed: [] } });
+    });
+
+    it('refuses moving out, opening, renaming and adding a link', async () => {
+      const w = await closedWorld();
+      await w.vault.vaultUnlock(PIN, 'move');
+      expect(await w.vault.vaultMoveOut(['D1'])).toEqual({ ok: false, error: 'vault_locked' });
+      expect(await w.vault.fileBytes('D1')).toEqual({ ok: false, error: 'vault_locked' });
+      expect(await w.vault.updateFile('D1', { name: 'x.pdf' })).toEqual({ ok: false, error: 'vault_locked' });
+      expect(await w.vault.addLink('https://example.com')).toEqual({ ok: false, error: 'vault_locked' });
+    });
+
+    it('still converts the old (not yet encrypted) Vault files in the background: the conversion needs only the key', async () => {
+      const w = await closedWorld();
+      w.addPlain('LEG', { name: 'old.txt', mime: 'text/plain', inVault: true }, enc('written before encryption'));
+      expect(await w.vault.vaultUnlock(PIN, 'move')).toEqual({ ok: true });
+      await vi.waitFor(() => expect(w.completesIn.map((c) => c.id)).toEqual(['LEG']));
+    });
+
+    it('a wrong PIN holds no key and gives no right', async () => {
+      const w = await closedWorld();
+      expect(await w.vault.vaultUnlock('999111', 'move')).toMatchObject({ ok: false, reason: 'wrong' });
+      expect(await status(w)).toBe(false);
+      expect(await w.vault.vaultMoveIn(['PLAIN'])).toEqual({ ok: false, error: 'vault_locked' });
+    });
+  });
+
+  describe('opening by recovery', () => {
+    it('vaultRecover gives the view right at once: listVault works right after, with the new PIN', async () => {
+      const w = await closedWorld();
+      expect(await w.vault.vaultRecover(w.recoveryKey, PIN2)).toEqual({ ok: true });
+      const listed = await w.vault.listVault();
+      expect(listed.ok && listed.value.map((i) => i.name).sort()).toEqual([PDF_META.name, PHOTO_META.name].sort());
+    });
+  });
+
+  describe('expiry and full close', () => {
+    it('after the 6 hours a move unlock brings the key back but not the view right', async () => {
+      const w = await closedWorld();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+      vi.setSystemTime(T0);
+      await w.vault.vaultUnlock(PIN, 'view');
+      expect((await w.vault.listVault()).ok).toBe(true);
+      vi.advanceTimersByTime(VAULT_SESSION_MS);
+      expect(await status(w)).toBe(false);
+      expect(await w.vault.vaultUnlock(PIN, 'move')).toEqual({ ok: true });
+      expect(await w.vault.listVault()).toEqual({ ok: false, error: 'vault_locked' });
+    });
+
+    it('vaultLeave does not move the end of the 6 hours', async () => {
+      const w = await closedWorld();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+      vi.setSystemTime(T0);
+      await w.vault.vaultUnlock(PIN, 'move');
+      vi.advanceTimersByTime(60 * 60 * 1000);
+      w.vault.vaultLeave();
+      vi.advanceTimersByTime(VAULT_SESSION_MS - 60 * 60 * 1000 - 1);
+      expect(await status(w)).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(await status(w)).toBe(false);
+    });
+
+    it('vaultClose (lock, reset) drops the key too: moving in answers vault_locked', async () => {
+      const w = await closedWorld();
+      await w.vault.vaultUnlock(PIN, 'move');
+      w.vault.vaultClose();
+      expect(await status(w)).toBe(false);
+      expect(await w.vault.vaultMoveIn(['PLAIN'])).toEqual({ ok: false, error: 'vault_locked' });
+    });
   });
 });

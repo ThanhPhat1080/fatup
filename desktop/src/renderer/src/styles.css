@@ -1135,6 +1135,29 @@ h2 {
   line-height: 1.5;
   user-select: text;
 }
+/* The Vault PIN popup over the file list: six cells must fit a 360 px phone inside the scrim's 16 px gutters. */
+.vault-pin {
+  margin-bottom: 4px;
+}
+.vault-pin .pin {
+  margin: 12px 0 0;
+}
+.vault-pin .pin--long .pin__cells {
+  gap: 8px;
+}
+.vault-pin .pin--long .pin__cell {
+  width: 40px;
+  height: 50px;
+}
+.vault-pin .error {
+  text-align: center;
+}
+.vault-pin__actions {
+  flex-wrap: wrap;
+}
+.vault-pin__actions .btn {
+  min-height: 40px;
+}
 
 /* ---------- Settings ---------- */
 .settings {
@@ -3955,20 +3978,25 @@ body {
 .view-title {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 40px;
+  gap: 12px;
+  min-height: 44px;
   margin: 4px 20px 0;
   padding: 0 0 0 12px;
-  font-size: 18px;
-  font-weight: 500;
+  font-size: 24px;
+  font-weight: 700;
   color: var(--text);
 }
 .view-title svg {
   flex: none;
   color: var(--text-2);
 }
+/* The page's own icon, bigger with the title; the small icons inside the tags keep their size. */
+.view-title > svg {
+  width: 28px;
+  height: 28px;
+}
 .view-title__sub {
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 400;
   color: var(--text-3);
 }
@@ -3987,6 +4015,23 @@ body {
 }
 .view-title__tag svg {
   color: inherit;
+}
+
+/* The row above the toolbar island: where you are on the left, and in the Vault its trash on the right. */
+.view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 0;
+}
+.view-head .view-title {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.view-head .vault-trash-btn {
+  flex: none;
+  margin-right: 20px;
 }
 
 /* On the links tab the title sits first in the platform filter row, set off by the row's own light divider. */

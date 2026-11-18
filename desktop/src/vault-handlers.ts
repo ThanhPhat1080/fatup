@@ -2,7 +2,7 @@
 // Everything is decrypted here: the page gets names, types and decrypted bytes (or a URL for them), never a key (MK, DEK, S),
 // `encMeta` or `encKey`. What differs between the two hosts is passed in: where a download goes (`saveDownload`) and what kind of
 // address a picture or a file gets (`views`: `fatup-vault://` on the desktop, `blob:` URLs on the web).
-import { LINK_MIME, decryptBytes, encryptBytes, normalizeUrl, vaultCiphertextSize, type FileItem, type TagColor, type VaultMeta, type VaultStatus } from '@fatup/shared';
+import { LINK_MIME, decryptBytes, encryptBytes, normalizeUrl, vaultCiphertextSize, type FileItem, type TagColor, type VaultClientStatus, type VaultMeta } from '@fatup/shared';
 import type { Item, Result, VaultSetupCommitResult, VaultUnlockResult } from './shared-ipc';
 import type { VaultChangePinResult, VaultRecoverResult, VaultSession, VaultSetupResult } from './vault-session';
 import { ApiError, type ApiClient } from './main/api';
@@ -48,6 +48,8 @@ export type VaultCoreDeps = {
   device?: string | null;
   /** Presigned GETs and PUTs. Default: the global `fetch`. */
   fetchImpl?: typeof fetch;
+  /** Asks for the conversion of old (not yet encrypted) Vault items to run; `listVault` calls it when it sees one. The host's mover runs one conversion at a time. */
+  startMigration?(): void;
 };
 
 export type VaultProtocolResponse = { status: number; body?: Uint8Array; type?: string };
@@ -93,6 +95,29 @@ export function createVaultCore(deps: VaultCoreDeps) {
   const known = new Set<string>();
   /** Counts the closes of the Vault: a call that awaited across one must not record what it learnt. */
   let epoch = 0;
+  /**
+   * The right to view the Vault (list, open, rename, take out, change the PIN): given only by a PIN typed for the Vault screen (or a setup or
+   * recovery done there), taken by `vaultLeave`, `vaultClose` and the end of the session. Holding the key (`session.isOpen()`) is not enough.
+   */
+  let viewOpen = false;
+
+  /** Forgets everything made for viewing: the right to view, the learnt rows and every address handed out. The key is not touched. */
+  function dropView(): void {
+    epoch++;
+    viewOpen = false;
+    entries.clear();
+    views.closeAll();
+  }
+  // The session ended by itself (6 hours): same cleanup as `vaultClose`. Optional call: a host may hand over a session without the hook.
+  session.onExpire?.(dropView);
+
+  /** True when the key is held and the Vault may be viewed. Asking also ends an expired session (and so clears the view). */
+  const viewable = () => session.isOpen() && viewOpen;
+
+  /** Gives the view right to an opening that succeeded, unless the view was dropped while it was waiting. */
+  const grantView = (at: number, res: { ok: boolean }) => {
+    if (res.ok && at === epoch) viewOpen = true;
+  };
   const isDownloaded = (id: string) => deps.isDownloaded?.(id) ?? false;
 
   /** GETs a presigned URL and decrypts it with the item's file key. Throws ApiError / VaultCryptoError / VaultLockedError. */
@@ -111,7 +136,7 @@ export function createVaultCore(deps: VaultCoreDeps) {
   /** Common checks of every handler that opens one item: app unlocked, Vault open, item known (in that order). */
   function resolve(id: string): { ok: true; entry: Entry } | { ok: false; error: string } {
     if (!deps.isUnlocked()) return { ok: false, error: 'locked' };
-    if (!session.isOpen()) return { ok: false, error: 'vault_locked' };
+    if (!viewable()) return { ok: false, error: 'vault_locked' };
     const entry = entries.get(id);
     if (!entry) return { ok: false, error: 'not_found' };
     return { ok: true, entry };
@@ -166,10 +191,12 @@ export function createVaultCore(deps: VaultCoreDeps) {
   }
 
   return {
-    async vaultStatus(): Promise<Result<VaultStatus>> {
+    /** The server's status plus `open`: whether the key is held now (6 hours after the last PIN), which is what moving files in needs. */
+    async vaultStatus(): Promise<Result<VaultClientStatus>> {
       if (!deps.isUnlocked()) return { ok: false, error: 'locked' };
       try {
-        return { ok: true, value: await session.status() };
+        const status = await session.status();
+        return { ok: true, value: { ...status, open: session.isOpen() } };
       } catch (err) {
         return failure(err);
       }
@@ -177,7 +204,10 @@ export function createVaultCore(deps: VaultCoreDeps) {
 
     async vaultSetup(pin: string): Promise<VaultSetupResult> {
       if (!deps.isUnlocked()) return { ok: false, error: 'locked' };
-      return session.setup(pin);
+      const at = epoch;
+      const res = await session.setup(pin);
+      grantView(at, res);
+      return res;
     },
 
     /** First step of the setup: makes the keys and returns the recovery key. Reaches no server; the Vault stays closed until `vaultSetupCommit`. */
@@ -189,19 +219,34 @@ export function createVaultCore(deps: VaultCoreDeps) {
     /** Second step of the setup, after the user confirmed the recovery key: sets the Vault up on the server and opens it. */
     async vaultSetupCommit(): Promise<VaultSetupCommitResult> {
       if (!deps.isUnlocked()) return { ok: false, error: 'locked' };
-      return session.commitSetup();
+      const at = epoch;
+      const res = await session.commitSetup();
+      grantView(at, res);
+      return res;
     },
 
-    async vaultUnlock(pin: string): Promise<VaultUnlockResult> {
+    /**
+     * Opens the Vault with the PIN. `view` (the Vault screen's gate, the default) also gives the right to view it; `move` (the small PIN
+     * popup of the file list) only holds the key, so files can be moved in. Either way a correct PIN restarts the session's 6 hours.
+     */
+    async vaultUnlock(pin: string, purpose: 'view' | 'move' = 'view'): Promise<VaultUnlockResult> {
       if (!deps.isUnlocked()) return { ok: false, reason: 'error', error: 'locked' };
-      return session.unlock(pin);
+      session.isOpen(); // ends a session that is over, which also takes its view right, before a new opening can be mistaken for the old one
+      const at = epoch;
+      const res = await session.unlock(pin);
+      if (purpose === 'view') grantView(at, res);
+      return res;
     },
 
     async vaultRecover(recoveryKey: string, newPin: string): Promise<VaultRecoverResult> {
       if (!deps.isUnlocked()) return { ok: false, error: 'locked' };
-      return session.recover(recoveryKey, newPin);
+      const at = epoch;
+      const res = await session.recover(recoveryKey, newPin);
+      grantView(at, res);
+      return res;
     },
 
+    /** Not gated on the view right: the old PIN is the proof, nothing decrypted comes back, and the form lives in Settings. */
     async vaultChangePin(oldPin: string, newPin: string): Promise<VaultChangePinResult> {
       if (!deps.isUnlocked()) return { ok: false, reason: 'error', error: 'locked' };
       return session.changePin(oldPin, newPin);
@@ -209,18 +254,36 @@ export function createVaultCore(deps: VaultCoreDeps) {
 
     /** Forgets the master key, what was learnt about the items and every address made for them. Never refused, not even while the app is locked. Synchronous on purpose. */
     vaultClose(): void {
-      epoch++;
       session.close();
-      entries.clear();
-      views.closeAll();
+      dropView();
+    },
+
+    /**
+     * Leaving the Vault screen: takes the right to view, forgets the decrypted rows and revokes every address, but keeps the key and its
+     * 6 hours so files can still be moved in. Also drops a setup that was prepared and not committed (the wizard cancels with it). Synchronous.
+     */
+    vaultLeave(): void {
+      dropView();
+      session.discardSetup?.();
+    },
+
+    /** True while the key is held and the Vault may be viewed: what the hosts check before taking files out. */
+    canView(): boolean {
+      return viewable();
     },
 
     async listVault(opts: { trash?: boolean } = {}): Promise<Result<Item[]>> {
       if (!deps.isUnlocked()) return { ok: false, error: 'locked' };
-      if (!session.isOpen()) return { ok: false, error: 'vault_locked' };
+      if (!viewable()) return { ok: false, error: 'vault_locked' };
+      const at = epoch;
       try {
         const raw = await deps.client().listEverything({ vault: true, trash: opts.trash === true });
-        return { ok: true, value: await present(raw) };
+        // `vaultLeave` keeps the key, so the session cannot tell this listing that the view ended while it waited.
+        if (at !== epoch) return { ok: false, error: 'vault_locked' };
+        const shown = await present(raw);
+        // An item in the Vault that is still plain (faded cloud) is retried while the Vault is being viewed.
+        if (raw.some((r) => r.inVault && !r.encrypted)) deps.startMigration?.();
+        return { ok: true, value: shown };
       } catch (err) {
         return failure(err);
       }
@@ -272,7 +335,7 @@ export function createVaultCore(deps: VaultCoreDeps) {
      */
     async addLink(rawUrl: string, title?: string): Promise<Result<Item>> {
       if (!deps.isUnlocked()) return { ok: false, error: 'locked' };
-      if (!session.isOpen()) return { ok: false, error: 'vault_locked' };
+      if (!viewable()) return { ok: false, error: 'vault_locked' };
       try {
         const url = normalizeUrl(rawUrl);
         if (!url) return { ok: false, error: 'bad_url' };
@@ -342,7 +405,7 @@ export function createVaultCore(deps: VaultCoreDeps) {
     /** The decrypted bytes of an item's file or thumbnail, for a host that serves them itself (`fatup-vault://`). 404 unless the app is unlocked and the Vault open. */
     async serve(id: string, kind: 'file' | 'thumb'): Promise<VaultProtocolResponse> {
       const notFound: VaultProtocolResponse = { status: 404 };
-      if (!deps.isUnlocked() || !session.isOpen()) return notFound;
+      if (!deps.isUnlocked() || !viewable()) return notFound;
       const entry = entries.get(id);
       if (!entry) return notFound;
       const source = kind === 'thumb' ? entry.raw.thumbUrl : await deps.client().downloadUrl(id).catch(() => null);

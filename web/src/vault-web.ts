@@ -97,6 +97,8 @@ export function createWebVault(deps: WebVaultDeps) {
     views: blobViews(deps),
     device: deps.device,
     fetchImpl,
+    // Called lazily (`mover` is made below): retries faded-cloud items each time a Vault listing sees one.
+    startMigration: () => mover.startMigration((p) => sendProgress(p, [])),
   });
   const mover = createVaultMover({ session, client: () => deps.client(), fetchImpl });
   const progressListeners = new Set<(p: VaultProgress) => void>();
@@ -124,12 +126,15 @@ export function createWebVault(deps: WebVaultDeps) {
     vaultSetup: async (pin: string) => afterOpen(await core.vaultSetup(pin)),
     vaultSetupPrepare: core.vaultSetupPrepare,
     vaultSetupCommit: async () => afterOpen(await core.vaultSetupCommit()),
-    vaultUnlock: async (pin: string) => afterOpen(await core.vaultUnlock(pin)),
+    vaultUnlock: async (pin: string, purpose?: 'view' | 'move') => afterOpen(await core.vaultUnlock(pin, purpose)),
     vaultRecover: async (recoveryKey: string, newPin: string) => afterOpen(await core.vaultRecover(recoveryKey, newPin)),
     vaultChangePin: core.vaultChangePin,
 
     /** Forgets the key and revokes every object URL, synchronously. Never refused. */
     vaultClose: core.vaultClose,
+
+    /** Leaving the Vault screen: revokes every object URL and drops the decrypted list and a prepared setup, but keeps the key. Synchronous. */
+    vaultLeave: core.vaultLeave,
 
     listVault: core.listVault,
     owns: core.owns,
@@ -157,8 +162,8 @@ export function createWebVault(deps: WebVaultDeps) {
 
     /** Decrypts Vault files here and moves them back out (old, still plain Vault files are encrypted first). */
     async vaultMoveOut(ids: string[]): Promise<Result<VaultMoveResult>> {
-      const refused = refusal();
-      if (refused) return refused;
+      if (!deps.isUnlocked()) return { ok: false, error: 'locked' };
+      if (!core.canView()) return { ok: false, error: 'vault_locked' };
       try {
         const res = await mover.moveOutIds(ids, (id) => core.rawItem(id), (p) => sendProgress(p, []));
         core.forget(res.done); // plain again: the plain paths apply

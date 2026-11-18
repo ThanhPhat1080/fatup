@@ -173,6 +173,13 @@ async function world(opts: { unlocked?: boolean } = {}) {
     fetchImpl: fetchImpl as unknown as typeof fetch,
   };
   const handlers = createVaultHandlers(deps);
+  // The session above was opened by `session.setup` directly. Viewing needs the core's own view right (plan 2026-11-18-vault-session-6h),
+  // which only a PIN given to the handlers grants, so the world's Vault is viewed the way the Vault screen does it.
+  const wasUnlocked = state.unlocked;
+  state.unlocked = true;
+  const viewed = await handlers.vaultUnlock(PIN, 'view');
+  state.unlocked = wasUnlocked;
+  if (!viewed.ok) throw new Error(`view unlock failed: ${JSON.stringify(viewed)}`);
 
   /** Stores an encrypted item the way the Worker would: ciphertext objects in R2, `encMeta`/`encKey` on the row. */
   async function addItem(id: string, meta: VaultMeta, plain: Uint8Array, opts: { thumb?: Uint8Array; tamper?: boolean } = {}) {
@@ -261,7 +268,8 @@ function stubbed(unlocked = true) {
 describe('Vault handlers: PIN, setup and recovery', () => {
   it('returns the status wrapped as a Result', async () => {
     const { session, handlers } = stubbed();
-    expect(await handlers.vaultStatus()).toEqual({ ok: true, value: { state: 'ready', failedAttempts: 0, lockedUntil: null, remaining: 10 } });
+    // `open` is new (plan 2026-11-18-vault-session-6h): the session's own state; the stubbed session reports an open key.
+    expect(await handlers.vaultStatus()).toEqual({ ok: true, value: { state: 'ready', failedAttempts: 0, lockedUntil: null, remaining: 10, open: true } });
   });
 
   it('turns a failing status call into a Result error carrying the API code', async () => {
@@ -315,6 +323,19 @@ describe('Vault handlers: PIN, setup and recovery', () => {
     const { session, handlers } = stubbed();
     await handlers.vaultClose();
     expect(session.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('vaultLeave leaves the session (and its key) alone: only vaultClose closes it', async () => {
+    const { session, handlers } = stubbed();
+    await handlers.vaultLeave();
+    expect(session.close).not.toHaveBeenCalled();
+  });
+
+  it("vaultUnlock(pin, 'move') checks the PIN with the session, like a view unlock, and returns its answer unchanged", async () => {
+    const { session, handlers } = stubbed();
+    session.unlock.mockResolvedValueOnce({ ok: false, reason: 'wrong', remaining: 3 });
+    expect(await handlers.vaultUnlock(PIN, 'move')).toEqual({ ok: false, reason: 'wrong', remaining: 3 });
+    expect(session.unlock.mock.calls[0][0]).toBe(PIN);
   });
 
   it('refuses every Vault call with "locked" while the app is locked, without touching the session', async () => {
@@ -1025,6 +1046,7 @@ describe('listVault while the Vault is closed in the middle of it (review M4)', 
         closeAll: () => undefined,
       },
     });
+    await core.vaultUnlock(PIN, 'view'); // this core is a different one than w.handlers: it needs its own view right
     const pending = core.listVault({});
     await reached.wait;
     core.vaultClose();

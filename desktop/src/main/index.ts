@@ -356,10 +356,11 @@ function registerIpc() {
   // Two steps so that nothing reaches the server before the user has confirmed the recovery key; only a successful commit opens the Vault.
   ipcMain.handle('vaultSetupPrepare', (_e, pin: unknown) => vault.vaultSetupPrepare(text(pin)));
   ipcMain.handle('vaultSetupCommit', async () => afterOpen(await vault.vaultSetupCommit()));
-  ipcMain.handle('vaultUnlock', async (_e, pin: unknown) => afterOpen(await vault.vaultUnlock(text(pin))));
+  ipcMain.handle('vaultUnlock', async (_e, pin: unknown, purpose: unknown) => afterOpen(await vault.vaultUnlock(text(pin), purpose === 'move' ? 'move' : 'view')));
   ipcMain.handle('vaultRecover', async (_e, recoveryKey: unknown, newPin: unknown) => afterOpen(await vault.vaultRecover(text(recoveryKey), text(newPin))));
   ipcMain.handle('vaultChangePin', (_e, oldPin: unknown, newPin: unknown) => vault.vaultChangePin(text(oldPin), text(newPin)));
-  ipcMain.handle('vaultClose', () => vault.vaultClose());
+  // Leaving the Vault screen only drops the view; lock and reset close the Vault for good (`vault.vaultClose()`).
+  ipcMain.handle('vaultLeave', () => vault.vaultLeave());
   ipcMain.handle('listVault', (_e, opts?: { trash?: boolean }) => vault.listVault({ trash: opts?.trash === true }));
 
   const ids = (v: unknown): string[] => (Array.isArray(v) ? v.filter((id): id is string => typeof id === 'string' && id !== '') : []);
@@ -386,7 +387,7 @@ function registerIpc() {
   // here, so with no key to read) are encrypted first: the legacy request is refused once the encrypted Vault exists.
   ipcMain.handle('vaultMoveOut', async (_e, raw: unknown): Promise<Result<VaultMoveResult>> => {
     if (!unlocked) return { ok: false, error: 'locked' };
-    if (!vaultSession.isOpen()) return { ok: false, error: 'vault_locked' };
+    if (!vault.canView()) return { ok: false, error: 'vault_locked' };
     const wanted = ids(raw);
     try {
       const res = await mover.moveOutIds(wanted, (id) => vault.rawItem(id), (p) => sendVaultProgress(p, []));
@@ -585,6 +586,8 @@ app.whenReady().then(() => {
     isDownloaded: (id) => config.snapshot.downloaded.includes(id),
     markDownloaded: (id) => config.markDownloaded(id),
     device: DEVICE_NAME,
+    // Called lazily (`mover` is created on the next line): retries faded-cloud items each time a Vault listing sees one.
+    startMigration: () => mover.startMigration((p) => sendVaultProgress(p, [])),
   });
   mover = createVaultMover({ session: vaultSession, client: () => client() });
   // Decrypted Vault pictures live only in memory: never cached by Chromium (no-store) and never written to the previews folder.

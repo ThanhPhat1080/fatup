@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  VAULT_SESSION_MS,
   VAULT_WIPE_AT,
   decryptBytes,
   decryptMeta,
@@ -20,7 +21,7 @@ import {
   type VaultStatus,
 } from '@fatup/shared';
 import { ApiError } from '../src/main/api';
-import { VaultSession } from '../src/vault-session';
+import { VaultLockedError, VaultSession } from '../src/vault-session';
 
 // Small on purpose: production uses 600 000; the tests only need the shape.
 const ITERATIONS = 1000;
@@ -1174,5 +1175,165 @@ describe('VaultSession: close() while recover waits for the app PIN check stays 
     release();
     expect(await pending).toEqual({ ok: true });
     expect(session.isOpen()).toBe(true);
+  });
+});
+
+// Plan 2026-11-18-vault-session-6h, decisions 1 and 2: once opened, the Vault stays open for a fixed 6 hours, then closes by itself.
+describe('VaultSession: the open Vault lasts VAULT_SESSION_MS from the moment it was opened', () => {
+  const MS = VAULT_SESSION_MS;
+  const HOUR = 60 * 60 * 1000;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Every way of opening the Vault that decision 1 names, each ending with an open session. */
+  const openers: Record<string, () => Promise<VaultSession>> = {
+    'setup (prepare + commit)': async () => {
+      const { session } = make();
+      const prepared = await session.prepareSetup(PIN);
+      expect(prepared.ok).toBe(true);
+      expect(await session.commitSetup()).toEqual({ ok: true });
+      return session;
+    },
+    'unlock': async () => {
+      const { server } = await setUp();
+      const session = restart(server);
+      expect(await session.unlock(PIN)).toEqual({ ok: true });
+      return session;
+    },
+    'recover': async () => {
+      const { server, recoveryKey } = await setUp();
+      const session = restart(server);
+      expect(await session.recover(recoveryKey, PIN2)).toEqual({ ok: true });
+      return session;
+    },
+  };
+
+  it('is six hours', () => {
+    expect(VAULT_SESSION_MS).toBe(6 * 60 * 60 * 1000);
+  });
+
+  describe.each(Object.entries(openers))('after %s', (_name, open) => {
+    it('is open until the last millisecond of the 6 hours, then the timer closes it', async () => {
+      const session = await open();
+      expect(session.isOpen()).toBe(true);
+      vi.advanceTimersByTime(MS - 1);
+      expect(session.isOpen()).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(session.isOpen()).toBe(false);
+    });
+
+    it('has dropped the key once the timer fired: a call that needs it answers vault_locked', async () => {
+      const session = await open();
+      vi.advanceTimersByTime(MS);
+      await lockedError(session.encryptMetaFor(fileMeta));
+      await lockedError(session.decryptList([item()]));
+      await lockedError(session.fileKey({ encKey: 'x' }));
+      expect(await session.encryptMetaFor(fileMeta).catch((e: unknown) => e)).toBeInstanceOf(VaultLockedError);
+    });
+
+    it('closes on use when the clock is past the 6 hours but no timer ran (a background tab throttles timers)', async () => {
+      const session = await open();
+      vi.setSystemTime(NOW + MS); // the system clock moved; no timer fired
+      expect(session.isOpen()).toBe(false);
+    });
+
+    it('refuses a key-using call on use after the deadline, without any timer having fired', async () => {
+      const session = await open();
+      vi.setSystemTime(NOW + MS + 1);
+      await lockedError(session.encryptMetaFor(fileMeta));
+      expect(session.isOpen()).toBe(false);
+    });
+
+    it('still answers key-using calls one millisecond before the deadline when no timer ran', async () => {
+      const session = await open();
+      vi.setSystemTime(NOW + MS - 1);
+      expect(session.isOpen()).toBe(true);
+      await expect(session.encryptMetaFor(fileMeta)).resolves.toMatchObject({ encMeta: expect.any(String) });
+    });
+  });
+
+  it('does not extend the session when the key is used: 6 hours are counted from the opening only', async () => {
+    const { server } = await setUp();
+    const session = restart(server);
+    await session.unlock(PIN);
+    vi.advanceTimersByTime(MS - 60_000);
+    await session.encryptMetaFor(fileMeta); // used one minute before the end
+    await session.decryptList([item()]);
+    expect(session.isOpen()).toBe(true);
+    vi.advanceTimersByTime(60_000);
+    expect(session.isOpen()).toBe(false);
+  });
+
+  it('does not extend the session when isOpen() is asked: it is still over at the original deadline', async () => {
+    const { server } = await setUp();
+    const session = restart(server);
+    await session.unlock(PIN);
+    for (let i = 0; i < 5; i++) {
+      vi.advanceTimersByTime(HOUR);
+      expect(session.isOpen()).toBe(true);
+    }
+    vi.advanceTimersByTime(HOUR);
+    expect(session.isOpen()).toBe(false);
+  });
+
+  it('close() clears the timer, so nothing is left scheduled', async () => {
+    const { session } = make();
+    await session.setup(PIN);
+    session.close();
+    expect(session.isOpen()).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('a close() followed by a new unlock starts a new 6 hours, and the old timer cannot close the new session', async () => {
+    const { server } = await setUp();
+    const session = restart(server);
+    await session.unlock(PIN);
+    vi.advanceTimersByTime(HOUR);
+    session.close();
+    expect(await session.unlock(PIN)).toEqual({ ok: true });
+    vi.advanceTimersByTime(MS - 1); // the first opening's old deadline (6h after it) passes inside this window
+    expect(session.isOpen()).toBe(true);
+    vi.advanceTimersByTime(1); // now exactly 6 hours after the second unlock
+    expect(session.isOpen()).toBe(false);
+  });
+
+  it('a second unlock of an open session restarts the 6 hours from that moment', async () => {
+    const { server } = await setUp();
+    const session = restart(server);
+    await session.unlock(PIN);
+    vi.advanceTimersByTime(3 * HOUR);
+    expect(await session.unlock(PIN)).toEqual({ ok: true });
+    vi.advanceTimersByTime(MS - 1);
+    expect(session.isOpen()).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(session.isOpen()).toBe(false);
+  });
+
+  it('a failed unlock (wrong PIN) opens nothing and starts no timer', async () => {
+    const { server } = await setUp();
+    const session = restart(server);
+    const before = vi.getTimerCount();
+    const res = await session.unlock('999111');
+    expect(res).toMatchObject({ ok: false, reason: 'wrong' });
+    expect(session.isOpen()).toBe(false);
+    expect(vi.getTimerCount()).toBe(before);
+  });
+
+  it('a failed unlock leaves the running session untouched: its deadline stays where it was', async () => {
+    const { server } = await setUp();
+    const session = restart(server);
+    await session.unlock(PIN);
+    vi.advanceTimersByTime(HOUR);
+    expect(await session.unlock('999111')).toMatchObject({ ok: false, reason: 'wrong' });
+    vi.advanceTimersByTime(MS - HOUR - 1);
+    expect(session.isOpen()).toBe(true);
+    vi.advanceTimersByTime(1);
+    expect(session.isOpen()).toBe(false);
   });
 });

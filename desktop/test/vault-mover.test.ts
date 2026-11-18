@@ -972,6 +972,35 @@ describe('startMigration: the background run always ends with a final progress e
     expect(w.fetchImpl).not.toHaveBeenCalled();
   });
 
+  // Plan 2026-11-18-vault-session-6h, decision 7: listVault may ask for a run on every listing, so a second call must not start a second run.
+  it('does not start a second run while one is running: the items are moved in once and the second call is ignored', async () => {
+    const w = await world();
+    w.listed.live = [w.legacy('A'), w.legacy('B')];
+    w.listed.trash = [];
+    const first = vi.fn();
+    const second = vi.fn();
+    w.mover.startMigration(first);
+    w.mover.startMigration(second);
+    await vi.waitFor(() => expect(first.mock.lastCall?.[0]).toEqual({ done: 2, total: 2 }));
+    expect(w.client.moveIn.mock.calls.map(([id]) => id)).toEqual(['A', 'B']);
+    expect(second).not.toHaveBeenCalled();
+  });
+
+  it('starts a new run once the previous one is over', async () => {
+    const w = await world();
+    w.listed.live = [w.legacy('A')];
+    const first = vi.fn();
+    w.mover.startMigration(first);
+    await vi.waitFor(() => expect(first.mock.lastCall?.[0]).toEqual({ done: 1, total: 1 }));
+    w.listed.live = [w.legacy('B')];
+    const again = vi.fn();
+    await vi.waitFor(() => {
+      w.mover.startMigration(again);
+      expect(again.mock.lastCall?.[0]).toEqual({ done: 1, total: 1 });
+    });
+    expect(w.client.moveIn.mock.calls.map(([id]) => id)).toContain('B');
+  });
+
   it('still ends with { done: 0, total: 0 } when listing the Vault fails', async () => {
     const w = await world();
     w.client.listEverything.mockRejectedValueOnce(new ApiError('network', 'down'));

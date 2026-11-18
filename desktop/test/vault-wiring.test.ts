@@ -34,7 +34,7 @@ describe('wiring (static checks on files the unit tests cannot load)', () => {
   it('the bridge exposes the new Vault calls and not the old ones', () => {
     const preload = src('preload/index.ts');
     const contract = src('shared-ipc.ts');
-    for (const name of ['vaultStatus', 'vaultSetup', 'vaultUnlock', 'vaultRecover', 'vaultChangePin', 'vaultClose', 'listVault']) {
+    for (const name of ['vaultStatus', 'vaultSetup', 'vaultUnlock', 'vaultRecover', 'vaultChangePin', 'vaultLeave', 'listVault']) {
       expect(preload, name).toContain(name);
       expect(contract, name).toContain(name);
     }
@@ -42,6 +42,42 @@ describe('wiring (static checks on files the unit tests cannot load)', () => {
       expect(preload, old).not.toContain(old);
       expect(contract, old).not.toContain(`${old}(`);
     }
+  });
+
+  // Plan 2026-11-18-vault-session-6h, decision 4: the renderer's `vaultClose` is now `vaultLeave` (view-only close); only the main process
+  // (lock, reset, expiry) fully closes the Vault.
+  it('the renderer bridge calls it vaultLeave, not vaultClose: contract, preload and the main-process handler', () => {
+    const preload = src('preload/index.ts');
+    const contract = src('shared-ipc.ts');
+    const main = src('main/index.ts');
+    expect(contract).toMatch(/\bvaultLeave\(/);
+    expect(preload).toContain('vaultLeave:');
+    expect(preload).toContain("ipcRenderer.invoke('vaultLeave'");
+    expect(main).toContain("ipcMain.handle('vaultLeave'");
+    expect(contract).not.toContain('vaultClose');
+    expect(preload).not.toContain('vaultClose');
+    expect(main).not.toContain("ipcMain.handle('vaultClose'");
+  });
+
+  it('the main process maps vaultLeave to the core vaultLeave, and still fully closes the Vault on lock and reset', () => {
+    const main = src('main/index.ts');
+    expect(main).toMatch(/ipcMain\.handle\('vaultLeave',[^)]*\)\s*=>\s*vault\.vaultLeave\(\)/);
+    expect(main.match(/vault\.vaultClose\(\)/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  it('vaultUnlock carries the purpose through the bridge (preload and main handler)', () => {
+    const preload = src('preload/index.ts');
+    const contract = src('shared-ipc.ts');
+    const main = src('main/index.ts');
+    expect(contract).toMatch(/vaultUnlock\(pin: string, purpose\??: 'view' \| 'move'\)/);
+    expect(preload).toMatch(/vaultUnlock:\s*\(pin, purpose\)\s*=>\s*ipcRenderer\.invoke\('vaultUnlock', pin, purpose\)/);
+    expect(main).toMatch(/ipcMain\.handle\('vaultUnlock',\s*async \(_e, pin: unknown, purpose: unknown\)/);
+  });
+
+  it('Main.tsx calls vaultLeave (leaving the Vault screen) and never the full close', () => {
+    const main = src('renderer/src/components/Main.tsx');
+    expect(main).not.toContain('fatup.vaultClose');
+    expect(main).toContain('fatup.vaultLeave');
   });
 
   it('the bridge exposes the two-step Vault setup (review I1): contract, preload and the main-process handlers', () => {

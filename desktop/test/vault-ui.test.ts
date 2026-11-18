@@ -29,6 +29,8 @@
  * 14b. vaultItemState(item): 'pending' | 'encrypted' | 'unreadable' | 'plain' (spec 4.7d). 'pending' = `inVault && !encrypted` (the faded cloud),
  *      'encrypted' = `inVault && encrypted` (the green tick), 'unreadable' = `item.unreadable` (wins over 'encrypted': an unreadable item is
  *      an encrypted one that cannot be opened), 'plain' = anything else (not in the Vault). i18n keys `vaultStatePending`, `vaultStateEncrypted`.
+ * 14c. moveFailedMessageKey(failed: number): 'vaultMoveFailed' | null (plan 2026-11-18-vault-session-6h, decision 6). null when nothing failed,
+ *      otherwise the i18n key `vaultMoveFailed`, a function of `{ n }` in en and vi (the item stays in the Vault as a faded cloud and is encrypted again).
  * 15. Vault error strings (spec 4.7b I4): `err_<code>` in en and vi, read by errorText(dict, code).
  */
 import { describe, expect, it } from 'vitest';
@@ -752,5 +754,38 @@ describe('vault mode and trash strings', () => {
       expect(text).toContain('3');
       expect(fn({ n: 7 })).not.toBe(text);
     }
+  });
+});
+
+describe('moveFailedMessageKey: what to say when some files could not be moved into the Vault (plan 2026-11-18-vault-session-6h, decision 6)', () => {
+  it('says nothing when no file failed', async () => {
+    const { moveFailedMessageKey } = await lib();
+    expect(moveFailedMessageKey(0)).toBeNull();
+  });
+
+  it.each([1, 2, 17])('uses the vaultMoveFailed message when %i file(s) failed', async (n) => {
+    const { moveFailedMessageKey } = await lib();
+    expect(moveFailedMessageKey(n)).toBe('vaultMoveFailed');
+  });
+
+  it('keeps vaultMoveInPlan answering "move" for an open Vault, whatever its status (an open session moves at once, no PIN)', async () => {
+    const { vaultMoveInPlan } = await lib();
+    for (const status of ['none', 'ready', 'wiped'] as const) expect(vaultMoveInPlan(status, true)).toBe('move');
+  });
+
+  it('has vaultMoveFailed in both languages as a function of { n } that shows the count and explains the item is still in the Vault', () => {
+    for (const [lang, dict] of [
+      ['en', dictionaries.en as Record<string, unknown>],
+      ['vi', dictionaries.vi as Record<string, unknown>],
+    ] as const) {
+      const fn = dict.vaultMoveFailed as (a: { n: number }) => string;
+      expect(typeof fn, `${lang}.vaultMoveFailed`).toBe('function');
+      const text = fn({ n: 3 });
+      expect(text, lang).toContain('3');
+      expect(text.trim().length, lang).toBeGreaterThan(10);
+      expect(fn({ n: 8 }), lang).not.toBe(text);
+    }
+    const say = (dict: unknown) => (dict as Record<string, (a: { n: number }) => string>).vaultMoveFailed?.({ n: 3 });
+    expect(say(dictionaries.en)).not.toBe(say(dictionaries.vi));
   });
 });

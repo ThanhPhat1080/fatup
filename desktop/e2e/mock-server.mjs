@@ -512,6 +512,12 @@ export function startMockServer(realNow = Date.now(), options = {}) {
       if (!b) return badRequest('Body must be JSON');
       if (!isStr(b.encMeta) || !isStr(b.encKey) || !isInt(b.size)) return badRequest('encMeta, encKey and a non-negative integer size are required');
       const id = m[1];
+      // One-shot failure for the next complete to arrive: read from the options object when the request arrives (before the slow wait),
+      // so an area can set it while it runs; a complete already held by slowVaultComplete is not the one that fails.
+      if (options.failVaultComplete > 0) {
+        options.failVaultComplete -= 1;
+        return fail(500, 'e2e_failure', 'E2E: simulated failure of vault/in/complete');
+      }
       if (slowVaultComplete > 0) await new Promise((resolve) => setTimeout(resolve, slowVaultComplete));
       const existing = vaultItem(id);
       if (existing) {

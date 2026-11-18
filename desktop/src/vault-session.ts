@@ -18,6 +18,7 @@ import {
   unwrapMasterKey,
   wrapKey,
   VAULT_KDF_ITERATIONS,
+  VAULT_SESSION_MS,
   type FileItem,
   type VaultMeta,
   type VaultStatus,
@@ -89,6 +90,10 @@ export class VaultSession {
   #prepared: PreparedSetup | null = null;
   /** Counts the calls of `close()`. An opening call that finds it changed after an await must not keep the key it derived. */
   #generation = 0;
+  /** When the key was last opened plus `VAULT_SESSION_MS`; meaningful only while `#mk` is set. */
+  #deadline = 0;
+  #timer: ReturnType<typeof setTimeout> | null = null;
+  #onExpire: (() => void) | null = null;
   readonly #deps: VaultSessionDeps;
 
   constructor(deps: VaultSessionDeps) {
@@ -99,7 +104,9 @@ export class VaultSession {
     return this.#deps.client().vaultStatus();
   }
 
+  /** True while the key is held. Also closes the session when its 6 hours are over, in case the timer was throttled (a background tab). */
   isOpen(): boolean {
+    this.#expireIfDue();
     return this.#mk !== null;
   }
 
@@ -108,6 +115,40 @@ export class VaultSession {
     this.#generation++;
     this.#mk = null;
     this.#prepared = null;
+    if (this.#timer !== null) clearTimeout(this.#timer);
+    this.#timer = null;
+  }
+
+  /** Forgets only a prepared setup (`prepareSetup` without `commitSetup`); the key, if held, and its timer are untouched. */
+  discardSetup(): void {
+    this.#prepared = null;
+  }
+
+  /** Called after the session ended by itself (its 6 hours were over), never by `close()`: whoever keeps things made with the key drops them here. */
+  onExpire(cb: () => void): void {
+    this.#onExpire = cb;
+  }
+
+  /** Holds `mk` for `VAULT_SESSION_MS` from now. Every successful opening restarts the 6 hours; nothing else does. */
+  #hold(mk: CryptoKey): void {
+    if (this.#timer !== null) clearTimeout(this.#timer);
+    this.#mk = mk;
+    this.#deadline = Date.now() + VAULT_SESSION_MS;
+    const timer = setTimeout(() => {
+      if (this.#timer === timer) this.#expire();
+    }, VAULT_SESSION_MS);
+    // A pending timer must not keep a Node process alive (the DOM's timer id is a number and has no unref).
+    (timer as { unref?: () => void }).unref?.();
+    this.#timer = timer;
+  }
+
+  #expireIfDue(): void {
+    if (this.#mk !== null && Date.now() >= this.#deadline) this.#expire();
+  }
+
+  #expire(): void {
+    this.close();
+    this.#onExpire?.();
   }
 
   /** Why `pin` cannot be a Vault PIN, or null. Both ends are always checked against the app PIN. */
@@ -119,6 +160,7 @@ export class VaultSession {
   }
 
   #requireKey(): CryptoKey {
+    this.#expireIfDue();
     if (!this.#mk) throw new VaultLockedError();
     return this.#mk;
   }
@@ -161,7 +203,7 @@ export class VaultSession {
     }
     if (generation !== this.#generation) return { ok: false, error: CLOSED };
     this.#prepared = null;
-    this.#mk = prepared.mk;
+    this.#hold(prepared.mk);
     return { ok: true };
   }
 
@@ -184,7 +226,7 @@ export class VaultSession {
       const { serverSecret, wrappedMkPin } = await client.vaultUnlock({ authKey });
       const mk = await unwrapMasterKey(wrappedMkPin, await kekFrom(wrapBase, serverSecret));
       if (generation !== this.#generation) return { ok: false, reason: 'error', error: CLOSED };
-      this.#mk = mk;
+      this.#hold(mk);
       return { ok: true };
     } catch (err) {
       return unlockFailure(err);
@@ -215,7 +257,7 @@ export class VaultSession {
       await client.vaultSetPin({ proof: { rkAuth }, ...next.request });
       const mk = await unwrapMasterKey(next.request.wrappedMkPin, next.kek);
       if (generation !== this.#generation) return { ok: false, error: CLOSED };
-      this.#mk = mk;
+      this.#hold(mk);
       return { ok: true };
     } catch (err) {
       return { ok: false, error: errorCode(err) };
@@ -240,7 +282,7 @@ export class VaultSession {
       await client.vaultSetPin({ proof: { authKey }, ...next.request });
       const mk = await unwrapMasterKey(next.request.wrappedMkPin, next.kek);
       if (generation !== this.#generation) return { ok: false, reason: 'error', error: CLOSED };
-      this.#mk = mk;
+      this.#hold(mk);
       return { ok: true };
     } catch (err) {
       return unlockFailure(err);

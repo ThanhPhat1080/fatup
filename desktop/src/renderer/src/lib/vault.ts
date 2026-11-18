@@ -190,15 +190,25 @@ export function vaultText(dict: Record<string, unknown>, message: GateMessage): 
 }
 
 /**
- * Where a move into the Vault starts (spec 4.7b I2, 4.7d). An open Vault moves at once; a set-up Vault that is closed asks for the
- * 6-digit PIN first, a wiped one goes to the recovery screen first. A Vault that is not set up opens the setup wizard first, and the files
- * move once it is done (there is no plain move any more). `none` with an open Vault cannot happen; it moves.
+ * Where a move into the Vault starts (spec 4.7b I2, 4.7d). `open` means the Vault key is held (the 6-hour session after a correct PIN),
+ * not that the Vault screen is showing: an open Vault moves at once, whatever its status, with no PIN. A set-up Vault that is closed
+ * asks for the 6-digit PIN first (a small popup over the list), a wiped one goes to the recovery screen first. A Vault that is not set
+ * up opens the setup wizard first, and the files move once it is done (there is no plain move any more). `none` with an open Vault
+ * cannot happen; it moves.
  */
 export function vaultMoveInPlan(status: 'none' | 'ready' | 'wiped', open: boolean): 'setup' | 'move' | 'unlock' | 'recover' {
   if (open) return 'move';
   if (status === 'ready') return 'unlock';
   if (status === 'wiped') return 'recover';
   return 'setup';
+}
+
+/**
+ * The i18n key of the message for files that could not be moved into the Vault, or null when none failed. The failed files stay in the
+ * Vault as pending (faded cloud) and are encrypted again later, so the message is a function of the count (`{ n }`).
+ */
+export function moveFailedMessageKey(failed: number): 'vaultMoveFailed' | null {
+  return failed > 0 ? 'vaultMoveFailed' : null;
 }
 
 /** Where the recovery screen goes after a failed `vaultRecover`: back to the key, back to the PIN, or stay on the repeat step. */

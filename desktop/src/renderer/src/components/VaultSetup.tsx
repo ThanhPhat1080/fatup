@@ -31,7 +31,7 @@ export function VaultSetup({ onDone, onBack }: Props) {
   // Leaving the wizard before the commit discards the prepared setup (the Vault is closed, its keys forgotten).
   useEffect(
     () => () => {
-      if (!committed.current) void window.fatup.vaultClose();
+      if (!committed.current) void window.fatup.vaultLeave();
     },
     [],
   );

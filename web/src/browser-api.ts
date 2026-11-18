@@ -299,10 +299,10 @@ export function installBrowserApi(): void {
     vaultSetup: (pin) => webVault.vaultSetup(pin),
     vaultSetupPrepare: (pin) => webVault.vaultSetupPrepare(pin),
     vaultSetupCommit: () => webVault.vaultSetupCommit(),
-    vaultUnlock: (pin) => webVault.vaultUnlock(pin),
+    vaultUnlock: (pin, purpose) => webVault.vaultUnlock(pin, purpose),
     vaultRecover: (recoveryKey, newPin) => webVault.vaultRecover(recoveryKey, newPin),
     vaultChangePin: (oldPin, newPin) => webVault.vaultChangePin(oldPin, newPin),
-    vaultClose: async () => webVault.vaultClose(),
+    vaultLeave: async () => webVault.vaultLeave(),
     listVault: async (opts) => {
       const res = await webVault.listVault(opts);
       if (!res.ok) return res;

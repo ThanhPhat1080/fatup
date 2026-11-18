@@ -4,7 +4,7 @@ import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shar
 import { DEFAULT_QUOTA_BYTES, isShareable, type TagColor } from '@fatup/shared';
 import { DEFAULT_SORT, groupByDay, groupByDomain, inTab, matchesLink, matchesQuery, matchesSite, matchesTags, singleGroup, siteCounts, sortItems, type SiteFilter, type SortKey, type SortState } from '../lib/format';
 import { errorText, useI18n } from '../lib/i18n';
-import { canMoveOut, undoVaultDelete, vaultMoveInPlan } from '../lib/vault';
+import { canMoveOut, moveFailedMessageKey, undoVaultDelete, vaultMoveInPlan } from '../lib/vault';
 import { AddLinkDialog } from './AddLinkDialog';
 import { ConfirmDialog } from './Dialog';
 import { EmptyState, FileGrid, FileList } from './Files';
@@ -24,6 +24,7 @@ import { VaultTrashIcon } from './VaultTrashIcon';
 import { TrashIcon } from './TrashIcon';
 import { InfoPopover } from './InfoPopover';
 import { VaultGate } from './VaultGate';
+import { VaultPinDialog } from './VaultPinDialog';
 import { VaultSetup } from './VaultSetup';
 import { VaultRecover } from './VaultRecover';
 import { StorageMeter } from './StorageMeter';
@@ -103,8 +104,6 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const searchRef = useRef<HTMLInputElement>(null);
   /** Ids on their way into the Vault: they stay out of the main list until the move ends, even if a refresh that started earlier answers with them. */
   const enteringVault = useRef(new Set<string>());
-  const inVaultRef = useRef(false);
-  inVaultRef.current = inVault;
 
   // Reads vaultActiveRef, not the render's value, so a refresh started by a move that ends later still sees a Vault opened meanwhile.
   const refresh = useCallback(async () => {
@@ -255,13 +254,13 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
 
   // The Vault closes whenever you leave it, so coming back always asks for the PIN again.
   const leaveVault = useCallback(() => {
-    void window.fatup.vaultClose();
+    void window.fatup.vaultLeave();
     setInVault(false);
     setVaultUnlocked(false);
     setVaultItems(null);
     setVaultTrashOpen(false);
   }, []);
-  useEffect(() => () => void window.fatup.vaultClose(), []);
+  useEffect(() => () => void window.fatup.vaultLeave(), []);
 
   const toggleTrash = () => {
     if (inVault) leaveVault();
@@ -307,11 +306,14 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   /** Setup or recovery is done: the Vault is open already, so the list shows it straight away. */
   const vaultFlowDone = () => {
     setVaultFlow(null);
-    // Recovery that was started to move files in from the list: the files go in and the Vault closes again, the list stays.
+    // Setup or recovery that was started to move files in from the list: the view is dropped first (moving needs only the key, which
+    // stays held for the session, so nothing asks for the PIN again), then the files go in. Dropping it afterwards would kick the
+    // user out of the Vault if they went in meanwhile. The list stays.
     if (pendingMove) {
       const targets = pendingMove;
       setPendingMove(null);
-      void moveInAndClose(targets);
+      void window.fatup.vaultLeave();
+      void performMoveIn(targets);
       return;
     }
     setInTrash(false);
@@ -393,6 +395,8 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     });
     if (!res.ok) {
       if (res.error === 'locked') onLocked();
+      // The 6 hours ran out while the files were on their way: the PIN popup comes back with the same files.
+      else if (into && res.error === 'vault_locked') setPendingMove(targets);
       else toast(errorText(t, res.error), true);
       return null;
     }
@@ -411,21 +415,12 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     setPdfId(null);
     const status = await window.fatup.vaultStatus();
     if (!status.ok) return toast(errorText(t, status.error), true);
-    const plan = vaultMoveInPlan(status.value.state, inVault && vaultUnlocked);
+    // `open` = the key is held (6 hours after a correct PIN): no PIN is asked again for moving files in.
+    const plan = vaultMoveInPlan(status.value.state, status.value.open || (inVault && vaultUnlocked));
     if (plan === 'move') return performMoveIn(targets);
+    // 'unlock' shows the PIN popup over the list; 'setup' / 'recover' show their screen first, and the files move when it is done (vaultFlowDone).
     setPendingMove(targets);
-    // No Vault yet: the setup wizard first; the files move when it is done (vaultFlowDone), as after a recovery.
     if (plan === 'setup' || plan === 'recover') setVaultFlow(plan);
-  }
-
-  /** Runs the move into the Vault that was waiting for the PIN or recovery, then closes the Vault again. */
-  async function moveInAndClose(targets: Item[]) {
-    try {
-      await performMoveIn(targets);
-    } finally {
-      // A Vault the user opened during the move stays open.
-      if (!inVaultRef.current) leaveVault();
-    }
   }
 
   /**
@@ -448,7 +443,11 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     if (!moved) return;
     const { done, failed } = moved;
     const endedShare = targets.some((it) => it.shared && done.has(it.id));
-    report(done.size, failed, endedShare ? `${t.movedToVault(done.size)}. ${t.shareLinkEnded}` : t.movedToVault(done.size));
+    // What did move (and a share that ended with it) is always said; when some failed, the failure message follows in the same toast.
+    const success = done.size === 0 ? '' : endedShare ? `${t.movedToVault(done.size)}. ${t.shareLinkEnded}` : t.movedToVault(done.size);
+    const failKey = moveFailedMessageKey(failed);
+    if (failKey) return toast(success ? `${success}. ${t[failKey]({ n: failed })}` : t[failKey]({ n: failed }), true);
+    toast(success);
   }
 
   async function removeFromVault(targets: Item[]) {
@@ -824,8 +823,17 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       {filterTags}
     </>
   );
-  // On the links tab the title joins the platform filters on one row (see SiteFilterBar) instead of sitting on its own line.
-  const viewTitle = !linkTab && titleContent ? <h2 className="view-title">{titleContent}</h2> : null;
+  // Where you are (icon and name) sits above the toolbar island, on every tab. In the Vault the Vault's trash opens from the same row, at the right.
+  const viewHead = titleContent ? (
+    <div className="view-head">
+      <h2 className="view-title">{titleContent}</h2>
+      {inVault && vaultUnlocked && (
+        <button className={`icon-btn vault-trash-btn${vaultTrashOpen ? ' is-active' : ''}`} onClick={() => setVaultTrashOpen((v) => !v)} title={t.vaultTrashOpen} aria-label={t.vaultTrashOpen} aria-pressed={vaultTrashOpen}>
+          <VaultTrashIcon size={22} />
+        </button>
+      )}
+    </div>
+  ) : null;
 
   // The back arrow of the Vault, like the Trash's. The name is the title above the table, not repeated here.
   const vaultBackBar = (
@@ -876,11 +884,6 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           <button key={shiver} className={`icon-btn${inVault ? ' is-active' : ''}${shiver > 0 ? ' vault-btn--shiver' : ''}`} onClick={toggleVault} title={inVault ? t.closeVault : t.vault} aria-label={inVault ? t.closeVault : t.vault} aria-pressed={inVault}>
             <VaultIcon size={26} />
           </button>
-          {inVault && vaultUnlocked && (
-            <button className={`icon-btn vault-trash-btn${vaultTrashOpen ? ' is-active' : ''}`} onClick={() => setVaultTrashOpen((v) => !v)} title={t.vaultTrashOpen} aria-label={t.vaultTrashOpen} aria-pressed={vaultTrashOpen}>
-              <VaultTrashIcon size={22} />
-            </button>
-          )}
           <button key={`trash${trashKick}`} className={`icon-btn${inTrash ? ' is-active trash-btn--active' : ''}${trashKick > 0 && inTrash ? ' trash-btn--open' : ''}`} onClick={toggleTrash} title={inTrash ? t.backToFiles : t.trash} aria-label={inTrash ? t.backToFiles : t.trash} aria-pressed={inTrash}>
             <TrashIcon size={20} />
           </button>
@@ -895,22 +898,11 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           <VaultSetup onDone={vaultFlowDone} onBack={cancelVaultFlow} />
         ) : vaultFlow === 'recover' ? (
           <VaultRecover onDone={vaultFlowDone} onBack={cancelVaultFlow} />
-        ) : pendingMove ? (
-          // Moving files into the Vault from the list: the PIN first; the list is still behind it.
-          <VaultGate
-            hint={t.vaultUnlockToMove}
-            onUnlocked={() => {
-              const targets = pendingMove;
-              setPendingMove(null);
-              void moveInAndClose(targets);
-            }}
-            onBack={() => setPendingMove(null)}
-            onRecover={() => setVaultFlow('recover')}
-          />
         ) : inVault && !vaultUnlocked ? (
           <VaultGate onUnlocked={() => setVaultUnlocked(true)} onBack={leaveVault} onRecover={recoverVault} />
         ) : (
           <>
+        {viewHead}
         {picked.length > 0 ? (
           <div className="selbar" role="toolbar" aria-label={t.selectedN(picked.length)}>
             <button className="icon-btn" onClick={clearSelection} title={t.clearSelection} aria-label={t.clearSelection}>
@@ -1049,7 +1041,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           </div>
         )}
 
-        {linkTab && <SiteFilterBar value={siteFilter} onChange={setSiteFilter} counts={counts} title={titleContent || undefined} />}
+        {linkTab && <SiteFilterBar value={siteFilter} onChange={setSiteFilter} counts={counts} />}
 
         {error && (
           <div className="banner" role="alert">
@@ -1060,7 +1052,6 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           </div>
         )}
 
-        {viewTitle}
 
         <div className="panel__scroll">
           {!loaded ? (
@@ -1108,6 +1099,20 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
           </>
         )}
       </main>
+
+      {/* Moving files into the Vault from the list: the PIN popup sits over the list, which stays in view. */}
+      {pendingMove && !vaultFlow && (
+        <VaultPinDialog
+          count={pendingMove.length}
+          onUnlocked={() => {
+            const targets = pendingMove;
+            setPendingMove(null);
+            void performMoveIn(targets);
+          }}
+          onCancel={() => setPendingMove(null)}
+          onRecover={() => setVaultFlow('recover')}
+        />
+      )}
 
       {vaultTrashOpen && inVault && vaultUnlocked && (
         <VaultTrash onClose={() => setVaultTrashOpen(false)} onChanged={refresh} onLocked={onLocked} />

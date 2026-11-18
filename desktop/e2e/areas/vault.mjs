@@ -1,6 +1,7 @@
 // E2E area "vault": the encrypted Vault end to end: setup wizard with the recovery key, upload into the Vault, delete to its trash
 // (Undo toast), the trash panel (sidebar at 1280 px, full screen at 400 px), restore, close, and unlock with a wrong PIN twice, then the right one.
-// Last: move a seeded file into the Vault from the main list (the PIN prompt comes first and the list stays in view), then check it inside.
+// Then the held key (6 h after the PIN): entering the Vault always asks the PIN, but moving files in from the main list asks nothing while
+// the key is held. After a restart (no key) the small popup comes over the list: wrong PIN, cancel, right PIN, and a failed move's toast.
 // Run alone: npm run e2e -- vault   (see ../smoke.mjs)
 import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
@@ -60,7 +61,7 @@ function makePng(width, height) {
 
 /** @param {Awaited<ReturnType<typeof import('../harness.mjs').createHarness>>} h */
 export async function run(h) {
-  const { app, page } = await h.launchReady();
+  let { app, page } = await h.launchReady();
   const vaultRow = () => page.locator('.list__row', { hasText: PICTURE });
 
   h.log('vault: open the setup wizard');
@@ -152,10 +153,17 @@ export async function run(h) {
   await page.getByRole('button', { name: 'Đóng Két sắt' }).click();
   await page.locator('.app:not(.vault-mode)').waitFor();
   assert.equal(await page.locator('.list__row', { hasText: PICTURE }).count(), 0, 'the Vault picture is not in the normal list');
+  // Leaving the Vault keeps the key for moving files in (6 hours), while viewing still asks for the PIN below.
+  assert.equal((await page.evaluate(() => window.fatup.vaultStatus())).value.open, true, 'the key is still held after leaving the Vault');
 
-  h.log('vault: gate, wrong PIN twice');
+  h.log('vault: entering again asks for the PIN although the key is held');
   await page.getByRole('button', { name: 'Két sắt', exact: true }).first().click();
   await page.locator('.vaultscreen .pin__input').waitFor();
+  assert.equal(await page.locator('.vaultscreen .vault-card').count(), 0, 'the Vault card (setup) is not shown: this is the gate');
+  assert.equal(await page.locator('.vault-label').count(), 0, 'the Vault label (unlocked view) is not shown behind the gate');
+  assert.equal(await page.locator('.list__row', { hasText: PICTURE }).count(), 0, 'no Vault picture is shown behind the gate');
+
+  h.log('vault: gate, wrong PIN twice');
   await typePin(page, WRONG);
   await page.getByText('Sai PIN. Còn 9 lần thử.', { exact: true }).waitFor();
   await typePin(page, WRONG);
@@ -180,43 +188,42 @@ export async function run(h) {
   await h.shot(page, '13f-vault-list-dark');
   await page.emulateMedia({ colorScheme: 'light' });
 
-  h.log('vault: move a seeded file in from the main list');
-  // The Vault is closed now (the back button left it). Moving in asks for the PIN first; the list stays behind the prompt.
-  const SEEDED = 'Đà Lạt trip.jpg';
-  const seeded = page.locator('.list__row', { hasText: SEEDED });
-  const gate = page.locator('.vaultscreen');
-  await seeded.waitFor();
-  await seeded.click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Chuyển vào Két sắt' }).click();
-  await gate.locator('.pin__input').waitFor();
-  await page.getByText('Nhập PIN két sắt để cất các file này vào két.', { exact: true }).waitFor();
-  assert.equal(await page.locator('.app.vault-mode').count(), 0, 'the PIN prompt does not open the Vault view');
-  await page.waitForTimeout(800); // let the gate's entrance animation settle before the screenshot
-  await h.shot(page, '13g-vault-move-unlock-prompt');
-  await typePin(page, PIN);
+  // Moving files in from the main list (plan 2026-11-18-vault-session-6h, decisions 3-6). The key is held for 6 hours after the PIN,
+  // so the first moves ask nothing; a fresh launch holds no key, and then the small popup comes over the list.
+  let gate = page.locator('.vaultscreen');
+  let popup = page.getByRole('dialog', { name: 'Mở Két sắt' });
+  const moveFromList = async (name) => {
+    const row = page.locator('.list__row', { hasText: name });
+    await row.waitFor();
+    await row.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Chuyển vào Két sắt' }).click();
+    return row;
+  };
 
-  h.log('vault: the file leaves the list and the Vault closes again');
-  await gate.waitFor({ state: 'detached', timeout: 20_000 });
-  await seeded.waitFor({ state: 'detached', timeout: 30_000 });
-  assert.equal(await page.locator('.app.vault-mode').count(), 0, 'the user stays on the main list');
-  assert.equal(await page.locator('.app:not(.vault-mode)').count(), 1, 'the main list is still shown');
+  h.log('vault: move two files in while the key is held: no popup, no Vault view');
+  const DALAT = 'Đà Lạt trip.jpg';
+  const SECOND = 'IMG_20261105_1012.jpg';
+  const first = await moveFromList(DALAT);
+  await first.waitFor({ state: 'detached', timeout: 30_000 });
+  const second = await moveFromList(SECOND); // right after the first one
+  await second.waitFor({ state: 'detached', timeout: 30_000 });
+  assert.equal(await popup.count(), 0, 'with the key held, moving in shows no PIN popup');
+  assert.equal(await gate.count(), 0, 'with the key held, moving in shows no gate');
+  assert.equal(await page.locator('.app.vault-mode').count(), 0, 'the app stays on the main list');
+  await h.shot(page, '15a-move-held-no-prompt');
 
-  h.log('vault: the file is inside the Vault');
+  h.log('vault: the moved files are pending, then encrypted');
+  // The mock holds vault/in/complete for `mock.slowVaultComplete` ms; the Vault is opened during that wait, so the files are pending.
   await page.getByRole('button', { name: 'Két sắt', exact: true }).first().click();
   await gate.locator('.pin__input').waitFor();
   await typePin(page, PIN);
   await page.locator('.app.vault-mode').waitFor({ timeout: 20_000 });
-  await page.locator('.list__row', { hasText: SEEDED }).waitFor();
-  assert.equal(await page.locator('.list__row', { hasText: SEEDED }).count(), 1, 'the seeded file is listed inside the Vault');
-  await h.shot(page, '13h-vault-contains-moved');
-
-  // The mock holds vault/in/complete for `mock.slowVaultComplete` ms, and this Vault was opened during that wait: the file is pending (faded cloud).
-  // When the move ends, the open Vault refreshes by itself and the file turns into the encrypted tick, with no click.
-  h.log('vault: the moved file is pending, then encrypted');
-  const movedRow = page.locator('.list__row', { hasText: SEEDED });
+  const movedRow = page.locator('.list__row', { hasText: DALAT });
+  const secondRow = page.locator('.list__row', { hasText: SECOND });
   await movedRow.locator('[data-vault-state="pending"]').waitFor({ timeout: 5_000 });
   await h.shot(page, '14c-vault-state-pending');
   await movedRow.locator('[data-vault-state="encrypted"]').waitFor({ timeout: 30_000 });
+  await secondRow.locator('[data-vault-state="encrypted"]').waitFor({ timeout: 30_000 });
   assert.equal(await movedRow.locator('[data-vault-state="pending"]').count(), 0, 'no pending mark is left once the file is encrypted');
 
   h.log('vault: state icons, list and phone');
@@ -226,7 +233,113 @@ export async function run(h) {
   await movedRow.locator('[data-vault-state="encrypted"]').waitFor();
   await h.shot(page, '14b-vault-state-icons-phone');
   await page.setViewportSize({ width: 1180, height: 760 });
+  await page.getByRole('button', { name: 'Quay lại danh sách file' }).first().click();
+  await page.locator('.app:not(.vault-mode)').waitFor();
+
+  // A fresh launch holds no key (the process held it, and it is gone). The app lock comes first, then the list.
+  h.log('vault: restart: the key is not held any more');
+  await h.closeApp(app);
+  ({ app, page } = await h.launch());
+  // Locators are bound to a page: rebind the ones made for the old window.
+  gate = page.locator('.vaultscreen');
+  popup = page.getByRole('dialog', { name: 'Mở Két sắt' });
+  await page.locator('.pin__input').waitFor();
+  await typePin(page, '1234'); // the app PIN from launchReady
+  await page.getByText('Hôm nay').first().waitFor();
+
+  h.log('vault: move in with no key: the small popup over the list');
+  const BOARDING = 'boarding-pass.pdf';
+  const boarding = await moveFromList(BOARDING);
+  await popup.waitFor();
+  assert.equal(await gate.count(), 0, 'the full-screen gate does not open for the popup');
+  assert.equal(await page.locator('.app.vault-mode').count(), 0, 'the Vault view does not open for the popup');
+  assert.equal(await boarding.count(), 1, 'the file list stays in view behind the popup');
+  await page.waitForTimeout(800); // let the popup settle before the screenshot
+  await h.shot(page, '15b-vault-popup-desktop');
+
+  h.log('vault: the popup fits at phone width');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  assert.equal(await popup.locator('.pin__cell').count(), 6, 'six PIN cells');
+  const geo = await page.evaluate(() => {
+    const d = document.querySelector('[role="dialog"][aria-label="Mở Két sắt"]');
+    const r = d.getBoundingClientRect();
+    return {
+      dialog: { left: r.left, right: r.right, sw: d.scrollWidth, cw: d.clientWidth },
+      cells: [...d.querySelectorAll('.pin__cell')].map((c) => c.getBoundingClientRect()).map((c) => ({ left: c.left, right: c.right, width: c.width })),
+      pageOverflow: document.documentElement.scrollWidth - window.innerWidth,
+    };
+  });
+  for (const c of geo.cells) {
+    assert.ok(c.left >= geo.dialog.left && c.right <= geo.dialog.right, `a PIN cell is inside the dialog (${JSON.stringify(c)} vs ${JSON.stringify(geo.dialog)})`);
+  }
+  assert.ok(geo.dialog.sw <= geo.dialog.cw + 1, `the dialog does not overflow sideways (scrollWidth ${geo.dialog.sw}, clientWidth ${geo.dialog.cw})`);
+  assert.ok(geo.pageOverflow <= 0, `no horizontal page scroll at 390 px (overflow ${geo.pageOverflow})`);
+  await h.shot(page, '15c-vault-popup-phone');
+
+  h.log('vault: wrong PIN shows the error in the popup');
+  await typePin(page, WRONG);
+  await popup.getByText(/Sai PIN\. Còn \d+ lần thử\./).waitFor();
+  await h.shot(page, '15d-vault-popup-wrong-pin');
+  assert.equal(await boarding.count(), 1, 'a wrong PIN moves nothing');
+
+  h.log('vault: cancel closes the popup and moves nothing');
+  await popup.getByRole('button', { name: 'Hủy', exact: true }).click();
+  await popup.waitFor({ state: 'detached' });
+  assert.equal(await boarding.count(), 1, 'cancel leaves the file in the list');
+  assert.equal((await page.evaluate(() => window.fatup.vaultStatus())).value.open, false, 'cancel holds no key');
+
+  h.log('vault: the right PIN moves the file, the app stays on the list');
+  await page.setViewportSize({ width: 1180, height: 760 });
+  await page.waitForTimeout(300);
+  await boarding.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Chuyển vào Két sắt' }).click();
+  await popup.waitFor();
+  await typePin(page, PIN);
+  await boarding.waitFor({ state: 'detached', timeout: 30_000 });
+  await popup.waitFor({ state: 'detached' });
+  assert.equal(await page.locator('.app.vault-mode').count(), 0, 'the user stays on the main list');
+  assert.equal(await gate.count(), 0, 'no gate after the popup');
+
+  h.log('vault: a second move right after asks nothing');
+  const CHI = 'chi-tieu-2026.xlsx';
+  const chi = await moveFromList(CHI);
+  await chi.waitFor({ state: 'detached', timeout: 30_000 });
+  assert.equal(await popup.count(), 0, 'the second move shows no popup');
+
+  h.log('vault: a failed move says the files are in the Vault as faded cloud');
+  // The second move's complete is held for slowVaultComplete ms, so wait for its success toast before arming the one-shot failure
+  // (otherwise the switch could hit that earlier request). Then the next vault/in/complete fails with a 500 and the mover puts the file in `failed`.
+  await page.locator('.toast', { hasText: 'Đã chuyển 1 file vào Két sắt' }).waitFor({ timeout: 20_000 });
+  await page.locator('.toast').waitFor({ state: 'detached', timeout: 15_000 });
+  mock.failVaultComplete = 1;
+  const FAIL = 'Screenshot_2026-11-12.png';
+  const failed = await moveFromList(FAIL);
+  await failed.waitFor({ state: 'detached', timeout: 30_000 });
+  const toast = page.locator('.toast', { hasText: 'Chưa cất được 1 file' });
+  await toast.waitFor({ timeout: 15_000 });
+  const toastText = (await toast.textContent()) ?? '';
+  assert.match(toastText, /đám mây mờ/, 'the toast names the faded cloud icon');
+  assert.match(toastText, /danh sách chính/, 'the toast says a file left in the main list can be moved again');
+  assert.doesNotMatch(toastText, /failed|không thành công/i, 'the toast is not a bare failure count');
+  await h.shot(page, '15e-vault-move-failed-toast');
+  mock.failVaultComplete = 0;
+
+  h.log('vault: the failed file is inside the Vault');
+  await page.getByRole('button', { name: 'Két sắt', exact: true }).first().click();
+  await gate.locator('.pin__input').waitFor();
+  await typePin(page, PIN);
+  await page.locator('.app.vault-mode').waitFor({ timeout: 20_000 });
+  const failedRow = page.locator('.list__row', { hasText: FAIL });
+  await failedRow.waitFor();
+  const state = await failedRow.locator('[data-vault-state]').getAttribute('data-vault-state');
+  assert.ok(state === 'pending' || state === 'encrypted', `the failed file is in the Vault as ${state} (not plain)`);
+  await h.shot(page, '15f-vault-failed-file-inside');
+  await page.setViewportSize({ width: 1180, height: 760 });
 }
 
-/** The seeded move is held in the mock for this long, so the Vault can be opened while the file is still pending. */
-export const mock = { slowVaultComplete: 8000 };
+/**
+ * Timing and failure switches for the mock. slowVaultComplete holds each vault/in/complete for 8 s, so a move stays pending while the
+ * Vault is opened. failVaultComplete is set by the area at run time (it is the same object the mock reads).
+ */
+export const mock = { slowVaultComplete: 8000, failVaultComplete: 0 };

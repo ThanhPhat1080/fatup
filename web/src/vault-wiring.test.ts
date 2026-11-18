@@ -40,6 +40,16 @@ describe('wiring (static checks on files the unit tests cannot load)', () => {
     expect(reset).toMatch(/vaultClose\(\)/);
   });
 
+  // Plan 2026-11-18-vault-session-6h, decision 4: the bridge's `vaultClose` is now `vaultLeave`; only lock/reset fully close the Vault.
+  it('the bridge exposes vaultLeave (view-only close) and no longer a vaultClose of its own', () => {
+    expect(api).toMatch(/\n    vaultLeave: async \(\) => webVault\.vaultLeave\(\)/);
+    expect(api).not.toMatch(/\n    vaultClose:/);
+  });
+
+  it('vaultUnlock carries the purpose to the web Vault', () => {
+    expect(api).toMatch(/vaultUnlock: \(pin, purpose\) => webVault\.vaultUnlock\(pin, purpose\)/);
+  });
+
   it('the dev server proxies /vault to the Worker (a new top-level API path must be listed in API_PATHS)', () => {
     const line = /const API_PATHS = \[([^\]]*)\]/.exec(viteConfigSource)?.[1] ?? '';
     expect(line).toContain("'vault'");
