@@ -1,8 +1,9 @@
 import { useRef, useState, type MouseEvent, type PointerEvent } from 'react';
-import { ArrowDown, ArrowUp, ChevronRight, Copy, Download, MoreVertical, Pencil, SquareArrowOutUpRight, Users } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronRight, Cloud, CircleCheck, Copy, Download, MoreVertical, Pencil, SquareArrowOutUpRight, Users } from 'lucide-react';
 import type { Item } from '../../../shared-ipc';
 import { cowsay, formatSize, formatTime, type DateGroup, type SortKey, type SortState } from '../lib/format';
 import { useI18n } from '../lib/i18n';
+import { vaultItemState } from '../lib/vault';
 import { CowThumb } from './CowThumb';
 import { FileIcon } from './FileIcon';
 import { SiteBadge, siteIcons } from './SiteBadge';
@@ -227,9 +228,10 @@ export function TagDots({ tags }: { tags: Item['tags'] }) {
 }
 
 function Thumb({ item }: { item: Item }) {
-  const [failed, setFailed] = useState(false);
-  if (item.thumbUrl && !failed) {
-    return <img src={item.thumbUrl} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} />;
+  // The failed address is remembered, so a different address (a later real one) is tried again.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (item.thumbUrl && item.thumbUrl !== failedSrc) {
+    return <img src={item.thumbUrl} alt="" loading="lazy" draggable={false} onError={() => setFailedSrc(item.thumbUrl)} />;
   }
   if (item.kind === 'link') {
     // No preview image (yet, or the page has none): a little cow keeps the card from looking broken.
@@ -248,9 +250,10 @@ function Thumb({ item }: { item: Item }) {
 
 /** The little picture before a name in the list: the thumbnail, or (when there is none or it fails to load) the file icon, or the platform logo for a link. The cow is for the grid only. */
 function MiniThumb({ item }: { item: Item }) {
-  const [failed, setFailed] = useState(false);
-  if (item.thumbUrl && !failed) {
-    return <img className="list__mini" src={item.thumbUrl} alt="" loading="lazy" draggable={false} onError={() => setFailed(true)} />;
+  // The failed address is remembered, so a different address (a later real one) is tried again.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  if (item.thumbUrl && item.thumbUrl !== failedSrc) {
+    return <img className="list__mini" src={item.thumbUrl} alt="" loading="lazy" draggable={false} onError={() => setFailedSrc(item.thumbUrl)} />;
   }
   return item.kind === 'link' ? <SiteBadge site={item.site ?? 'internet'} size={24} icons={siteIcons(item)} /> : <FileIcon name={item.name} mime={item.mime} />;
 }
@@ -263,6 +266,35 @@ function KindIcon({ item, size }: { item: Item; size: number }) {
 
 type ItemProps = Pick<ViewProps, 'selected' | 'onToggle' | 'onOpen' | 'onMenu' | 'onEdit' | 'onShare' | 'onCopyLink' | 'onImportant' | 'onDownload'> & { item: Item };
 type RowProps = ItemProps & { siteColumn: boolean; actions: boolean; /** The list mixes links with files: non-link rows keep an empty slot where a link's copy button is, so every pencil lines up. */ copySlot?: boolean };
+
+/** An unreadable Vault item shows a note in place of its name. */
+function vaultLabel(item: Item, t: { vaultUnreadable: string }): string {
+  return item.unreadable ? t.vaultUnreadable : item.name;
+}
+
+/**
+ * The state of a Vault item (spec 4.7d): a faded cloud while it is in the Vault but not encrypted yet, a green tick once it is.
+ * Nothing for plain items and unreadable ones. The icon is always the same width, so the name does not move when it changes.
+ */
+function VaultState({ item }: { item: Item }) {
+  const { t } = useI18n();
+  const state = vaultItemState(item);
+  if (state === 'pending') {
+    return (
+      <span className="vault-state vault-state--pending" data-vault-state="pending" role="img" title={t.vaultStatePending} aria-label={t.vaultStatePending}>
+        <Cloud size={18} aria-hidden />
+      </span>
+    );
+  }
+  if (state === 'encrypted') {
+    return (
+      <span className="vault-state vault-state--encrypted" data-vault-state="encrypted" role="img" title={t.vaultStateEncrypted} aria-label={t.vaultStateEncrypted}>
+        <CircleCheck size={18} aria-hidden />
+      </span>
+    );
+  }
+  return null;
+}
 
 function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, onDownload }: ItemProps) {
   const { t } = useI18n();
@@ -282,8 +314,9 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCop
         <ImportantButton on={!!item.important} onToggle={onImportant && (() => onImportant(item))} />
         <KindIcon item={item} size={18} />
         <span className="tile__name" title={item.name}>
-          {item.name}
+          {vaultLabel(item, t)}
         </span>
+        <VaultState item={item} />
         <TagDots tags={item.tags} />
         {item.shared && onShare && (
           // Always visible (it is a state), floating over the end of the name like the pencil does; it slides left when the pencil appears.
@@ -322,6 +355,7 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCop
 }
 
 function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, siteColumn, actions, copySlot }: RowProps) {
+  const { t } = useI18n();
   const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
   return (
     <div className={`list__row${selected.has(item.id) ? ' list__row--selected' : ''}`} role="row" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && onOpen(item)} {...press}>
@@ -339,8 +373,9 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopy
       <span className="list__name" role="cell">
         {!siteColumn && <MiniThumb item={item} />}
         <span className="ellipsis" title={item.url ?? item.name}>
-          {item.name}
+          {vaultLabel(item, t)}
         </span>
+        <VaultState item={item} />
         <TagDots tags={item.tags} />
       </span>
       {actions && (

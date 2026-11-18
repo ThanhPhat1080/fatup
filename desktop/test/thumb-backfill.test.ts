@@ -63,6 +63,7 @@ describe('createThumbBackfill', () => {
       item({ id: '2', kind: 'file', mime: 'application/pdf' }),
       item({ id: '3', deletedAt: 5 }),
       item({ id: '4', inVault: true }),
+      item({ id: '6', encrypted: true }),
       item({ id: '5', hasThumb: undefined }),
     ]);
     await backfill.idle();

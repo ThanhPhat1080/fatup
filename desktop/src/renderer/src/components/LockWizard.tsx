@@ -111,6 +111,8 @@ type Props = {
   message?: string;
   /** The staff is lowered and planted, and the wizard stops bouncing (used when the visitor turns back). */
   calm?: boolean;
+  /** A wider wooden board for a longer PIN (6 cells instead of 4). The board grows evenly around the middle of the frame. */
+  wide?: boolean;
   /** The PIN field, which sits on the wooden board in front of the bridge. */
   children: ReactNode;
 };
@@ -120,7 +122,9 @@ type Props = {
  * Lock-screen scene: a grumpy grey wizard on a stone bridge over a fiery chasm, a staff in one hand and a
  * no-entry sign in the other. An original cartoon, pure SVG + CSS.
  */
-export function LockWizard({ boom, panicKey, message = 'YOU SHALL NOT PASS!', calm = false, children }: Props) {
+export function LockWizard({ boom, panicKey, message = 'YOU SHALL NOT PASS!', calm = false, wide = false, children }: Props) {
+  // The board spans x 130-350 (220 wide) for four cells and x 110-370 (260 wide) for six; both are centred on x = 240.
+  const grow = wide ? 20 : 0;
   const frame = useRef<HTMLDivElement>(null);
   // The bridge is half the screen wide (at least as wide as the frame), so work out how far past the 480-unit frame it runs.
   const [extra, setExtra] = useState(0);
@@ -141,7 +145,7 @@ export function LockWizard({ boom, panicKey, message = 'YOU SHALL NOT PASS!', ca
   const bridge = useMemo(() => buildBridge(-extra, 480 + extra), [extra]);
 
   return (
-    <div ref={frame} className={`lockheist${boom ? ' lockheist--boom' : ''}`} style={{ ['--boom-delay' as string]: `${BOMB_LANDS_S}s`, ['--lower' as string]: `${LOWER}px` }}>
+    <div ref={frame} className={`lockheist${boom ? ' lockheist--boom' : ''}${wide ? ' lockheist--wide' : ''}`} style={{ ['--boom-delay' as string]: `${BOMB_LANDS_S}s`, ['--lower' as string]: `${LOWER}px` }}>
       <svg className="heist__svg" viewBox="0 0 480 560" aria-hidden>
         <defs>
           <linearGradient id="wiz-robe" x1="0" x2="1">
@@ -341,15 +345,15 @@ export function LockWizard({ boom, panicKey, message = 'YOU SHALL NOT PASS!', ca
         </g>
 
         {/* wooden board hanging under the deck on two chains; it carries the PIN */}
-        <path d="M152 508V612M328 508V612" stroke="#20242b" strokeWidth={7} strokeDasharray="7 4" strokeLinecap="round" />
-        <path d="M152 508V612M328 508V612" stroke="#9aa0ab" strokeWidth={3.5} strokeDasharray="7 4" strokeLinecap="round" />
-        <rect x={130} y={610} width={220} height={62} rx={9} fill="#9a6a38" stroke="#4b2f14" strokeWidth={4} />
-        <path d="M136 630H344M136 650H344" stroke="#7d5229" strokeWidth={2} opacity={0.6} />
+        <path d={`M${152 - grow} 508V612M${328 + grow} 508V612`} stroke="#20242b" strokeWidth={7} strokeDasharray="7 4" strokeLinecap="round" />
+        <path d={`M${152 - grow} 508V612M${328 + grow} 508V612`} stroke="#9aa0ab" strokeWidth={3.5} strokeDasharray="7 4" strokeLinecap="round" />
+        <rect x={130 - grow} y={610} width={220 + grow * 2} height={62} rx={9} fill="#9a6a38" stroke="#4b2f14" strokeWidth={4} />
+        <path d={`M${136 - grow} 630H${344 + grow}M${136 - grow} 650H${344 + grow}`} stroke="#7d5229" strokeWidth={2} opacity={0.6} />
         <g fill="#4b2f14">
-          <circle cx={142} cy={620} r={2.5} />
-          <circle cx={338} cy={620} r={2.5} />
-          <circle cx={142} cy={662} r={2.5} />
-          <circle cx={338} cy={662} r={2.5} />
+          <circle cx={142 - grow} cy={620} r={2.5} />
+          <circle cx={338 + grow} cy={620} r={2.5} />
+          <circle cx={142 - grow} cy={662} r={2.5} />
+          <circle cx={338 + grow} cy={662} r={2.5} />
         </g>
 
         {boom && (

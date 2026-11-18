@@ -3,6 +3,7 @@ import { LockBackdrop } from './LockBackdrop';
 import { BOMB_LANDS_S, LockWizard } from './LockWizard';
 import { ArrowLeft } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
+import { gateMessage, vaultText, VAULT_PIN_LENGTH, type GateMessage } from '../lib/vault';
 import { PinInput } from './PinInput';
 
 const BOOM_MS = Math.round((BOMB_LANDS_S + 0.95) * 1000);
@@ -10,10 +11,12 @@ const LEAVE_MS = 3400; // long enough to read what the wizard says
 
 const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
-/** Shown every time the Vault is opened: the PIN has to be entered again. */
-export function VaultGate({ onUnlocked, onBack }: { onUnlocked: () => void; onBack: () => void }) {
+/**
+ * Shown every time the Vault is opened: the PIN has to be entered again. `hint` says why it is asked (moving files in from the list).
+ */
+export function VaultGate({ onUnlocked, onBack, onRecover, hint }: { onUnlocked: () => void; onBack: () => void; onRecover: () => void; hint?: string }) {
   const { t } = useI18n();
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<GateMessage | null>(null);
   const [errorKey, setErrorKey] = useState(0);
   const [lockedUntil, setLockedUntil] = useState(0);
   const [now, setNow] = useState(Date.now());
@@ -39,11 +42,12 @@ export function VaultGate({ onUnlocked, onBack }: { onUnlocked: () => void; onBa
   async function submit(pin: string) {
     let res;
     try {
-      res = await window.fatup.vaultOpen(pin);
+      res = await window.fatup.vaultUnlock(pin);
     } catch (err) {
       // e.g. the preload is out of date: say so instead of silently swallowing the PIN.
       setErrorKey((k) => k + 1);
-      setMessage(`${t.err_generic} (${(err as Error).message})`);
+      setMessage({ key: 'err_generic' });
+      console.error(err);
       return;
     }
     if (res.ok) {
@@ -54,24 +58,32 @@ export function VaultGate({ onUnlocked, onBack }: { onUnlocked: () => void; onBa
       return;
     }
     setErrorKey((k) => k + 1);
+    const at = Date.now();
+    const msg = gateMessage(res, at);
+    if (msg.goRecover) return onRecover();
     if (res.reason === 'locked') {
       setLockedUntil(res.lockedUntil);
-      setNow(Date.now());
+      setNow(at);
+      setMessage(null);
     } else {
-      setMessage(t.wrongPin(res.attemptsLeft));
+      setMessage(msg);
     }
   }
+
+  const shown: GateMessage | null = locked ? gateMessage({ ok: false, reason: 'locked', lockedUntil }, now) : message;
 
   return (
     <div className="lockscreen vaultscreen">
       <LockBackdrop />
       <div className="center-screen lockscreen__center">
         <div className="lockstage">
-          <LockWizard boom={boom} panicKey={errorKey} message={leaving ? 'GO BACK TO THE SHADOW!' : undefined} calm={leaving}>
-            <PinInput label={t.vaultPrompt} onComplete={submit} errorKey={errorKey} disabled={locked || boom || leaving} />
+          {/* Above the wizard, on the dark sky: the flames below the wizard would make the text hard to read. */}
+          {hint && <p className="vault-card__text" style={{ marginBottom: 12 }}>{hint}</p>}
+          <LockWizard wide boom={boom} panicKey={errorKey} message={leaving ? 'GO BACK TO THE SHADOW!' : undefined} calm={leaving}>
+            <PinInput label={t.vaultPrompt} onComplete={submit} errorKey={errorKey} disabled={locked || boom || leaving} length={VAULT_PIN_LENGTH} />
           </LockWizard>
-          <p className={`error ${message || locked ? '' : 'error--hidden'}`} role="alert">
-            {locked ? t.lockedFor(Math.ceil((lockedUntil - now) / 1000)) : (message ?? ' ')}
+          <p className={`error ${shown || locked ? '' : 'error--hidden'}`} role="alert">
+            {shown ? vaultText(t, shown) : ' '}
           </p>
           <button className="btn btn--text" onClick={goBack} disabled={boom || leaving}>
             <ArrowLeft size={18} /> {t.goBack}

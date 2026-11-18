@@ -1,4 +1,4 @@
-# 0017. Nhập ảnh từ thư mục của bucket: di chuyển, id xác định từ nguồn, mọi thao tác qua S3 API
+# 0018. Nhập ảnh từ thư mục của bucket: di chuyển, id xác định từ nguồn, mọi thao tác qua S3 API
 
 - Trạng thái: Đã chốt
 - Ngày: 2026-11-18

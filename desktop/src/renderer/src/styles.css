@@ -17,6 +17,9 @@
   --on-primary-container: #001d35;
   --danger: #b3261e;
   --on-danger: #ffffff;
+  --vault: #8a6424;
+  --on-vault: #ffffff;
+  --vault-tint: #fbf6ea;
   --success: #146c2e;
   --toast-bg: #313131;
   --toast-text: #f2f2f2;
@@ -58,6 +61,9 @@
     --on-primary-container: #c2e7ff;
     --danger: #f2b8b5;
     --on-danger: #601410;
+    --vault: #d4a95f;
+    --on-vault: #2b1f08;
+    --vault-tint: #241e13;
     --success: #6dd58c;
     --toast-bg: #e3e3e3;
     --toast-text: #1f1f1f;
@@ -93,6 +99,9 @@
   --on-primary-container: #c2e7ff;
   --danger: #f2b8b5;
   --on-danger: #601410;
+  --vault: #d4a95f;
+  --on-vault: #2b1f08;
+  --vault-tint: #241e13;
   --success: #6dd58c;
   --toast-bg: #e3e3e3;
   --toast-text: #1f1f1f;
@@ -365,6 +374,14 @@ h2 {
   height: 12px;
   border-radius: 50%;
   background: var(--text);
+}
+/* Six digits: narrower cells so the row fits a phone. */
+.pin--long .pin__cells {
+  gap: 10px;
+}
+.pin--long .pin__cell {
+  width: 44px;
+  height: 52px;
 }
 .pin__input {
   position: absolute;
@@ -1118,6 +1135,29 @@ h2 {
   line-height: 1.5;
   user-select: text;
 }
+/* The Vault PIN popup over the file list: six cells must fit a 360 px phone inside the scrim's 16 px gutters. */
+.vault-pin {
+  margin-bottom: 4px;
+}
+.vault-pin .pin {
+  margin: 12px 0 0;
+}
+.vault-pin .pin--long .pin__cells {
+  gap: 8px;
+}
+.vault-pin .pin--long .pin__cell {
+  width: 40px;
+  height: 50px;
+}
+.vault-pin .error {
+  text-align: center;
+}
+.vault-pin__actions {
+  flex-wrap: wrap;
+}
+.vault-pin__actions .btn {
+  min-height: 40px;
+}
 
 /* ---------- Settings ---------- */
 .settings {
@@ -1795,7 +1835,8 @@ h2 {
   font-weight: 500;
 }
 .lockstage .error {
-  margin-top: 98px;
+  /* The wooden board hangs below the scene frame (up to 112 px at full size); keep the line clear of it. */
+  margin-top: 116px;
 }
 .lockheist {
   position: relative;
@@ -1809,6 +1850,20 @@ h2 {
   top: 108.93%;
   width: 45.83%;
   height: 11.07%;
+}
+/* Six cells (the Vault's PIN): the board is wider (x 110-370 of the 480-unit frame), and so is its slot; the cells are a little smaller so the row sits inside the board with an even margin on both sides. */
+.lockheist--wide .lockheist__pin {
+  left: 22.92%;
+  width: 54.17%;
+}
+.lockheist--wide .heist__pin .pin__cells {
+  gap: 1.6cqw;
+  justify-content: center;
+}
+.lockheist--wide .heist__pin .pin__cell {
+  width: 6.4cqw;
+  height: 8.2cqw;
+  border-radius: 1.4cqw;
 }
 .lockheist .heist__pin .pin__cell {
   background: #f5e9cf;
@@ -2935,30 +2990,40 @@ body {
   min-width: 0;
 }
 @media (max-width: 720px) {
+  /* Row one: the logo and the buttons (up to six in the Vault). Row two: the search box and the storage figures. Each row has its own widths: the figures used to share row one and were squeezed under the buttons. */
   .topbar {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    grid-template-areas: 'brand meter actions' 'search search search';
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     height: auto;
-    row-gap: 8px;
+    row-gap: 6px;
     column-gap: 8px;
     padding: calc(8px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 8px calc(12px + env(safe-area-inset-left));
   }
+  /* An empty full-width item between the rows forces the wrap. */
+  .topbar::after {
+    content: '';
+    flex: 0 0 100%;
+    order: 3;
+    height: 0;
+  }
   .brand {
-    grid-area: brand;
+    order: 1;
+    flex: 1 1 0;
     min-width: 0;
   }
   .topbar > .storage {
-    grid-area: meter;
-    justify-self: start;
+    order: 5;
     min-width: 0;
   }
   .topbar__actions {
-    grid-area: actions;
+    order: 2;
     margin-left: 0;
   }
   .search {
-    grid-area: search;
+    order: 4;
+    flex: 1 1 0;
+    min-width: 0;
     max-width: none;
     height: 44px;
   }
@@ -3026,9 +3091,41 @@ body {
   .tile__head > .file-icon {
     display: none;
   }
-  /* List rows: the time stays, the pencil is tighter. */
+  /* List rows: the time stays, the pencil is tighter, and the name cell gives up its wide gaps so the Vault's state icon still leaves room for the name. */
   .list__row {
     gap: 8px;
+  }
+  .list__name {
+    gap: 8px;
+  }
+  /* On a phone the Vault's state icon sits on the corner of the thumbnail (like a sync badge) instead of taking width from the name. */
+  .list__name {
+    position: relative;
+  }
+  .list__name .vault-state {
+    position: absolute;
+    left: 14px;
+    bottom: -4px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--panel);
+  }
+  .list__name .vault-state svg {
+    width: 14px;
+    height: 14px;
+  }
+  /* The dimmed look belongs to the cloud only, so the badge background stays solid. */
+  .list__name .vault-state--pending {
+    opacity: 1;
+  }
+  .list__name .vault-state--pending svg {
+    opacity: 0.6;
+  }
+  .tile__head .vault-state,
+  .tile__head .vault-state svg {
+    width: 16px;
+    height: 16px;
   }
 }
 
@@ -3881,20 +3978,25 @@ body {
 .view-title {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 40px;
+  gap: 12px;
+  min-height: 44px;
   margin: 4px 20px 0;
   padding: 0 0 0 12px;
-  font-size: 18px;
-  font-weight: 500;
+  font-size: 24px;
+  font-weight: 700;
   color: var(--text);
 }
 .view-title svg {
   flex: none;
   color: var(--text-2);
 }
+/* The page's own icon, bigger with the title; the small icons inside the tags keep their size. */
+.view-title > svg {
+  width: 28px;
+  height: 28px;
+}
 .view-title__sub {
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 400;
   color: var(--text-3);
 }
@@ -3913,6 +4015,23 @@ body {
 }
 .view-title__tag svg {
   color: inherit;
+}
+
+/* The row above the toolbar island: where you are on the left, and in the Vault its trash on the right. */
+.view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 0;
+}
+.view-head .view-title {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.view-head .vault-trash-btn {
+  flex: none;
+  margin-right: 20px;
 }
 
 /* On the links tab the title sits first in the platform filter row, set off by the row's own light divider. */
@@ -3955,4 +4074,256 @@ body {
 .col-actions__slot {
   flex: none;
   width: 32px;
+}
+
+/* ---------- Vault setup, recovery and PIN change (dark frame, like the gate) ---------- */
+.vault-card {
+  width: min(420px, calc(100vw - 32px));
+  margin: 0 auto;
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+  color: #eceef3;
+}
+.vault-card__title {
+  font-size: 22px;
+  font-weight: 500;
+  margin: 0;
+  color: #f4f5f8;
+}
+.vault-card__text {
+  margin: 0;
+  line-height: 1.5;
+  color: #c9ccd4;
+}
+/* The PIN cells of the setup and recovery screens sit in the middle of the card. */
+.vault-card .pin__cells {
+  justify-content: center;
+}
+/* The default outlined button is blue on white; on the dark card it needs light text and a visible outline. */
+.vault-card .btn--outlined {
+  color: #eaf1ff;
+  border-color: rgba(255, 255, 255, 0.5);
+}
+.vault-card .btn--outlined:not(:disabled):hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.vault-card__action {
+  align-self: center;
+  min-height: 44px;
+  padding: 0 24px;
+}
+.vault-card__back {
+  align-self: center;
+  min-height: 40px;
+}
+/* The recovery key is shown once, selectable, in a monospace block. */
+.vault-key {
+  display: block;
+  padding: 14px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  text-align: center;
+  user-select: text;
+}
+.vault-key__group {
+  display: inline-block;
+  white-space: nowrap;
+}
+.vault-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+}
+.vault-confirm__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  font-size: 14px;
+  color: #c9ccd4;
+}
+.vault-confirm__input {
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f4f5f8;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase;
+}
+.vault-progress {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+.vault-progress span {
+  display: block;
+  height: 100%;
+  background: #a8c7fa;
+  transition: width 0.2s;
+}
+
+/* ---------- Vault mode and the Vault trash ---------- */
+.vault-mode .topbar {
+  border-top: 3px solid var(--vault);
+}
+.vault-mode .panel {
+  background: var(--vault-tint);
+}
+.vault-label {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 11px;
+  background: var(--vault);
+  color: var(--on-vault);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.vault-label__icon {
+  margin-right: 4px;
+}
+/* A Vault item's state (spec 4.7d): a faded cloud while it is not encrypted yet, a green tick once it is. Its box keeps the width in both states. */
+.vault-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+.vault-state--pending {
+  color: var(--text-2);
+  opacity: 0.5;
+}
+.vault-state--encrypted {
+  color: var(--success);
+}
+.vault-trash-btn {
+  color: var(--vault);
+}
+.vault-trash-btn.is-active {
+  background: var(--hover);
+}
+
+/* Stacking: the upload panel is z 30, so the trash sits above it (scrim 31, sidebar 32). The Empty confirmation opened from the sidebar sits above that (33). */
+/* The dimmed backdrop behind the sidebar: a click outside closes it. Hidden on phones, where the trash is a full page. */
+.vault-trash-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 31;
+  background: var(--scrim);
+}
+.vault-trash-confirm .scrim {
+  z-index: 33;
+}
+@media (max-width: 720px) {
+  .vault-trash-scrim {
+    display: none;
+  }
+}
+/* Above 720 px: a sidebar 70% wide. At 720 px and below: a full-screen page (the rule inside the media query). */
+.vault-trash {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: 70%;
+  z-index: 32;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+@media (max-width: 720px) {
+  .vault-trash {
+    inset: 0;
+    width: 100%;
+  }
+}
+.vault-trash__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  min-height: 64px;
+  padding: 10px 16px;
+  background: var(--vault);
+  color: var(--on-vault);
+  border-left: 4px solid var(--danger);
+}
+.vault-trash__head .icon-btn {
+  color: var(--on-vault);
+}
+.vault-trash__titles {
+  flex: 1;
+  min-width: 0;
+}
+.vault-trash__titles h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.vault-trash__titles p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.vault-trash__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+  min-height: 44px;
+  padding: 0 16px;
+}
+.vault-trash__list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 8px 16px;
+  background: var(--vault-tint);
+}
+.vault-trash__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.vault-trash__info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.vault-trash__name {
+  font-weight: 500;
+}
+.vault-trash__empty {
+  padding: 24px 8px;
+  text-align: center;
+}
+.vault-trash .btn {
+  min-height: 40px;
+}
+@media (max-width: 720px) {
+  .vault-trash .btn {
+    min-height: 44px;
+  }
 }

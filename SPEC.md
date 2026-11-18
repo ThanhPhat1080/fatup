@@ -10,9 +10,9 @@ Chuyển ảnh và file giữa **điện thoại Android** và **máy tính** (m
 |---|---|---|---|
 | §1, §2 | file này | Tổng quan, kiến trúc, monorepo, phạm vi | — |
 | §3 | [data.md](docs/spec/data.md) | Schema D1 qua các migration, R2 key | `worker/migrations/` |
-| §4, §4.1, §4.2 | [api.md](docs/spec/api.md) | Route của Worker, `FileItem`, liên kết, chia sẻ link công khai | `worker/src/`, `shared/src/` |
+| §4, §4.1, §4.2, §4.3 | [api.md](docs/spec/api.md) | Route của Worker, `FileItem`, liên kết, chia sẻ link công khai, két sắt mã hóa (`/vault`) | `worker/src/`, `shared/src/` |
 | §5, §6 | [lifecycle.md](docs/spec/lifecycle.md) | Thùng rác, Két sắt, chia sẻ khi vào két/thùng rác, vòng đời file, cron | `worker/src/cleanup.ts`, `worker/src/app.ts` |
-| §7 | [security.md](docs/spec/security.md) | Token, PIN, mã hóa token, presigned URL, bề mặt công khai, CORS | mọi package |
+| §7 (7.1–7.7) | [security.md](docs/spec/security.md) | Token, PIN, mã hóa token, két sắt mã hóa (khóa, FUV1, bộ đếm, recovery key, giới hạn), presigned URL, bề mặt công khai, CORS | mọi package |
 | §8 | [android.md](docs/spec/android.md) | App Android nhận chia sẻ | `android/` |
 | §9 (9.1–9.10) | [desktop-ui.md](docs/spec/desktop-ui.md) | Màn hình, danh sách, đổi tên/thẻ, liên kết, chia sẻ, viewer, upload, dung lượng, theme, cập nhật, i18n, kiến trúc Electron, màn hình khóa | `desktop/src/` (cũng là UI của PWA) |
 | §10 | [web.md](docs/spec/web.md) | PWA, upload từ web, giao diện điện thoại | `web/` |
@@ -42,7 +42,8 @@ Chuyển ảnh và file giữa **điện thoại Android** và **máy tính** (m
 ```
 
 - File **không đi qua Worker**: Worker chỉ cấp presigned URL (ký bằng `aws4fetch`) nên không dính giới hạn request body của Worker. **Ngoại lệ duy nhất: link chia sẻ công khai** (`/s/<token>`), nơi Worker truyền file từ R2 để kiểm tra D1 ở từng lượt và thu hồi được ngay ([mục 4.2](docs/spec/api.md#42-chia-sẻ-link-công-khai)).
-- Cron mỗi ngày (03:00 UTC) dọn file ở thùng rác quá 30 ngày và upload dở dang (file ngoài thùng rác không bao giờ hết hạn) (xem [mục 6](docs/spec/lifecycle.md#6-vòng-đời-file-thùng-rác-và-dọn-dẹp)).
+- Cron mỗi ngày (03:00 UTC) dọn file ở thùng rác quá 30 ngày (kể cả thùng rác của két), upload dở dang, bản rõ sót lại khi lấy ra khỏi két bị ngắt, và object mã hóa thừa dưới `vault/` (file ngoài thùng rác không bao giờ hết hạn) (xem [mục 6](docs/spec/lifecycle.md#6-vòng-đời-file-thùng-rác-và-dọn-dẹp)).
+- Két sắt mã hóa phía client: file trong két được mã hóa trên máy, server chỉ thấy bản mã ([mục 7.1](docs/spec/security.md#71-két-sắt-mã-hóa-phía-client-e2ee)).
 
 ### Monorepo
 
@@ -72,10 +73,10 @@ npm workspaces cho `shared`, `worker`, `desktop`, `web`. `android/` là project 
 | File ngoài thùng rác được giữ mãi, không tự hết hạn | Tự xóa file cũ theo hạn |
 | **Thùng rác** 30 ngày, khôi phục, xóa vĩnh viễn | Thư mục, album |
 | **Chia sẻ link công khai** từng ảnh/file (chỉ đọc, hạn 1/7/30 ngày hoặc không hạn, chết ngay khi vào Két sắt/thùng rác) | Link chung cho nhiều file, mật khẩu cho link, nút chia sẻ trên Android |
-| **Két sắt**: che file sau PIN nhập lại mỗi lần mở | Mã hóa nội dung file (xem [mục 7](docs/spec/security.md#7-bảo-mật)) |
+| **Két sắt mã hóa** (desktop, PWA): file trong két được mã hóa trên máy; mở bằng **PIN két 6 số** (server đếm số lần sai); **recovery key**; thùng rác riêng của két | Android mở két; "Tắt két trên thiết bị này"; che kích thước, thời gian, thiết bị, thẻ màu (xem [mục 7](docs/spec/security.md#7-bảo-mật)) |
 | Chọn nhiều file, sắp xếp, xóa hàng loạt, **Tải tất cả** | Thư mục, album |
 | **Đổi tên** file (giữ phần mở rộng), **thẻ màu** tối đa 3 màu/file, lọc theo màu | Thẻ tự đặt tên, thư mục |
-| PIN 4 số khóa app; UI En/Vi; sáng/tối (theo OS hoặc tự chọn) | Nhiều người dùng |
+| PIN 4 số khóa app, PIN 6 số riêng cho két; UI En/Vi; sáng/tối (theo OS hoặc tự chọn) | Nhiều người dùng |
 | Bản web cài được như app (PWA) | Offline đầy đủ, đồng bộ nền |
 | Thanh dung lượng R2, kiểm tra cập nhật app | Tray, notification desktop |
 | Polling 60s + refresh khi focus + nút Refresh | Realtime (WebSocket) |

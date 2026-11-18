@@ -6,6 +6,7 @@ import { WebUploadManager, deviceName } from './uploader';
 import { popSharedLink } from './share';
 import { PreviewCache, fetchPicture } from '../../desktop/src/preview-cache';
 import { CacheStoragePreviewStore } from './preview-store';
+import { createWebVault } from './vault-web';
 
 const STORAGE_KEY = 'fatup.web.v1';
 const MAX_DOWNLOADED = 2000;
@@ -50,6 +51,19 @@ async function toPng(blob: Blob): Promise<Blob> {
   return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('png'))), 'image/png'));
 }
 
+/** Hands a file to the browser's download manager under `name`. The object URL lives only long enough for the browser to start the save. */
+function saveBlob(name: string, blob: Blob): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.rel = 'noopener';
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 /** Phone keyboards and chat apps slip in zero-width spaces, newlines and smart punctuation when a token is pasted; fetch then rejects the header outright. Tokens are plain printable ASCII. */
 const cleanToken = (raw: string) => raw.replace(/[^\x21-\x7e]/g, '');
 
@@ -57,7 +71,6 @@ const cleanToken = (raw: string) => raw.replace(/[^\x21-\x7e]/g, '');
 export function installBrowserApi(): void {
   let data = load();
   let unlockedToken: string | null = null; // decrypted token, memory only
-  let vaultIsOpen = false;
   let pendingToken: { serverUrl: string; token: string } | null = null; // between "connect" and "set PIN"
   const itemCache = new Map<string, FileItem>();
   // Link pictures are kept in this browser (the server only names their address). Browsers often cannot read a picture from another
@@ -67,9 +80,22 @@ export function installBrowserApi(): void {
   const handles = new Map<string, File>();
   let nextHandle = 1;
   const uploadListeners = new Set<(jobs: UploadJob[]) => void>();
+  // The encrypted Vault: the key, the decrypted names and the object URLs of decrypted pictures all stay in page memory (vault-web.ts).
+  // It never touches `previews` (Cache Storage) or localStorage.
+  const webVault = createWebVault({
+    client: () => client(),
+    isUnlocked: () => unlockedToken !== null,
+    // The Vault PIN may not share its first or last four digits with the app PIN. Tries the sealed token; does not count as an attempt.
+    appPinMatches: async (pin4) => (data.token ? (await open(data.token, pin4)) !== null : false),
+    saveFile: (name, bytes, mime) => saveBlob(name, new Blob([bytes as BlobPart], { type: mime })),
+    createObjectURL: (blob) => URL.createObjectURL(blob),
+    revokeObjectURL: (url) => URL.revokeObjectURL(url),
+    device: deviceName(),
+  });
   const uploads = new WebUploadManager({
     client: () => client(),
     device: deviceName(),
+    vault: webVault.uploadEncryptor(),
     onChange: (jobs) => uploadListeners.forEach((cb) => cb(jobs)),
   });
   const takeHandles = (paths: string[]) => paths.flatMap((p) => {
@@ -121,6 +147,13 @@ export function installBrowserApi(): void {
     save();
     return { result: res.ok ? { ok: true } : asUnlockFailure(res), token };
   }
+
+  /** Vault items come back with `downloaded: false` (the Vault does not know what this browser saved); fill it in. */
+  const withDownloaded = (res: Result<Item>): Result<Item> => (res.ok ? { ok: true, value: { ...res.value, downloaded: data.downloaded.includes(res.value.id) } } : res);
+  const markDownloaded = (id: string) => {
+    data.downloaded = [...data.downloaded.filter((x) => x !== id), id].slice(-MAX_DOWNLOADED);
+    save();
+  };
 
   const api: FatupApi = {
     getState: async (): Promise<AppState> => ({
@@ -180,7 +213,7 @@ export function installBrowserApi(): void {
     lock: async () => {
       uploads.cancelAll();
       unlockedToken = null;
-      vaultIsOpen = false;
+      webVault.vaultClose(); // forgets the Vault key and revokes every decrypted picture URL
       itemCache.clear();
     },
 
@@ -189,7 +222,7 @@ export function installBrowserApi(): void {
       data = { serverUrl: null, token: null, lockout: { failedAttempts: 0, lockedUntil: 0 }, prefs: data.prefs, downloaded: [] };
       unlockedToken = null;
       pendingToken = null;
-      vaultIsOpen = false;
+      webVault.vaultClose();
       itemCache.clear();
       save();
       await previews.clear().catch(() => undefined); // pictures of the old account's links must not outlive the connection
@@ -226,21 +259,26 @@ export function installBrowserApi(): void {
     setShare: (id, days) => guarded(() => client().setShare(id, days)),
     stopShare: (id) => guarded(() => client().stopShare(id)),
 
-    updateFile: (id, patch) =>
-      guarded(async (): Promise<Item> => {
+    // An encrypted Vault item is renamed through a new encMeta (vault-web.ts); its plain name or address never reaches the server.
+    updateFile: async (id, patch) => {
+      if (webVault.owns(id)) return withDownloaded(await webVault.updateFile(id, patch));
+      return guarded(async (): Promise<Item> => {
         const item = await client().update(id, patch);
         itemCache.set(id, item);
         if (patch.url) await previews.forget([id]); // the old picture belongs to the old address
         return (await previews.decorate([{ ...item, downloaded: data.downloaded.includes(id) }]))[0];
-      }),
+      });
+    },
 
-    addLink: (url, title, vault) =>
-      guarded(async (): Promise<Item> => {
-        let item = await client().addLink({ url, title, device: deviceName() });
-        if (vault) item = await client().setVault(item.id, true);
+    // A link for the Vault is encrypted here and uploaded as a Vault item; it is never created as a plain link first.
+    addLink: async (url, title, intoVault) => {
+      if (intoVault) return withDownloaded(await webVault.addLink(url, title));
+      return guarded(async (): Promise<Item> => {
+        const item = await client().addLink({ url, title, device: deviceName() });
         itemCache.set(item.id, item);
         return (await previews.decorate([{ ...item, downloaded: false }]))[0];
-      }),
+      });
+    },
 
     previewLink: (id, force) =>
       guarded(async (): Promise<Item> => {
@@ -256,38 +294,33 @@ export function installBrowserApi(): void {
       if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener,noreferrer');
     },
 
-    vaultOpen: async (pin) => {
-      if (!unlockedToken) return { ok: false, reason: 'wrong', attemptsLeft: 0 };
-      const { result } = await tryUnlock(pin);
-      if (result.ok) vaultIsOpen = true;
-      return result;
+    // The encrypted Vault. All of the logic is in vault-web.ts; Vault items are never handed to `previews` (Cache Storage).
+    vaultStatus: () => webVault.vaultStatus(),
+    vaultSetup: (pin) => webVault.vaultSetup(pin),
+    vaultSetupPrepare: (pin) => webVault.vaultSetupPrepare(pin),
+    vaultSetupCommit: () => webVault.vaultSetupCommit(),
+    vaultUnlock: (pin, purpose) => webVault.vaultUnlock(pin, purpose),
+    vaultRecover: (recoveryKey, newPin) => webVault.vaultRecover(recoveryKey, newPin),
+    vaultChangePin: (oldPin, newPin) => webVault.vaultChangePin(oldPin, newPin),
+    vaultLeave: async () => webVault.vaultLeave(),
+    listVault: async (opts) => {
+      const res = await webVault.listVault(opts);
+      if (!res.ok) return res;
+      const saved = new Set(data.downloaded);
+      return { ok: true, value: res.value.map((it) => ({ ...it, downloaded: saved.has(it.id) })) };
     },
-    vaultClose: async () => {
-      vaultIsOpen = false;
-    },
-    listVault: async (): Promise<Result<Item[]>> => {
-      if (!unlockedToken) return { ok: false, error: 'locked' };
-      if (!vaultIsOpen) return { ok: false, error: 'vault_locked' };
-      try {
-        const items = await client().listEverything({ vault: true });
-        for (const it of items) itemCache.set(it.id, it);
-        const downloaded = new Set(data.downloaded);
-        return { ok: true, value: await previews.decorate(items.map((it) => ({ ...it, downloaded: downloaded.has(it.id) }))) };
-      } catch (err) {
-        return fail(err);
+    vaultMoveIn: async (ids) => {
+      const res = await webVault.vaultMoveIn(ids);
+      if (res.ok) {
+        // The Vault leaves no pictures of its links on this device.
+        const moved = ids.filter((id) => !res.value.failed.includes(id));
+        for (const id of moved) itemCache.delete(id);
+        await previews.forget(moved).catch(() => undefined);
       }
+      return res;
     },
-    setVault: async (id, inVault) => {
-      if (!unlockedToken) return { ok: false, error: 'locked' };
-      if (!inVault && !vaultIsOpen) return { ok: false, error: 'vault_locked' };
-      try {
-        await client().setVault(id, inVault);
-        if (inVault) await previews.forget([id]); // the Vault leaves no pictures on the device
-        return { ok: true, value: undefined };
-      } catch (err) {
-        return fail(err);
-      }
-    },
+    vaultMoveOut: (ids) => webVault.vaultMoveOut(ids),
+    onVaultProgress: (cb) => webVault.onVaultProgress(cb),
 
     usage: () => guarded(() => client().usage()),
 
@@ -312,19 +345,26 @@ export function installBrowserApi(): void {
         return count;
       }),
 
-    previewUrl: (id) => guarded(() => client().downloadUrl(id)),
+    previewUrl: (id) => (webVault.owns(id) ? webVault.previewUrl(id) : guarded(() => client().downloadUrl(id))),
 
-    fileBytes: (id) =>
-      guarded(async () => {
+    fileBytes: async (id) => {
+      if (webVault.owns(id)) return webVault.fileBytes(id);
+      return guarded(async () => {
         const res = await fetch(await client().downloadUrl(id), { signal: AbortSignal.timeout(120_000) });
         if (!res.ok) throw new ApiError('download_failed', `HTTP ${res.status}`, res.status);
         return new Uint8Array(await res.arrayBuffer());
-      }),
+      });
+    },
 
     linkFrame: (id) => guarded(() => client().linkFrame(id)),
 
-    download: (id) =>
-      guarded(async () => {
+    download: async (id) => {
+      if (webVault.owns(id)) {
+        const res = await webVault.download(id); // decrypted in this page, then saved under its real name
+        if (res.ok) markDownloaded(id);
+        return res;
+      }
+      return guarded(async () => {
         const url = await client().downloadUrl(id);
         // The presigned URL carries Content-Disposition: attachment, so the browser saves it instead of navigating.
         const a = document.createElement('a');
@@ -334,13 +374,22 @@ export function installBrowserApi(): void {
         document.body.appendChild(a);
         a.click();
         a.remove();
-        data.downloaded = [...data.downloaded.filter((x) => x !== id), id].slice(-MAX_DOWNLOADED);
-        save();
+        markDownloaded(id);
         return 'Downloads';
-      }),
+      });
+    },
 
-    copyImage: (id) =>
-      guarded(async () => {
+    copyImage: async (id) => {
+      if (webVault.owns(id)) {
+        const bytes = await webVault.copyImageBytes(id);
+        if (!bytes.ok) return bytes;
+        return guarded(async () => {
+          const png = await toPng(new Blob([bytes.value as BlobPart])).catch(() => null);
+          if (!png) throw new ApiError('unsupported_image', 'Cannot copy image');
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+        });
+      }
+      return guarded(async () => {
         const item = itemCache.get(id);
         const grab = async (url: string) => {
           const res = await fetch(url, { signal: AbortSignal.timeout(120_000) });
@@ -356,7 +405,8 @@ export function installBrowserApi(): void {
         }
         if (!png) throw new ApiError('unsupported_image', 'Cannot copy image');
         await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
-      }),
+      });
+    },
 
     remove: (id) =>
       guarded(async () => {

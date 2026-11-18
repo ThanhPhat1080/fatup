@@ -15,11 +15,11 @@ const post = (path: string) => app.request(path, { method: 'POST', headers: AUTH
 
 const ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV';
 
-async function insert(over: { kind?: string; mime?: string; deletedAt?: number | null; inVault?: number; status?: string; hasThumb?: number } = {}) {
+async function insert(over: { kind?: string; mime?: string; deletedAt?: number | null; inVault?: number; status?: string; hasThumb?: number; encrypted?: number } = {}) {
   await env.DB.prepare(
-    `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, created_at, deleted_at, in_vault) VALUES (?, 'p.png', ?, 3, ?, ?, ?, 1, ?, ?)`,
+    `INSERT INTO files (id, name, mime, size, kind, has_thumb, status, created_at, deleted_at, in_vault, encrypted) VALUES (?, 'p.png', ?, 3, ?, ?, ?, 1, ?, ?, ?)`,
   )
-    .bind(ID, over.mime ?? 'image/png', over.kind ?? 'image', over.hasThumb ?? 0, over.status ?? 'ready', over.deletedAt ?? null, over.inVault ?? 0)
+    .bind(ID, over.mime ?? 'image/png', over.kind ?? 'image', over.hasThumb ?? 0, over.status ?? 'ready', over.deletedAt ?? null, over.inVault ?? 0, over.encrypted ?? 0)
     .run();
 }
 
@@ -42,7 +42,7 @@ describe('POST /files/:id/thumb', () => {
   });
 
   it('refuses what is not a ready image outside the trash and the Vault', async () => {
-    for (const over of [{ kind: 'file', mime: 'application/pdf' }, { deletedAt: 5 }, { inVault: 1 }, { status: 'pending' }]) {
+    for (const over of [{ kind: 'file', mime: 'application/pdf' }, { deletedAt: 5 }, { inVault: 1 }, { encrypted: 1 }, { status: 'pending' }]) {
       await env.DB.prepare('DELETE FROM files').run();
       await insert(over);
       expect((await post(`/files/${ID}/thumb`)).status).toBe(404);

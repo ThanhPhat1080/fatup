@@ -11,7 +11,7 @@
 - **Ổ đĩa riêng 10 GB trên Cloudflare R2**, dùng trên web, Android, macOS, Windows, Linux
 - **Gửi từ Android chỉ bằng Chia sẻ → FatUp**
 - **Chia sẻ file bằng link công khai**
-- **Két sắt cho file riêng tư**
+- **Két sắt mã hóa đầu cuối** cho file riêng tư: mở bằng PIN 6 số, có recovery key (máy tính và web)
 - **Lưu liên kết, thùng rác, thẻ màu, giao diện sáng/tối**
 
 Mô tả đầy đủ: [SPEC.md](SPEC.md). Thay đổi theo từng phiên bản: [CHANGELOG.md](CHANGELOG.md).
@@ -82,13 +82,14 @@ npm run db:migrate:remote
 npm run deploy
 ```
 
-Ghi chú riêng của từng bản nằm ở mục **Nâng cấp** trong [CHANGELOG.md](CHANGELOG.md).
+Ghi chú riêng của từng bản nằm ở mục **Nâng cấp** trong [CHANGELOG.md](CHANGELOG.md). Bản 0.5.0 (két mã hóa) có thêm các bước kiểm tra sau deploy: làm theo đúng mục đó.
 
 ## Bảo mật
 
-- **Ai có token thì đọc và xóa được mọi file**, kể cả file trong két. Lộ token thì tạo token mới (`npm run token:new`, `npx wrangler secret put API_TOKEN`) rồi kết nối lại các thiết bị.
-- PIN chỉ khóa giao diện và không bao giờ rời khỏi thiết bị. Sai 5 lần thì bị khóa 30 giây.
-- **Két sắt không mã hóa nội dung file**: file vẫn nằm bình thường trên R2, chỉ bị che trong app.
+- **Ai có token thì đọc và xóa được mọi file ngoài két.** File trong két chỉ là bản mã với token, nhưng kích thước, thời gian, thiết bị và số mục vẫn lộ. Lộ token thì tạo token mới (`npm run token:new`, `npx wrangler secret put API_TOKEN`) rồi kết nối lại các thiết bị.
+- PIN app 4 số chỉ khóa giao diện và không bao giờ rời khỏi thiết bị. Sai 5 lần thì bị khóa 30 giây.
+- **Két sắt mã hóa trên máy.** Nội dung, tên, loại và URL của file trong két được mã hóa trước khi rời máy. Két mở bằng PIN 6 số riêng; server đếm số lần sai và xóa bí mật sau 10 lần sai. Khi đó chỉ **recovery key** mở được két, nên hãy cất recovery key vào trình quản lý mật khẩu. Mất cả PIN lẫn recovery key là mất file trong két.
+- **Không mở két trên máy công ty hoặc qua mạng bị soi HTTPS** (ví dụ Zscaler). Mở két ở đó để lộ khóa và cho phép thử PIN offline.
 - Trên bản web, token được mã hóa bằng PIN rồi lưu trong trình duyệt. Đừng dùng bản web trên máy dùng chung.
 - Ai có link chia sẻ thì tải được file và chuyển tiếp được link; thu hồi bằng hạn hoặc **Dừng chia sẻ**.
 

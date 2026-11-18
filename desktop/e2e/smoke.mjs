@@ -11,9 +11,10 @@ import * as files from './areas/files.mjs';
 import * as share from './areas/share.mjs';
 import * as links from './areas/links.mjs';
 import * as settings from './areas/settings.mjs';
+import * as vault from './areas/vault.mjs';
 
 /** Every area, in the order a full run takes them. Adding an area: write areas/<name>.mjs exporting run(h), list it here. */
-const AREAS = { setup, files, share, links, settings };
+const AREAS = { setup, files, share, links, settings, vault };
 
 const requested = [...process.argv.slice(2), ...(process.env.E2E_ONLY ?? '').split(',')].map((s) => s.trim()).filter(Boolean);
 const unknown = requested.filter((a) => !(a in AREAS));
@@ -26,7 +27,7 @@ const selected = requested.length ? Object.keys(AREAS).filter((a) => requested.i
 const failed = [];
 for (const name of selected) {
   const started = Date.now();
-  const h = await createHarness(name);
+  const h = await createHarness(name, AREAS[name].mock);
   try {
     await AREAS[name].run(h);
     console.log(`✔ ${name} (${((Date.now() - started) / 1000).toFixed(1)}s)`);

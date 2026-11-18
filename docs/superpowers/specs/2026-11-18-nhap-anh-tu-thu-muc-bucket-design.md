@@ -1,6 +1,6 @@
 # Nhập ảnh từ thư mục của app khác trong bucket: thiết kế
 
-Trạng thái: **đã duyệt và đã triển khai** (nhánh `worktree-d30-import`, tách từ `main`; chưa phát hành; xem [ADR 0017](../../decisions/0017-nhap-anh-tu-thu-muc-bucket.md)). Nhánh này tách từ `main` nên **chưa có điều kiện `encrypted`** của Két sắt mã hóa; xem mục "Nợ kỹ thuật" ở `docs/spec/roadmap.md`. Viết ngày 2026-11-18 sau một buổi hỏi đáp; người dùng đã chốt các câu ở mục 3. Các quyết định kỹ thuật ở mục 5 do Claude tự đưa ra và cần xem lại. Khi làm xong phải cập nhật `docs/spec/api.md`, `lifecycle.md`, `desktop-ui.md`, `security.md`, `roadmap.md`, `CHANGELOG.md` và viết ADR mới.
+Trạng thái: **đã duyệt và đã triển khai** (nhánh `worktree-d30-import`, tách từ `main`; chưa phát hành; xem [ADR 0018](../../decisions/0018-nhap-anh-tu-thu-muc-bucket.md)). Nhánh này tách từ `main` nên **chưa có điều kiện `encrypted`** của Két sắt mã hóa; xem mục "Nợ kỹ thuật" ở `docs/spec/roadmap.md`. Viết ngày 2026-11-18 sau một buổi hỏi đáp; người dùng đã chốt các câu ở mục 3. Các quyết định kỹ thuật ở mục 5 do Claude tự đưa ra và cần xem lại. Khi làm xong phải cập nhật `docs/spec/api.md`, `lifecycle.md`, `desktop-ui.md`, `security.md`, `roadmap.md`, `CHANGELOG.md` và viết ADR mới.
 
 ## 1. Mục đích
 

@@ -158,6 +158,15 @@ describe('hasThumb and thumbUrl', () => {
     expect(item.thumbUrl).toBe('https://r2.test/get/thumbs/01ARZ3NDEKTSV4RRFFQ69G5FAV.jpg');
   });
 
+  it('an encrypted image without a thumbnail has no original to show: its object is ciphertext', async () => {
+    const { store } = bucketStore();
+    await env.DB.prepare(`INSERT INTO files (id, name, mime, size, kind, has_thumb, status, created_at, in_vault, encrypted, enc_meta, enc_key) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAX', '', 'application/octet-stream', 3, 'file', 0, 'ready', 1, 1, 1, 'M', 'K')`).run();
+    await env.DB.prepare(`INSERT INTO files (id, name, mime, size, kind, has_thumb, status, created_at, in_vault, encrypted, enc_meta, enc_key) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAY', 'x.png', 'image/png', 3, 'image', 0, 'ready', 2, 1, 1, 'M', 'K')`).run();
+    const items = (await (await createApp({ presigner: fakePresigner, objectStore: () => store }).request('/files?vault=1', { headers: { ...AUTH, 'X-Fatup-Vault': '1' } }, envWith('d30/'))).json()) as ListFilesResponse;
+    expect(items.items.length).toBeGreaterThan(0);
+    for (const it of items.items) expect(it.thumbUrl).toBeNull();
+  });
+
   it('a file that is not an image has no thumbnail at all', async () => {
     const { store } = bucketStore();
     await env.DB.prepare(`INSERT INTO files (id, name, mime, size, kind, has_thumb, status, created_at) VALUES ('01ARZ3NDEKTSV4RRFFQ69G5FAW', 'r.pdf', 'application/pdf', 3, 'file', 0, 'ready', 1)`).run();

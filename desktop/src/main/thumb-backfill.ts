@@ -40,9 +40,8 @@ export function createThumbBackfill(deps: ThumbBackfillDeps) {
   return {
     /** Queues the images of `items` that need a thumbnail. `hasThumb` must be exactly false: an older server does not say, so nothing is assumed. */
     run(items: Item[]): void {
-      // TODO(vault-e2ee): when encrypted rows exist, skip `encrypted` ones here too.
       for (const it of items) {
-        if (it.kind !== 'image' || it.hasThumb !== false || it.inVault || it.deletedAt !== null || attempted.has(it.id)) continue;
+        if (it.kind !== 'image' || it.hasThumb !== false || it.inVault || it.encrypted || it.deletedAt !== null || attempted.has(it.id)) continue;
         attempted.add(it.id);
         queue.push(it.id);
       }
