@@ -68,6 +68,11 @@
 - File đang chia sẻ có **icon nhiều người** (không chữ) bên trái bút chì: ở danh sách nằm trong cột hành động sẵn có, ở lưới nổi đè đuôi tên và luôn hiện. Rê chuột thấy tooltip **bên trái** ("Đang chia sẻ · bấm để quản lý link"); bấm thì mở form cấu hình chia sẻ (hạn và số lượt tải xem trong form).
 - Thanh chọn nhiều file có nút **Chia sẻ**: tạo mỗi file một link (không hết hạn) và liệt kê *tên + link* để sao chép từng dòng hoặc **Sao chép tất cả**.
 
+### 9.2e Ảnh nhập từ bucket và thumbnail bù
+
+- Mỗi lần **làm mới** danh sách (mở app, nút làm mới, `Ctrl+R`, theo chu kỳ, khi cửa sổ lấy lại focus), app còn hỏi server nhập ảnh từ thư mục của bucket (`importSync`, [api.md 4.3](api.md#43-nhập-ảnh-từ-thư-mục-của-bucket)), **không quá một lần mỗi 30 giây** (`IMPORT_SYNC_MIN_GAP_MS`, hàm thuần `shouldSyncImport` trong `lib/import-sync.ts`). Nếu có ảnh mới (`imported > 0`) thì danh sách được tải lại. Lỗi thì bỏ qua, không báo gì, và thử lại ở lần làm mới sau. Không có tab hay nhãn riêng: ảnh nhập vào lẫn trong danh sách theo thời gian upload của nó, thiết bị là tên thư mục (ví dụ `d30`).
+- **Thumbnail bù (chỉ desktop):** với ảnh `hasThumb === false` (ngoài thùng rác và két), main process tải ảnh gốc, tạo JPEG 400 px q80 bằng `nativeImage`, PUT lên URL từ `POST /files/:id/thumb` rồi gọi `thumb/complete`. Làm nền, **từng ảnh một**, mỗi ảnh tối đa một lần mỗi phiên (thành công hay không); ảnh không giải mã được (ví dụ HEIC) thì bỏ qua. Danh sách thấy thumbnail mới ở lần làm mới sau. Bản web/PWA và client khác không tạo thumbnail, hiện ảnh gốc qua `thumbUrl`.
+
 ### 9.3 Trình xem ảnh (Lightbox)
 
 - Ảnh mở ra **vừa khung** (contain theo chiều cao/rộng của vùng xem). Zoom **10% – 800%**: nút zoom, lăn chuột, `+`/`-`, **phím ↓ phóng to, ↑ thu nhỏ**, nhấp đúp (2,5×); `0` về vừa khung. Kéo chuột để di chuyển khi đã phóng to.

@@ -50,3 +50,5 @@ BEGIN DELETE FROM shares WHERE file_id = NEW.id; END;
 - `kind = 'image'` khi `mime` bắt đầu bằng `image/`, còn lại là `'file'`.
 - R2 key: `files/<id>` cho file gốc, `thumbs/<id>.jpg` cho thumbnail.
 - Migration chạy theo thứ tự. Mỗi lần nâng cấp: **migrate trước, deploy sau** (code mới đọc cột mới).
+
+- **Ảnh nhập từ bucket không thêm cột nào.** Id của dòng được tính từ object nguồn (khóa + etag) nên khóa chính `id` là thứ chặn dòng trùng; `device` là tên thư mục nguồn. Xem [api.md 4.3](api.md#43-nhập-ảnh-từ-thư-mục-của-bucket).

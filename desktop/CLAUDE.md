@@ -13,6 +13,8 @@ Spec: `docs/spec/desktop-ui.md` (màn hình, liên kết, chia sẻ, lightbox, u
 | `src/main/api.ts` | `ApiClient` (fetch tới Worker). Bản web cũng dùng |
 | `src/main/config.ts`, `pin.ts` | config trong `userData`, token qua `safeStorage`, PIN scrypt + khóa khi sai |
 | `src/main/uploader.ts` | `UploadManager` (hàng đợi, 2 file cùng lúc, tiến độ, hủy) |
+| `src/main/thumb-backfill.ts` | `createThumbBackfill(deps)`, **không import Electron**: tạo thumbnail bù cho ảnh `hasThumb === false` (tải ảnh gốc → `nativeImage` thu nhỏ → PUT → `thumb/complete`), từng ảnh một, mỗi ảnh một lần mỗi phiên; `index.ts` gọi `run` ở cuối handler `list` |
+| `src/renderer/src/lib/import-sync.ts` | `shouldSyncImport`: làm mới chỉ gọi `importSync` cách nhau ≥ 30 giây; `Main.tsx` tải lại danh sách khi `imported > 0` |
 | `src/main/previews.ts`, `src/preview-cache.ts`, `src/main/webpreview.ts` | ảnh xem trước của link (`fatup-preview://`) và xem trang web trong app |
 | `src/renderer/src/components/Main.tsx` | màn hình chính (file lớn nhất; tab, bộ lọc, menu, thao tác hàng loạt) |
 | `src/renderer/src/components/Files.tsx` | hiển thị dạng lưới/danh sách |

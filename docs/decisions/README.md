@@ -49,3 +49,4 @@ Cái được, cái mất, và điều agent KHÔNG được làm vì quyết đ
 | [0010](0010-bo-phim-tat-them-lien-ket.md) | Không có phím tắt Ctrl/⌘+L cho "Thêm liên kết" | desktop | Đã chốt |
 | [0011](0011-linkworker-khong-foreground.md) | `LinkWorker` Android là worker thường, không foreground | android | Đã chốt |
 | [0012](0012-dong-bang-test-khi-sua.md) | Đóng băng file test khi làm cho test thất bại chạy qua | quy trình | Đã chốt |
+| [0017](0017-nhap-anh-tu-thu-muc-bucket.md) | Nhập ảnh từ thư mục của bucket: di chuyển, id xác định từ nguồn, mọi thao tác qua S3 API | worker, shared, desktop, web | Đã chốt |

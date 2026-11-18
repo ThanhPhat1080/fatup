@@ -4,6 +4,15 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [Chưa phát hành]
+
+### Thêm
+- **Ảnh app khác bỏ vào bucket hiện ngay ở Fatup.** Ảnh nằm trong thư mục `d30/` của bucket (đổi bằng biến `IMPORT_PREFIX` trong `worker/wrangler.toml`; để trống thì tắt) được **di chuyển** sang `files/<id>` mỗi khi mở hoặc làm mới danh sách (tối đa 10 ảnh mỗi lần, cách nhau ≥ 30 giây). Chỉ nhập ảnh (`png jpg jpeg gif webp bmp heic heif avif`, ≤ 100 MB); mọi thứ khác bị bỏ qua và để nguyên. Một ảnh ở bucket không bao giờ thành hai dòng ở Fatup (id tính từ object nguồn), và bản gốc chỉ bị xóa sau khi bản copy đã đủ. Xóa trong Fatup là xóa hẳn khỏi bucket. Chi tiết: [api.md 4.3](docs/spec/api.md#43-nhập-ảnh-từ-thư-mục-của-bucket), [ADR 0017](docs/decisions/0017-nhap-anh-tu-thu-muc-bucket.md).
+- **Thumbnail bù (desktop):** ảnh chưa có thumbnail được app desktop tạo và tải lên ở nền. Trong lúc chưa có, mọi client hiện ảnh gốc (`thumbUrl`; `FileItem` thêm `hasThumb`).
+
+### Nâng cấp
+**Không có migration.** Chỉ cần `npm run deploy:worker`. Biến `IMPORT_PREFIX = "d30/"` đã nằm trong `worker/wrangler.toml`; đặt thành `""` nếu không muốn nhập. Việc nhập dùng khóa R2 sẵn có (`R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`) qua S3 API; khóa đó phải có quyền ghi và xóa trên bucket (đã cần cho upload). Phát hành app máy tính mới để có thumbnail bù và gọi đồng bộ khi làm mới; deploy lại PWA để web cũng gọi đồng bộ (mở lại PWA hai lần để service worker nhận bản mới). App cũ vẫn chạy; chỉ là không tự gọi đồng bộ, nên ảnh chỉ vào khi có máy bản mới làm mới.
+
 ## [0.4.2] — 2026-11-16
 
 ### Thêm

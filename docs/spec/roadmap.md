@@ -27,3 +27,15 @@ Mục tiêu: bản web đủ dùng để **thay thế việc cài app** trên An
 - Android xem lại file đã gửi, có thùng rác/két sắt.
 - Ký số macOS/Windows để cập nhật tự động trên mọi nền tảng.
 - Test E2E cho giao diện mới; cập nhật lại ảnh chụp màn hình trong README.
+
+### Nợ kỹ thuật
+
+Nhập ảnh từ `d30/` ([thiết kế](../superpowers/specs/2026-11-18-nhap-anh-tu-thu-muc-bucket-design.md)):
+
+- **Hai máy làm mới cùng lúc, cùng nhập một ảnh.** Id của dòng được tính từ object nguồn (key + etag) nên khóa chính chặn dòng trùng, và test chạy hai request song song trên bucket giả lập đạt; nhưng chưa thử với S3 API và D1 thật, và các bước copy/xóa bản gốc của hai máy có thể chồng nhau (copy hai lần cùng một đích, xóa bản gốc hai lần). Người dùng cho phép để lại ở đây. Nếu thấy một ảnh ở bucket thành hai dòng ở Fatup thì đây là chỗ nghi đầu tiên.
+- **Ảnh nhập lại sau khi đã xóa vĩnh viễn.** Nếu lần nhập bị ngắt giữa bước `ready` và bước xóa bản gốc, rồi người dùng xóa vĩnh viễn file đó trước lần quét sau, bản gốc còn ở `d30/` sẽ được nhập lại.
+- **Khi hợp nhất với nhánh Két sắt mã hóa (`feat/vault-e2ee`):** nhánh này thêm cột `encrypted`. Ba chỗ phải thêm điều kiện `encrypted = 0` (đang có `TODO(vault-e2ee)`): `thumbUrl` dự phòng của `toItem`, hai route `/files/:id/thumb[/complete]` (trả `409 encrypted`), và bộ lọc của `createThumbBackfill` ở desktop. Quên thì mục mã hóa không có thumbnail sẽ trỏ `thumbUrl` vào `files/<id>` không tồn tại.
+- **Ảnh chưa có thumbnail nào cũng hiện bằng ảnh gốc** (không riêng ảnh nhập), kể cả ảnh mà thumbnail lỗi lúc upload. Ảnh gốc tới 100 MB tải theo kiểu lazy (URL ổn định theo giờ nên không tải lại mỗi phút); ảnh HEIC trình duyệt không giải mã được thì rơi về biểu tượng file, và Lightbox chưa có `onError` cho `thumbUrl` nên hiện ảnh hỏng.
+- **Thumbnail bù (desktop) tải trọn ảnh gốc tới 100 MB vào RAM và giải mã đồng bộ** trên main process; danh sách "đã thử" chỉ sống một phiên, nên một ảnh làm app sập sẽ bị thử lại ở lần mở sau. Cân nhắc chặn theo kích thước.
+- **Key có đoạn `.` hoặc `..`** (ví dụ `d30/../a.png`) bị URL chuẩn hóa nên bản gốc không bao giờ bị xóa và chiếm một chỗ trong lô mỗi lần quét. Tham chiếu ký tự dạng số (`&#13;`) trong XML liệt kê chưa được giải mã. Còn một khe cỡ mili giây giữa `HEAD` và `DELETE` của bản gốc (chưa kiểm R2 có hỗ trợ DELETE có điều kiện).
+- **Quét `d30/` liệt kê cả những object không phải ảnh ở mỗi lần.** Thư mục có hàng chục nghìn object không phải ảnh sẽ làm mỗi lần quét tốn vài lần gọi liệt kê.
