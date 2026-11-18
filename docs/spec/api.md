@@ -130,6 +130,7 @@ Mọi route dưới đây đòi Bearer token như các route khác. Thiết kế
   - Liên kết: `size` lưu là `0`. Ảnh xem trước (nếu có) được mã hóa vào `vault/<id>.<attempt>.thumb`.
 - **Thành công:** một câu `UPDATE ... WHERE id = ? AND encrypted = 0 AND in_vault = 1 AND status = 'ready'` đặt `encrypted = 1`, `enc_object = attempt`, `enc_meta`, `enc_key`, `name = ''`, `mime = 'application/octet-stream'`, `kind = 'file'`, `url = NULL`. Khóa luôn khớp đúng object mà `enc_object` nêu. Sau đó mới xóa `files/<id>` và `thumbs/<id>.jpg`; thumb mã hóa của lần đó được giữ nếu có ảnh xem trước, không thì xóa.
 - **Máy thua cuộc trong cùng lần cất** (UPDATE không đổi dòng, mục đã mã hóa bởi máy khác): trả `200 FileItem`, xóa object của chính lần đó nếu `attempt` khác `enc_object`. Không lỗi.
+- **`409 upload_too_old`:** object (hoặc thumbnail) của lần thử đã nằm trên R2 quá 45 phút. Cron dọn rác xóa object không được hàng nào trỏ tới sau 1 giờ, nên complete không nhận object già hơn 45 phút. Không ghi D1; object của lần thử bị xóa; mục vẫn "đám mây" và lần mở két sau cất lại với `attempt` mới.
 - **`409 item_changed`:** mục không còn trên đường vào két (đã lấy ra, hoặc `in_vault` không còn là 1) khi complete đến: object của lần đó bị xóa, hàng không đổi. Đây là "complete muộn" của máy đã bỏ dở.
 
 *`vault/out` và `vault/out/complete`:*
@@ -170,6 +171,7 @@ Giới hạn độ dài: `encMeta` ≤ 8192 ký tự, `encKey` ≤ 512 ký tự,
 | `vault_busy` | 409 | Két đổi giữa lúc kiểm tra (request song song) | Thử lại |
 | `app_outdated` | 426 | Thiếu `X-FatUp-Vault: 2` khi két đã thiết lập (`GET /files?vault=1`, `PUT /files/:id/vault`) | Cập nhật app |
 | `forbidden` | 403 | `rkAuth` sai (`recover`, `PUT /vault/pin` bằng `rkAuth`) | Kiểm tra recovery key |
+| `upload_too_old` | 409 | `vault/in/complete` cho object đã upload hơn 45 phút trước | Không cần làm gì: lần mở két sau cất lại với `attempt` mới |
 | `item_changed` | 409 | `vault/in/complete` đến khi mục không còn trên đường vào két (đã lấy ra); `out_started_at` không còn (`vault/out/complete`); mục đổi giữa chừng. Đây là complete muộn của lần cất bị bỏ dở | Không cần làm gì: lần mở két sau cất lại với `attempt` mới |
 | `size_mismatch` | 409 | Kích thước object của `attempt` không khớp body | Làm lại |
 | `not_uploaded` | 409 | Object của `attempt` (hoặc `files/<id>` khi lấy ra) chưa được PUT, hoặc complete trước khi PUT | Làm lại PUT |

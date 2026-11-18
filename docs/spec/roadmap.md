@@ -50,7 +50,6 @@ Các mục liên quan đến két sắt mã hóa (từ bản 0.5.0):
 - **N3, mục nhấp nháy ở trang chính.** Một lần làm mới bắt đầu trước `vault/in` mà trả về sau khi mục đã được ẩn có thể làm mục hiện lại một lúc. Cần bộ đếm thế hệ cho làm mới ([mục 9.11](desktop-ui.md#911-két-sắt-mã-hóa)).
 - **N4, cất và chuyển đổi chạy đôi.** `migrateLegacy` và `moveInAndClose` có thể cùng chạy trên một mục ngay sau khi thiết lập. Kết quả đúng nhưng tốn công. `leaveVault()` có thể cắt một lượt chuyển đổi đang chạy; lần mở két sau làm lại.
 - **N5, thiếu test cho cron.** Chưa có test chứng minh cron để yên các key `vault/` sai dạng (không khớp `VAULT_KEY`) ([mục 6](lifecycle.md#6-vòng-đời-file-thùng-rác-và-dọn-dẹp)).
-- **Complete muộn đụng cron.** Một `vault/in/complete` đến sau hơn 1 giờ kể từ lúc PUT, đúng lúc cron xóa object đó, có thể làm mục mất cả bản rõ lẫn bản mã ([mục 7.7](security.md#77-giới-hạn-bảo-mật-còn-lại)). Hướng sửa, chưa chọn: cron kiểm lại hàng ngay trước khi xóa, hoặc `vault/in/complete` kiểm lại object sau UPDATE và không xóa bản rõ nếu object đã mất.
 - **Đổi tên lúc đang chuyển.** `PATCH` đổi tên một mục đang ở trạng thái đám mây, trong lúc chuyển đổi chạy, có thể bị `encMeta` cũ của lần cất ghi đè tên mới. Chưa kiểm chứng.
 - **`r2-cors.json` còn `exposeHeaders: etag`.** Không còn cần cho két; vô hại. Bỏ khi cập nhật file đó lần sau.
 - **Ảnh thu nhỏ mất sau khi mã hóa (trong mock e2e).** Trong dữ liệu mock, ảnh thu nhỏ của mục sau khi mã hóa thành 476 B (icon chung). Chưa biết do mock hay do chuyển đổi; cần kiểm trên R2 thật.

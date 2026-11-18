@@ -34,7 +34,7 @@ Các phương án đã cân nhắc:
 - **Mất:** object rác còn tới lần cron kế tiếp (tối đa khoảng một ngày sau khi quá 1 giờ) và chiếm dung lượng R2 tạm thời. Một lần cất bị dở phải làm lại từ đầu, tốn băng thông. Cần thêm việc liệt kê `vault/` trong cron.
 - **Rủi ro còn lại** (ghi ở [security 7.7](../spec/security.md#77-giới-hạn-bảo-mật-còn-lại)):
   - Mục ở trạng thái đám mây (chưa mã hóa xong) vẫn có bản rõ trên R2, và người có token đọc được, như mọi mục chưa mã hóa.
-  - Một `vault/in/complete` đến sau hơn 1 giờ kể từ lúc PUT, đúng khoảng cron đang xóa object đó, có thể làm mục mất cả bản rõ lẫn bản mã. Chi tiết và cách giảm rủi ro nằm ở security 7.7 và Nợ kỹ thuật.
+  - (Đã đóng) Cron có thể đua với một `vault/in/complete` đến muộn hơn 1 giờ: `complete` từ chối object cũ hơn 45 phút (409 `upload_too_old`), nên cron và `complete` không bao giờ chạm cùng một object. Chi tiết ở security 7.7.
   - Bản rõ sót lại khi lấy ra bị ngắt tồn tại tới lần cron sau (security 7.7).
 - **Điều agent KHÔNG được làm vì quyết định này:**
   - Không thêm lại giữ chỗ, ETag, `item_busy` hay khóa theo claim mà không viết ADR mới.
