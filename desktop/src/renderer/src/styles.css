@@ -1142,6 +1142,9 @@ h2 {
 .vault-pin .pin {
   margin: 12px 0 0;
 }
+.vault-pin .pin__cells {
+  justify-content: center;
+}
 .vault-pin .pin--long .pin__cells {
   gap: 8px;
 }
@@ -1994,6 +1997,25 @@ h2 {
   .lockheist,
   .lockheist * {
     animation: none !important;
+  }
+}
+/* The Vault gate on a phone (lib/media.ts PHONE_QUERY: a narrow window, or a touch screen on its side) is a still picture: no fire, ash, embers, sparks or meteors (hidden, so they neither animate nor paint), no firelight
+   over the bridge, and the wizard stands still. It is what made the gate lag on a phone; the PIN is typed as usual and a right one opens the Vault. */
+@media (max-width: 720px), (max-height: 520px) and (pointer: coarse) {
+  .vaultscreen .lockbg > * {
+    display: none;
+  }
+  .vaultscreen .lockbg {
+    background: linear-gradient(#10161f 0%, #1c1a2a 100%);
+  }
+  .vaultscreen .lockheist,
+  .vaultscreen .lockheist * {
+    animation: none !important;
+  }
+  .vaultscreen .lockheist__firelight,
+  .vaultscreen .wizard__firelit,
+  .vaultscreen .crack-glow {
+    display: none;
   }
 }
 

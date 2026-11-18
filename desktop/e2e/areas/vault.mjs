@@ -183,6 +183,24 @@ export async function run(h) {
   await page.getByText('Sai PIN. Còn 8 lần thử.', { exact: true }).waitFor();
   await h.shot(page, '13e-vault-gate-wrong-pin');
 
+  h.log('vault: the gate on a phone is a still picture');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(500);
+  const still = await page.evaluate(() => {
+    const g = document.querySelector('.vaultscreen');
+    const shown = (sel) => [...g.querySelectorAll(sel)].filter((e) => getComputedStyle(e).display !== 'none').length;
+    return {
+      flames: g.querySelectorAll('.lockbg__flame').length,
+      flamesShown: shown('.lockbg__flame, .lockbg__spark, .lockbg__p, .lockbg__meteor, .lockbg__fireglow, .lockbg__flicker'),
+      running: document.getAnimations().filter((a) => a.playState === 'running' && g.contains(a.effect?.target)).length,
+    };
+  });
+  assert.ok(still.flames > 0, 'the fire is still in the page (it is hidden by the stylesheet, not removed)');
+  assert.equal(still.flamesShown, 0, 'no flame, spark, ash, ember or meteor is shown on a phone');
+  assert.equal(still.running, 0, `nothing in the gate animates on a phone (${still.running} running)`);
+  await h.shot(page, '13f-vault-gate-phone-still');
+  await page.setViewportSize({ width: 1180, height: 760 });
+
   h.log('vault: gate, right PIN');
   await typePin(page, PIN);
   await page.locator('.app.vault-mode').waitFor({ timeout: 20_000 });
@@ -194,6 +212,17 @@ export async function run(h) {
   assert.equal(await page.locator('.kind-tabs [aria-pressed="true"]').count(), 0, 'no kind is toggled in the Vault');
   await page.getByRole('button', { name: 'Quay lại danh sách file' }).first().click();
   assert.equal((await page.locator('.view-title').textContent())?.trim(), 'Tất cả');
+
+  h.log('vault: on a phone the right PIN opens the Vault at once (no bomb)');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('button', { name: 'Két sắt', exact: true }).first().click();
+  await page.locator('.vaultscreen .pin__input').waitFor();
+  const asked = Date.now();
+  await typePin(page, PIN);
+  await page.locator('.app.vault-mode').waitFor({ timeout: 20_000 });
+  assert.ok(Date.now() - asked < 1500, `no blast to wait for on a phone (took ${Date.now() - asked} ms; the blast alone is about 1850 ms)`);
+  await page.getByRole('button', { name: 'Quay lại danh sách file' }).first().click();
+  await page.setViewportSize({ width: 1180, height: 760 });
 
   h.log('vault: dark theme');
   await page.emulateMedia({ colorScheme: 'dark' });
@@ -269,6 +298,19 @@ export async function run(h) {
   assert.equal(await boarding.count(), 1, 'the file list stays in view behind the popup');
   await page.waitForTimeout(800); // let the popup settle before the screenshot
   await h.shot(page, '15b-vault-popup-desktop');
+  // The row of six cells sits in the middle of the dialog, not against its left edge.
+  const pinRowCentre = async () =>
+    page.evaluate(() => {
+      const d = document.querySelector('[role="dialog"][aria-label="Mở Két sắt"]');
+      const row = d.querySelector('.pin__cells').getBoundingClientRect();
+      const cells = [...d.querySelectorAll('.pin__cell')].map((c) => c.getBoundingClientRect());
+      const left = cells[0].left;
+      const right = cells[cells.length - 1].right;
+      const box = d.getBoundingClientRect();
+      return { rowCentre: (left + right) / 2, dialogCentre: (box.left + box.right) / 2 };
+    });
+  const desktopCentre = await pinRowCentre();
+  assert.ok(Math.abs(desktopCentre.rowCentre - desktopCentre.dialogCentre) <= 2, `the PIN cells are centred in the popup (${JSON.stringify(desktopCentre)})`);
 
   h.log('vault: the popup fits at phone width');
   await page.setViewportSize({ width: 390, height: 844 });
@@ -289,6 +331,8 @@ export async function run(h) {
   assert.ok(geo.dialog.sw <= geo.dialog.cw + 1, `the dialog does not overflow sideways (scrollWidth ${geo.dialog.sw}, clientWidth ${geo.dialog.cw})`);
   assert.ok(geo.pageOverflow <= 0, `no horizontal page scroll at 390 px (overflow ${geo.pageOverflow})`);
   await h.shot(page, '15c-vault-popup-phone');
+  const phoneCentre = await pinRowCentre();
+  assert.ok(Math.abs(phoneCentre.rowCentre - phoneCentre.dialogCentre) <= 2, `the PIN cells are centred in the popup on a phone (${JSON.stringify(phoneCentre)})`);
 
   h.log('vault: wrong PIN shows the error in the popup');
   await typePin(page, WRONG);
