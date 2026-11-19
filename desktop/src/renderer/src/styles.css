@@ -687,7 +687,7 @@ h2 {
   position: relative;
 }
 .tile__actions {
-  display: flex; /* always visible: the pencil is no longer hover-only */
+  display: none;
   position: absolute;
   top: 0;
   right: 32px; /* just left of the ⋮ button */
@@ -695,6 +695,10 @@ h2 {
   align-items: center;
   padding-left: 16px;
   background: linear-gradient(to right, transparent, var(--surface-strong) 16px);
+}
+.tile:hover .tile__actions,
+.tile:focus-within .tile__actions {
+  display: flex;
 }
 .tile--selected .tile__actions {
   background: linear-gradient(to right, transparent, var(--primary-container) 16px);
@@ -3092,6 +3096,9 @@ body {
 
 /* Touch screens have no hover: keep the pencil and copy buttons visible and make press-and-hold the "select" gesture (see usePress in Files.tsx). */
 @media (hover: none) {
+  .tile .tile__actions {
+    display: flex;
+  }
   .tile,
   .list__row {
     -webkit-touch-callout: none;
@@ -3311,7 +3318,7 @@ body {
 }
 /* Files and photos: same right-aligned actions column as links (room for the pencil and, on a link row, copy). */
 .list--actions .list__row {
-  grid-template-columns: 24px 32px minmax(0, 1fr) 100px 90px 90px 40px;
+  grid-template-columns: 24px 32px minmax(0, 1fr) 108px 90px 90px 40px;
 }
 /* Open-outside, edit, copy: pinned to the right edge of every link row so they line up. */
 .col-actions {
@@ -3328,15 +3335,23 @@ body {
 .list__row:focus-within .open-out-btn {
   visibility: visible;
 }
+.list__row .rename-btn,
+.list__row .copy-btn,
 .row-download {
   color: var(--text-2);
-  visibility: hidden;
+  visibility: hidden; /* keeps its slot so the columns do not shift */
 }
+.list__row:hover .rename-btn,
+.list__row:hover .copy-btn,
 .list__row:hover .row-download,
+.list__row:focus-within .rename-btn,
+.list__row:focus-within .copy-btn,
 .list__row:focus-within .row-download {
   visibility: visible;
 }
 @media (hover: none) {
+  .list__row .rename-btn,
+  .list__row .copy-btn,
   .row-download {
     visibility: visible;
   }
@@ -3800,9 +3815,9 @@ body {
   position: absolute;
   top: 50%;
   left: 50%;
-  width: 52px;
-  height: 52px;
-  margin: -26px 0 0 -26px;
+  width: 64px;
+  height: 64px;
+  margin: -32px 0 0 -32px;
   border: 0;
   border-radius: 50%;
   display: grid;
@@ -4108,7 +4123,7 @@ body {
 /* A list that mixes links with files: room for [shared][pencil][copy], and an empty slot on non-link rows so the pencils line up. */
 @media (min-width: 721px) {
   .list--mixed .list__row {
-    grid-template-columns: 24px 32px minmax(0, 1fr) 132px 90px 90px 40px;
+    grid-template-columns: 24px 32px minmax(0, 1fr) 140px 90px 90px 40px;
   }
 }
 .col-actions__slot {
