@@ -4,6 +4,14 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [0.5.6] — 2026-11-19
+
+### Đổi
+- **Bút chì, nút copy link và nút Tải về chỉ hiện khi rê chuột** (cả lưới lẫn danh sách; màn cảm ứng vẫn luôn hiện). Sửa lại 0.5.4, khi bút chì bị làm luôn hiện nhầm. Nút Tải về to hơn.
+
+### Nâng cấp
+Không có migration, không đổi server. Phát hành app máy tính mới và deploy lại PWA.
+
 ## [0.5.5] — 2026-11-19
 
 ### Đổi

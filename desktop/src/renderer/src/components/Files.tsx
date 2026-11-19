@@ -346,7 +346,7 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCop
             }}
             onKeyDown={(e) => e.stopPropagation()}
           >
-            <Download size={22} />
+            <Download size={30} />
           </button>
         )}
       </div>
@@ -359,7 +359,7 @@ function RowDownloadButton({ item, onDownload }: { item: Item; onDownload: (item
   const { t } = useI18n();
   return (
     <button
-      className="icon-btn icon-btn--sm row-download"
+      className="icon-btn row-download"
       aria-label={t.downloadNamed(item.name)}
       title={t.download}
       onClick={(e) => {
@@ -368,7 +368,7 @@ function RowDownloadButton({ item, onDownload }: { item: Item; onDownload: (item
       }}
       onKeyDown={(e) => e.stopPropagation()}
     >
-      <Download size={15} />
+      <Download size={22} />
     </button>
   );
 }
