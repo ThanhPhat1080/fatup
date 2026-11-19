@@ -334,7 +334,7 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCop
       </div>
       <div className="tile__thumb">
         <Thumb item={item} />
-        {onDownload && item.kind === 'file' && (
+        {onDownload && (item.kind === 'file' || item.kind === 'image') && (
           // Always in the tab order; it shows on hover, on focus of the card, or when reached with Tab.
           <button
             className="tile__download"

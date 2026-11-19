@@ -159,6 +159,8 @@ export type FatupApi = {
   webPreview?: WebPreviewApi;
   /** Saves a file to the downloads folder. `reveal` (default true) also shows it in the file manager; bulk downloads pass false for all but the last. */
   download(id: string, reveal?: boolean): Promise<Result<string>>;
+  /** Saves several files as ONE `fatup.zip` (a browser blocks a burst of separate downloads; the desktop app does the same for consistency). Returns the ids that made it in. */
+  downloadZip(files: { id: string; name: string }[]): Promise<Result<string[]>>;
   copyImage(id: string): Promise<Result>;
   /** Moves a file to the trash (it can be restored for 30 days). */
   remove(id: string): Promise<Result>;

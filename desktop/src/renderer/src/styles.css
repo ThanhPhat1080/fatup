@@ -687,7 +687,7 @@ h2 {
   position: relative;
 }
 .tile__actions {
-  display: none;
+  display: flex; /* always visible: the pencil is no longer hover-only */
   position: absolute;
   top: 0;
   right: 32px; /* just left of the ⋮ button */
@@ -695,10 +695,6 @@ h2 {
   align-items: center;
   padding-left: 16px;
   background: linear-gradient(to right, transparent, var(--surface-strong) 16px);
-}
-.tile:hover .tile__actions,
-.tile:focus-within .tile__actions {
-  display: flex;
 }
 .tile--selected .tile__actions {
   background: linear-gradient(to right, transparent, var(--primary-container) 16px);
@@ -3096,9 +3092,6 @@ body {
 
 /* Touch screens have no hover: keep the pencil and copy buttons visible and make press-and-hold the "select" gesture (see usePress in Files.tsx). */
 @media (hover: none) {
-  .tile .tile__actions {
-    display: flex;
-  }
   .tile,
   .list__row {
     -webkit-touch-callout: none;

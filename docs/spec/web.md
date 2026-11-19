@@ -9,6 +9,7 @@
 - Cài được như app: manifest + service worker (chỉ cache app shell và asset; **không cache API, không cache presigned URL**).
 - Có: xem, **upload**, tải về, đổi tên, thẻ màu, xóa, thùng rác, két sắt, chọn nhiều, sắp xếp, dung lượng, dark mode. **Không có:** kiểm tra cập nhật (web tự cập nhật qua service worker), QR ghép Android.
 - Tải về bằng thẻ `<a download>` (presigned URL đã có `Content-Disposition: attachment`).
+- **Tải nhiều file** (`downloadZip`, dùng chung với desktop): các file được tải về bộ nhớ (két thì giải mã), gói bằng `desktop/src/zip.ts` (kiểu store) thành `fatup.zip` và tải một lần; trình duyệt chặn nhiều `<a download>` liên tiếp. Tổng các file trong một zip tối đa 1 GB (`ZIP_MAX_BYTES`).
 - **CORS của R2 là bắt buộc để upload** (`npm run r2:cors` áp dụng `worker/r2-cors.json`: `GET`, `HEAD`, `PUT`, header `content-type`). Thiếu thì upload báo lỗi mạng. "Copy ảnh" cũng cần CORS; thiếu thì copy ảnh xem trước. Két không cần CORS riêng nào thêm (không đọc `ETag`, xem [mục 10.3](#103-két-sắt-trên-web)).
 - Lưu ý bảo mật của token trên web: xem [mục 7](security.md#7-bảo-mật).
 

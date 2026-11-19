@@ -14,6 +14,7 @@ import { WebPreview } from './webpreview';
 import { ApiClient, ApiError, normalizeServerUrl } from './api';
 import { ConfigStore } from './config';
 import { uniqueFileName } from './filename';
+import { ZIP_MAX_BYTES, makeZip, uniqueNames } from '../zip';
 import { checkPin, hashPin, isValidPin, pinMatches } from './pin';
 import { PreviewCache, fetchPicture } from '../preview-cache';
 import { FilePreviewStore, PREVIEW_SCHEME } from './previews';
@@ -470,6 +471,38 @@ function registerIpc() {
     const res = await vault.download(id);
     if (res.ok && reveal) shell.showItemInFolder(res.value);
     return res;
+  });
+
+  // Several files become one fatup.zip in the downloads folder (the web build does the same, so both behave alike).
+  ipcMain.handle('downloadZip', async (_e, files: { id: string; name: string }[]): Promise<Result<string[]>> => {
+    if (!unlocked) return { ok: false, error: 'locked' };
+    const names = uniqueNames(files.map((f) => f.name));
+    const entries: { name: string; data: Uint8Array }[] = [];
+    const done: string[] = [];
+    let total = 0;
+    for (const [i, f] of files.entries()) {
+      const bytes = vault.owns(f.id) ? await vault.fileBytes(f.id) : await plainFileBytes(_e, f.id);
+      if (!bytes.ok) {
+        if (bytes.error === 'locked') return bytes;
+        continue;
+      }
+      total += bytes.value.length;
+      if (total > ZIP_MAX_BYTES) return { ok: false, error: 'zip_too_large' };
+      entries.push({ name: names[i], data: bytes.value });
+      done.push(f.id);
+    }
+    if (entries.length === 0) return { ok: false, error: 'download_failed' };
+    try {
+      const dir = downloadDir();
+      const name = uniqueFileName('fatup.zip', (n) => existsSync(join(dir, n)));
+      const target = join(dir, name);
+      await writeFile(target, makeZip(entries));
+      for (const id of done) config.markDownloaded(id);
+      shell.showItemInFolder(target);
+      return { ok: true, value: done };
+    } catch (err) {
+      return fail(err);
+    }
   });
 
   const copyToClipboard = async (image: Electron.NativeImage) => {
