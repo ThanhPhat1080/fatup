@@ -57,6 +57,7 @@ const api: FatupApi = {
     },
   },
   download: (id, reveal) => ipcRenderer.invoke('download', id, reveal),
+  downloadZip: (files) => ipcRenderer.invoke('downloadZip', files),
   copyImage: (id) => ipcRenderer.invoke('copyImage', id),
   remove: (id) => ipcRenderer.invoke('remove', id),
   restore: (id) => ipcRenderer.invoke('restore', id),

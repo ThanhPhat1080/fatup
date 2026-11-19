@@ -4,6 +4,18 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [0.5.4] — 2026-11-19
+
+### Sửa
+- **PWA: tải nhiều file chỉ được một file.** Trình duyệt chặn các lần tải tự động liên tiếp; nay **Tải tất cả** gói các file đã chọn thành một `fatup.zip`. App máy tính làm giống hệt (ghi `fatup.zip` vào thư mục Tải về) để hai bản đồng nhất. Tổng một lần tải tối đa 1 GB.
+
+### Đổi
+- **Bút chì (và nút copy link) ở dạng lưới luôn hiện**, không còn chỉ hiện khi rê chuột.
+- **Ảnh cũng có nút Tải về khi rê chuột** ở dạng lưới (trước chỉ file).
+
+### Nâng cấp
+Không có migration, không đổi server. Chỉ cần phát hành app máy tính mới và deploy lại PWA.
+
 ## [0.5.3] — 2026-11-18
 
 ### Đổi

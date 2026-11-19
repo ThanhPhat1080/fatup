@@ -7,6 +7,7 @@ import { popSharedLink } from './share';
 import { PreviewCache, fetchPicture } from '../../desktop/src/preview-cache';
 import { CacheStoragePreviewStore } from './preview-store';
 import { createWebVault } from './vault-web';
+import { ZIP_MAX_BYTES, makeZip, uniqueNames } from '../../desktop/src/zip';
 
 const STORAGE_KEY = 'fatup.web.v1';
 const MAX_DOWNLOADED = 2000;
@@ -377,6 +378,28 @@ export function installBrowserApi(): void {
         markDownloaded(id);
         return 'Downloads';
       });
+    },
+
+    downloadZip: async (files) => {
+      const names = uniqueNames(files.map((f) => f.name));
+      const entries: { name: string; data: Uint8Array }[] = [];
+      const done: string[] = [];
+      let total = 0;
+      for (const [i, f] of files.entries()) {
+        const bytes = await api.fileBytes(f.id); // vault files are decrypted here, like a single download
+        if (!bytes.ok) {
+          if (bytes.error === 'locked') return bytes;
+          continue;
+        }
+        total += bytes.value.length;
+        if (total > ZIP_MAX_BYTES) return { ok: false, error: 'zip_too_large' };
+        entries.push({ name: names[i], data: bytes.value });
+        done.push(f.id);
+      }
+      if (entries.length === 0) return { ok: false, error: 'download_failed' };
+      saveBlob('fatup.zip', new Blob([makeZip(entries) as BlobPart], { type: 'application/zip' }));
+      for (const id of done) markDownloaded(id);
+      return { ok: true, value: done };
     },
 
     copyImage: async (id) => {

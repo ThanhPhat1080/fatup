@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ChevronsDownUp, ChevronsUpDown, Download, File as FileGlyph, Image as ImageGlyph, Layers, LayoutGrid, Link2, List, Plus, RotateCcw, RotateCw, Search, Settings as SettingsIcon, Share2, Trash2, Upload, UploadCloud, Users, X } from 'lucide-react';
+import { ZIP_MAX_BYTES } from '../../../zip';
 import type { AppState, Item, Prefs, Tab, UploadJob, Usage } from '../../../shared-ipc';
 import { DEFAULT_QUOTA_BYTES, isShareable, type TagColor } from '@fatup/shared';
 import { DEFAULT_SORT, groupByDay, groupByDomain, inTab, matchesLink, matchesQuery, matchesSite, matchesTags, singleGroup, siteCounts, sortItems, type SiteFilter, type SortKey, type SortState } from '../lib/format';
@@ -633,6 +634,21 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   async function downloadMany(targets: Item[]) {
     if (targets.length === 0) return;
     const last = targets[targets.length - 1].id;
+    // Two or more files are packed into one zip (a browser lets a page start one download per click, not a burst of them).
+    if (targets.length > 1) {
+      if (targets.reduce((sum, it) => sum + it.size, 0) > ZIP_MAX_BYTES) return toast(t.err_zip_too_large, true);
+      const res = await window.fatup.downloadZip(targets.map((it) => ({ id: it.id, name: it.name })));
+      if (!res.ok) {
+        if (res.error === 'locked') return onLocked();
+        return toast(errorText(t, res.error), true);
+      }
+      const saved = new Set(res.value);
+      const mark = (list: Item[] | null) => list?.map((it) => (saved.has(it.id) ? { ...it, downloaded: true } : it)) ?? null;
+      setItems(mark);
+      setVaultItems(mark);
+      clearSelection();
+      return report(saved.size, targets.length - saved.size, t.downloadedN(saved.size));
+    }
     const { done, failed, locked } = await batch(targets, (id) => window.fatup.download(id, id === last), 1);
     if (locked) return;
     const mark = (list: Item[] | null) => list?.map((it) => (done.has(it.id) ? { ...it, downloaded: true } : it)) ?? null;
