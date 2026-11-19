@@ -354,7 +354,26 @@ function Tile({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCop
   );
 }
 
-function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, siteColumn, actions, copySlot }: RowProps) {
+/** Quick save in a list row: takes its slot always, shows on hover/focus of the row (always on touch screens). */
+function RowDownloadButton({ item, onDownload }: { item: Item; onDownload: (item: Item) => void }) {
+  const { t } = useI18n();
+  return (
+    <button
+      className="icon-btn icon-btn--sm row-download"
+      aria-label={t.downloadNamed(item.name)}
+      title={t.download}
+      onClick={(e) => {
+        e.stopPropagation();
+        onDownload(item);
+      }}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <Download size={15} />
+    </button>
+  );
+}
+
+function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, onDownload, siteColumn, actions, copySlot }: RowProps) {
   const { t } = useI18n();
   const press = usePress(item, selected.size > 0, { onToggle, onOpen, onMenu });
   return (
@@ -384,6 +403,7 @@ function Row({ item, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopy
         <span role="cell" className="col-actions">
           {siteColumn && onEdit && <OpenOutsideButton onClick={() => onOpen(item, true)} />}
           <SharedButton item={item} onShare={onShare} />
+          {onDownload && (item.kind === 'file' || item.kind === 'image') ? <RowDownloadButton item={item} onDownload={onDownload} /> : onDownload && copySlot ? <span className="col-actions__slot" aria-hidden /> : null}
           {onEdit && <RenameButton link={item.kind === 'link'} onClick={(r) => onEdit(item, r)} />}
           <CopyLinkButton item={item} onCopy={onCopyLink} />
           {copySlot && item.kind !== 'link' && <span className="col-actions__slot" aria-hidden />}
@@ -447,7 +467,7 @@ function SortHead({ id, label, sort, onSort, className }: { id: SortKey; label: 
   );
 }
 
-export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, collapsed, onToggleGroup, sort, onSort, allSelected, someSelected, onToggleAll, timeLabel, siteColumn = false }: ListProps) {
+export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, onShare, onCopyLink, onImportant, onDownload, collapsed, onToggleGroup, sort, onSort, allSelected, someSelected, onToggleAll, timeLabel, siteColumn = false }: ListProps) {
   const { t } = useI18n();
   // The trash has no pencil (onEdit is not given), so it keeps the plain columns.
   const actions = siteColumn || !!onEdit;
@@ -481,7 +501,7 @@ export function FileList({ groups, selected, onToggle, onOpen, onMenu, onEdit, o
           <GroupHeading group={g} list collapsed={collapsed} onToggleGroup={onToggleGroup} />
           {!collapsed?.has(g.key) &&
             g.items.map((item) => (
-              <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} onShare={onShare} onCopyLink={onCopyLink} onImportant={onImportant} siteColumn={siteColumn} actions={actions} copySlot={mixed} />
+              <Row key={item.id} item={item} selected={selected} onToggle={onToggle} onOpen={onOpen} onMenu={onMenu} onEdit={onEdit} onShare={onShare} onCopyLink={onCopyLink} onImportant={onImportant} onDownload={onDownload} siteColumn={siteColumn} actions={actions} copySlot={mixed} />
             ))}
         </section>
       ))}

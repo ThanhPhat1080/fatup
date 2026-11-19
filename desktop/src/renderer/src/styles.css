@@ -3311,7 +3311,7 @@ body {
 }
 /* Files and photos: same right-aligned actions column as links (room for the pencil and, on a link row, copy). */
 .list--actions .list__row {
-  grid-template-columns: 24px 32px minmax(0, 1fr) 68px 90px 90px 40px;
+  grid-template-columns: 24px 32px minmax(0, 1fr) 100px 90px 90px 40px;
 }
 /* Open-outside, edit, copy: pinned to the right edge of every link row so they line up. */
 .col-actions {
@@ -3327,6 +3327,19 @@ body {
 .list__row:hover .open-out-btn,
 .list__row:focus-within .open-out-btn {
   visibility: visible;
+}
+.row-download {
+  color: var(--text-2);
+  visibility: hidden;
+}
+.list__row:hover .row-download,
+.list__row:focus-within .row-download {
+  visibility: visible;
+}
+@media (hover: none) {
+  .row-download {
+    visibility: visible;
+  }
 }
 .col-site {
   display: flex;
@@ -4095,7 +4108,7 @@ body {
 /* A list that mixes links with files: room for [shared][pencil][copy], and an empty slot on non-link rows so the pencils line up. */
 @media (min-width: 721px) {
   .list--mixed .list__row {
-    grid-template-columns: 24px 32px minmax(0, 1fr) 100px 90px 90px 40px;
+    grid-template-columns: 24px 32px minmax(0, 1fr) 132px 90px 90px 40px;
   }
 }
 .col-actions__slot {

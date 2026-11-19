@@ -1163,6 +1163,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
               onShare={inTrash || vaultActive ? undefined : (it, anchor) => setSharing((cur) => (cur?.id === it.id && cur.anchor ? null : { id: it.id, anchor }))}
               onCopyLink={inTrash ? undefined : (it) => void copyLink(it)}
               onImportant={inTrash ? undefined : (it) => void toggleImportant(it)}
+              onDownload={inTrash ? undefined : (it) => void download(it)}
               collapsed={collapsed}
               onToggleGroup={toggleGroup}
               sort={sort}
