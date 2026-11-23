@@ -4,6 +4,17 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [0.5.8] — 2026-11-23
+
+### Thêm
+- **Tùy chọn "Dùng khóa LOTR"** trong Cài đặt. Bật thì màn khóa và cổng Két sắt như trước: cảnh cổng Moria đầy đủ trên máy tính, cửa Moria có hai cây trên điện thoại, và ông phù thủy ở cổng Két sắt.
+
+### Đổi
+- **Màn khóa mặc định là khóa đơn giản, nhẹ hơn.** Khi tắt tùy chọn (mặc định), màn khóa app là một cánh cửa Moria với ánh sáng đổi chậm, không có hoạt họa; cổng Két sắt là cánh cửa đó có chữ **VAULT**. Nhằm giảm giật và lag trên điện thoại. PIN đúng ở cổng Két sắt mở két ngay; nút ← Quay lại thoát ngay. Chi tiết: [ADR 0020](docs/decisions/0020-khoa-don-gian-mac-dinh.md).
+
+### Nâng cấp
+Không có migration, không đổi server. Phát hành app máy tính mới và deploy lại PWA. Người dùng cũ sẽ thấy khóa đơn giản ngay sau khi cập nhật, vì mặc định là tắt; muốn lại cảnh đầy đủ thì tick **Dùng khóa LOTR** trong Cài đặt.
+
 ## [0.5.7] — 2026-11-23
 
 ### Sửa

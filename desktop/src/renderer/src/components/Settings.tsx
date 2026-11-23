@@ -148,6 +148,21 @@ export function Settings({ state, onClose, onPrefs, onToast, onLock, onSignOut, 
           </button>
         </div>
 
+        <label className="settings__row">
+          <KeyRound size={20} className="settings__icon" />
+          <span className="settings__label">
+            {t.lotrLock}
+            <span className="settings__sub">{t.lotrLockHint}</span>
+          </span>
+          <input
+            type="checkbox"
+            checked={state.prefs.lotrLock}
+            onChange={(e) => onPrefs({ lotrLock: e.target.checked })}
+            aria-label={t.lotrLock}
+            style={{ width: 24, height: 24, margin: 0, cursor: 'pointer' }}
+          />
+        </label>
+
         <div className="settings__row">
           <Server size={20} className="settings__icon" />
           <span className="settings__label">{t.server}</span>

@@ -978,7 +978,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
         ) : vaultFlow === 'recover' ? (
           <VaultRecover onDone={vaultFlowDone} onBack={cancelVaultFlow} />
         ) : inVault && !vaultUnlocked ? (
-          <VaultGate onUnlocked={() => setVaultUnlocked(true)} onBack={leaveVault} onRecover={recoverVault} />
+          <VaultGate lotr={state.prefs.lotrLock} onUnlocked={() => setVaultUnlocked(true)} onBack={leaveVault} onRecover={recoverVault} />
         ) : (
           <>
         {viewHead}

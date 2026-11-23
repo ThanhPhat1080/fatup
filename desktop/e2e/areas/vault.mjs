@@ -8,7 +8,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
-import { typePin } from '../harness.mjs';
+import { turnLotrOn, typePin } from '../harness.mjs';
 
 const PIN = '204781';
 const WRONG = '111111';
@@ -171,6 +171,22 @@ export async function run(h) {
   assert.equal(await page.locator('.list__row', { hasText: PICTURE }).count(), 0, 'the Vault picture is not in the normal list');
   // Leaving the Vault keeps the key for moving files in (6 hours), while viewing still asks for the PIN below.
   assert.equal((await page.evaluate(() => window.fatup.vaultStatus())).value.open, true, 'the key is still held after leaving the Vault');
+
+  h.log('vault: simple gate (LOTR lock off): the door says VAULT, no wizard, Back leaves at once');
+  await page.getByRole('button', { name: 'Két sắt', exact: true }).first().click();
+  await page.locator('.vaultscreen .sdoor').waitFor();
+  assert.equal(await page.locator('.vaultscreen .sdoor__label').textContent(), 'VAULT', 'the simple door is labelled VAULT');
+  assert.equal(await page.locator('.vaultscreen .lockheist').count(), 0, 'no wizard in the simple gate');
+  assert.equal(await page.locator('.vaultscreen .lockbg').count(), 0, 'no backdrop in the simple gate');
+  await page.locator('.vaultscreen .pin__input').waitFor();
+  await h.shot(page, '13e0-vault-gate-simple');
+  await page.getByRole('button', { name: 'Quay lại', exact: true }).click();
+  await page.locator('.vaultscreen').waitFor({ state: 'detached', timeout: 1500 }); // no 3.4 s wait with the simple gate
+
+  h.log('vault: turn the LOTR lock on in Settings, the full gate comes back');
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await turnLotrOn(page);
+  await page.keyboard.press('Escape');
 
   h.log('vault: entering again asks for the PIN although the key is held');
   await page.getByRole('button', { name: 'Két sắt', exact: true }).first().click();

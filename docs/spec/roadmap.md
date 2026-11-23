@@ -26,6 +26,7 @@ Mục tiêu: bản web đủ dùng để **thay thế việc cài app** trên An
 - Android xem lại file đã gửi, có thùng rác/két sắt.
 - Ký số macOS/Windows để cập nhật tự động trên mọi nền tảng.
 - Test E2E cho giao diện mới; cập nhật lại ảnh chụp màn hình trong README.
+- **Đo hiệu năng khóa đơn giản trên điện thoại thật.** Người dùng tự test sau. Nếu vẫn giật thì làm phương án C của [ADR 0020](../decisions/0020-khoa-don-gian-mac-dinh.md): chụp sẵn cánh cửa thành một ảnh rồi phủ lớp sáng.
 
 ### Nợ kỹ thuật
 

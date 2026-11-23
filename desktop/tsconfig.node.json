@@ -8,7 +8,8 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "isolatedModules": true
+    "isolatedModules": true,
+    "jsx": "react-jsx"
   },
   "include": ["electron.vite.config.ts", "src/main", "src/preload", "src/shared-ipc.ts", "test/**/*.ts"]
 }

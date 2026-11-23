@@ -23,20 +23,22 @@ Spec: `docs/spec/desktop-ui.md` (màn hình, liên kết, chia sẻ, lightbox, u
 | `src/main/previews.ts`, `src/preview-cache.ts`, `src/main/webpreview.ts` | ảnh xem trước của link (`fatup-preview://`) và xem trang web trong app |
 | `src/renderer/src/components/Main.tsx` | màn hình chính (file lớn nhất; tab, bộ lọc, menu, thao tác hàng loạt). Cất vào két: `enteringVault`. Lấy ra khỏi két đổi giao diện ngay: `removeFromVault` đưa mục vào `leavingVault` (bản giả trong danh sách chính, `outGhost` bỏ ảnh thu nhỏ), `refresh` có bộ đếm thế hệ (`refreshGen`) và bỏ câu trả lời cũ; thất bại thì đưa lại vào két khi đang xem ([ADR 0017](../docs/decisions/0017-lay-ra-khoi-ket-doi-giao-dien-ngay.md)) |
 | `src/renderer/src/components/Files.tsx` | hiển thị dạng lưới/danh sách |
-| `src/renderer/src/components/Lock*.tsx`, `Moria*`, `Fellowship` | màn hình khóa có hoạt họa |
-| `src/renderer/src/components/VaultGate.tsx`, `LockWizard` (dùng chung với cổng két) | cổng 6 số của két sắt, có ông phù thủy và hiệu ứng nổ |
+| `src/renderer/src/components/Lock*.tsx`, `Moria*`, `Fellowship` | màn hình khóa có hoạt họa (cảnh đầy đủ, chỉ khi bật **Dùng khóa LOTR**; `LockGate` là cửa trên điện thoại) |
+| `src/renderer/src/components/SimpleDoor.tsx` | khóa đơn giản, **mặc định** khi tắt Dùng khóa LOTR: dùng `DoorBody` và `DoorDefs({ glow: false })` của `MoriaDoor.tsx`, một lớp sáng đổi `opacity` (`.sdoor`, `sdoor-breathe` trong `styles.css`). Cho màn khóa app và cổng két (props `label`, `cells`, `below`). Không thêm filter hay hoạt họa nào ([ADR 0020](../docs/decisions/0020-khoa-don-gian-mac-dinh.md)) |
+| `src/renderer/src/components/VaultGate.tsx`, `LockWizard` (dùng chung với cổng két) | cổng 6 số của két sắt. Khi bật LOTR: ông phù thủy và hiệu ứng nổ. Khi tắt: `SimpleDoor` có chữ VAULT, không có wizard |
 | `src/renderer/src/components/VaultSetup.tsx`, `VaultRecover.tsx`, `VaultPinChange.tsx` | trình thiết lập hai bước (PIN, recovery key, xác nhận 2 nhóm; thoát trước khi xác nhận thì gọi `vaultLeave`), màn khôi phục, đổi PIN két trong Cài đặt (không cần mở két) |
 | `src/renderer/src/components/VaultPinDialog.tsx` | popup nhỏ 6 ô PIN trên danh sách chính, mở khi cất vào két mà chưa giữ khóa; gọi `vaultUnlock(pin, 'move')`; sai PIN/đếm ngược như cổng; "Quên PIN" sang khôi phục; không đổi màn hình |
 | `src/renderer/src/components/VaultTrash.tsx`, `VaultTrashIcon.tsx`, `VaultFrame.tsx` | thùng rác của két (sidebar 70% / toàn màn hình ≤ 720 px), icon của nó, khung chế độ két (`vault-mode`) |
 | `src/renderer/src/lib/vault.ts` | hàm thuần của két: bước thiết lập, thông báo cổng và lỗi, kế hoạch cất vào két (`vaultMoveInPlan`: chưa thiết lập thì mở trình thiết lập trước), trạng thái mục (`vaultItemState`: đám mây mờ = `pending`, tick xanh = `encrypted`), xác nhận recovery key; lấy ra đổi giao diện ngay: `leavingGhost` (bản giả, `inVault: false`), `withoutIds`, `mergeGhosts` (thêm bản giả không trùng id), `restoreAfterFailedMoveOut` (đưa mục lỗi về lại, theo `DEFAULT_SORT`) — có unit test. Logic giao diện két đặt ở đây, không ở component |
 | `src/renderer/src/lib/media.ts`, `phone-query.ts`, `motion.ts` | `PHONE_QUERY` (cửa sổ hẹp ≤ 720 px, hoặc màn cảm ứng nằm ngang cao ≤ 520 px; định nghĩa nằm ở `phone-query.ts`, không phụ thuộc DOM) và `useMediaQuery` (`media.ts`); `stillGate()` (`motion.ts`): cổng két là ảnh tĩnh trên điện thoại hoặc khi `prefers-reduced-motion` (PIN đúng vào ngay, không bom). Phần nhìn của chế độ tĩnh nằm trong `styles.css` dưới cùng `@media` đó, có test ở `test/vault-styles.test.ts` |
+| `src/renderer/src/lib/lock-scene.ts` | `lockScene(lotr, phone)` (cảnh màn khóa app: `simple` / `moria` / `gate`) và `vaultGateStill(lotr, still)` (cổng két: tắt LOTR thì luôn tĩnh), theo `Prefs.lotrLock`; hàm thuần, có test `test/lock-scene.test.ts` |
 | `src/renderer/src/lib/format.ts` | hàm thuần: nhóm, sắp xếp, lọc, dung lượng, loại biểu tượng file (`fileVisual`) — có unit test |
 | `src/renderer/src/lib/i18n.ts` | từ điển `en` và `vi` |
 | `src/main/web-globals.d.ts` | khai báo kiểu `CryptoKey`, `BodyInit` cho các test (project không có DOM lib) |
 | `e2e/smoke.mjs` | runner E2E: chạy các vùng trong `e2e/areas/`, mỗi vùng một mock server + profile riêng |
-| `e2e/harness.mjs` | phần dùng chung: `createHarness`, `launch`, `launchReady` (setup nhanh, PIN 1234), `log` (watchdog), `shot`, `kind`, `showAll`, `typePin` |
-| `e2e/areas/*.mjs` | các vùng E2E: `setup` (lần đầu + màn khóa), `files`, `share`, `links`, `settings`, `vault` (két sắt: thiết lập + recovery key, căn giữa ô PIN trong thẻ thiết lập, upload, thùng rác của két, khóa sai PIN, giữ khóa 6 giờ, popup cất vào két, lấy ra đổi giao diện ngay: thành công và thất bại có về lại két) |
-| `e2e/lock-phone.mjs`, `e2e/mock-server.mjs` | màn khóa trên khung điện thoại; API giả dùng chung |
+| `e2e/harness.mjs` | phần dùng chung: `createHarness`, `launch`, `launchReady` (setup nhanh, PIN 1234), `log` (watchdog), `shot`, `kind`, `showAll`, `typePin`, `turnLotrOn` (tick "Dùng khóa LOTR" trong Cài đặt đang mở và chờ app lưu) |
+| `e2e/areas/*.mjs` | các vùng E2E: `setup` (lần đầu + màn khóa), `files`, `share`, `links`, `settings` (checkbox Dùng khóa LOTR: khóa đơn giản mặc định, bật thì cảnh đầy đủ), `vault` (két sắt: thiết lập + recovery key, căn giữa ô PIN trong thẻ thiết lập, upload, thùng rác của két, khóa sai PIN, giữ khóa 6 giờ, popup cất vào két, lấy ra đổi giao diện ngay: thành công và thất bại có về lại két; cổng đơn giản khi tắt LOTR: chữ VAULT, không wizard, Quay lại thoát ngay, rồi bật LOTR cho cổng đầy đủ) |
+| `e2e/lock-phone.mjs`, `e2e/mock-server.mjs` | màn khóa trên khung điện thoại (bật LOTR trước, vì test này kiểm cảnh đầy đủ); API giả dùng chung |
 
 ## Test
 
@@ -45,11 +47,13 @@ Spec: `docs/spec/desktop-ui.md` (màn hình, liên kết, chia sẻ, lightbox, u
 - E2E: `npm run e2e` chạy mọi vùng; `npm run e2e -- links share` (hoặc `E2E_ONLY=links,share`) chỉ chạy các vùng đó; đã build rồi thì `node e2e/smoke.mjs links` (trong `desktop/`) để bỏ bước build. `npm run e2e:lock -w @fatup/desktop` cho màn khóa trên điện thoại. Cần màn hình (CI bọc bằng `xvfb-run`). `SCREENSHOT_DIR=…` lưu ảnh chụp (lỗi thì có `failure-<vùng>.png`); `E2E_VERBOSE=1` in từng bước.
   - Mỗi vùng bắt đầu từ trạng thái sạch (mock server, profile, thư mục tải về riêng), nên không phụ thuộc thứ tự. Thêm vùng mới: tạo `e2e/areas/<tên>.mjs` export `run(h)`, rồi thêm vào `AREAS` trong `smoke.mjs`.
   - Thêm kiểm tra cho một tính năng: đặt vào vùng của tính năng đó, bắt đầu bằng `h.launchReady()`. API giả là `e2e/mock-server.mjs` — thêm route/dữ liệu vào đó khi cần (`test/e2e-mock.test.ts` kiểm tra dữ liệu giả và các route két). Két sắt trong API giả giữ bản mã như client gửi, không giải mã; `vault/in` cấp `attempt` và `vault/in/complete` đòi `attempt` như Worker; thời gian khóa rút ngắn bằng `E2E_VAULT_LOCK_SCALE` (mặc định 1).
-- Chưa có test render component. Với thay đổi về hình ảnh/tương tác, kiểm tra bằng agent `e2e-verifier` hoặc bằng tay, và nói rõ đã dùng cách nào.
+- Màn khóa: `lock-scene.test.ts` (chọn cảnh), `simple-door.test.ts` (cửa đơn giản: render tĩnh bằng `renderToStaticMarkup` và kiểm CSS, không có filter, đúng một lớp sáng).
+- Ngoài `SimpleDoor`, chưa có test render component. Với thay đổi về hình ảnh/tương tác, kiểm tra bằng agent `e2e-verifier` hoặc bằng tay, và nói rõ đã dùng cách nào.
 - Khi cần verify lại code khi fix bug, implement feature, chỉ cần chạy E2E những khu vực liên quan (`npm run e2e -- <vùng>`), không chạy lại toàn bộ. Chỉ chạy lại toàn bộ trước khi tạo PR.
 
 ## Quy tắc
 
 - Renderer không có quyền Node (`contextIsolation`, `sandbox`) và không bao giờ thấy token API; mọi thứ đi qua `window.fatup`.
 - Mọi chuỗi hiển thị cho người dùng phải có cả `en` và `vi` trong `lib/i18n.ts`.
+- Khóa đơn giản là mặc định (ADR 0020): không thêm `filter`, `halo`, hoạt họa hay lớp chạy liên tục vào `SimpleDoor`/`.sdoor`. Cảnh LOTR đầy đủ chỉ khi `lotrLock` bật.
 - Bố cục điện thoại (PWA) quan trọng: màn cảm ứng không có hover, giữ lâu 450 ms để chọn, nút bấm 40–44 px (`docs/spec/web.md` §10.2).

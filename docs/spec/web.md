@@ -25,11 +25,12 @@
 
 ### 10.2 Giao diện điện thoại
 
+- **Khóa trên điện thoại** mặc định là khóa đơn giản, nhẹ (một cánh cửa Moria với ánh sáng đổi chậm, không hoạt họa; [desktop-ui.md 9.10](desktop-ui.md#910-màn-hình-khóa-có-hoạt-họa)). Tick **Dùng khóa LOTR** trong Cài đặt để có cảnh đầy đủ như trước. Tùy chọn lưu trong `prefs` ở `localStorage`, mặc định tắt cho mọi PWA kể cả bản cũ (thiếu khóa thì coi là tắt).
 - Thanh trên gồm **hai hàng**: hàng 1 là logo và các nút (Tải lên, két sắt, thùng rác, cài đặt); hàng 2 là ô tìm kiếm và số liệu dung lượng (thanh Store). Lưới 2 cột, nút bấm tối thiểu 40–44px, tôn trọng safe-area của tai thỏ, chiều cao theo `dvh`.
 - Không có hover nên: bút chì ở lưới luôn hiện; **giữ lâu 450ms** một file để chọn (rung nhẹ), đã có file được chọn thì **chạm** để chọn/bỏ chọn. Chuột và bút cảm ứng giữ hành vi cũ.
 - Trình xem ảnh: ẩn nút zoom và mũi tên; **chụm hai ngón** để zoom, **vuốt ngang** chuyển ảnh, **vuốt xuống** đóng; bảng Chi tiết trượt từ đáy.
-- Cổng két sắt trên điện thoại (cùng định nghĩa điện thoại với màn hình khóa) là **ảnh tĩnh** (không lửa, không hoạt họa, PIN đúng vào ngay): xem [desktop-ui.md 9.11](desktop-ui.md#911-két-sắt-mã-hóa).
-- Màn hình khóa dọc: cảnh 16:9 được cắt vào giữa cổng (rộng 140% chiều cao màn hình) để ô PIN đủ lớn; Gollum nằm ngoài khung hình trên điện thoại.
+- Khi bật LOTR, cổng két sắt trên điện thoại (cùng định nghĩa điện thoại với màn hình khóa) là **ảnh tĩnh** (không lửa, không hoạt họa, PIN đúng vào ngay): xem [desktop-ui.md 9.11](desktop-ui.md#911-két-sắt-mã-hóa). Khi tắt LOTR (mặc định), cổng là cửa đơn giản có chữ VAULT, cũng không có hoạt họa.
+- Khi bật LOTR, màn hình khóa dọc: cảnh 16:9 được cắt vào giữa cổng (rộng 140% chiều cao màn hình) để ô PIN đủ lớn; Gollum nằm ngoài khung hình trên điện thoại.
 
 ### 10.3 Két sắt trên web
 

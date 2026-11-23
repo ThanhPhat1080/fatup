@@ -24,6 +24,16 @@ export async function showAll(page) {
   if (await on.count()) await on.click();
 }
 
+/**
+ * Ticks "Dùng khóa LOTR" in the open Settings dialog and waits until the app has stored it. The checkbox is controlled and its value
+ * comes back from an IPC call, so Playwright's check() (which reads the DOM at once) would see it unchecked.
+ */
+export async function turnLotrOn(page) {
+  const box = page.getByLabel('Dùng khóa LOTR');
+  if (!(await box.isChecked())) await box.click();
+  await page.waitForFunction(() => document.querySelector('input[aria-label="Dùng khóa LOTR"]')?.checked === true);
+}
+
 export async function typePin(page, pin) {
   await page.locator('.pin__input').first().pressSequentially(pin);
 }

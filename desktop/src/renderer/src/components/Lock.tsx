@@ -5,16 +5,21 @@ import { useMediaQuery, PHONE_QUERY } from '../lib/media';
 import { LockGate } from './LockGate';
 import { DOORS_OPEN_S, LockMoria } from './LockMoria';
 import { PinInput } from './PinInput';
+import { SimpleDoor } from './SimpleDoor';
+import { lockScene } from '../lib/lock-scene';
 
 const OPEN_MS = Math.round(DOORS_OPEN_S * 1000);
+// The simple door only fades out, so the app can follow quickly.
+const SIMPLE_OPEN_MS = 300;
 
 const prefersReducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
-export function Lock({ onUnlocked, onReset }: { onUnlocked: () => void; onReset: () => void }) {
+export function Lock({ lotr, onUnlocked, onReset }: { lotr: boolean; onUnlocked: () => void; onReset: () => void }) {
   const { t } = useI18n();
   // On a phone the lock screen is only the door of Moria (the full scene makes phones lag), but it still reacts: a wrong PIN stutters its
   // lights and shakes the PIN, the right one opens it.
   const phone = useMediaQuery(PHONE_QUERY);
+  const scene = lockScene(lotr, phone);
   const [message, setMessage] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState(0);
   const [lockedUntil, setLockedUntil] = useState(0);
@@ -43,7 +48,7 @@ export function Lock({ onUnlocked, onReset }: { onUnlocked: () => void; onReset:
       // The right PIN swings the Doors of Durin open; the app appears once the light has flooded the screen.
       if (prefersReducedMotion()) return onUnlocked();
       setOpen(true);
-      openTimer.current = setTimeout(onUnlocked, OPEN_MS);
+      openTimer.current = setTimeout(onUnlocked, scene === 'simple' ? SIMPLE_OPEN_MS : OPEN_MS);
       return;
     }
     setErrorKey((k) => k + 1);
@@ -69,7 +74,11 @@ export function Lock({ onUnlocked, onReset }: { onUnlocked: () => void; onReset:
 
   return (
     <div className="moria-lock">
-      {phone ? (
+      {scene === 'simple' ? (
+        <SimpleDoor open={open} below={below}>
+          {pin}
+        </SimpleDoor>
+      ) : scene === 'gate' ? (
         <LockGate open={open} panicKey={errorKey} below={below}>
           {pin}
         </LockGate>

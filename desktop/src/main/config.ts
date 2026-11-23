@@ -25,6 +25,7 @@ export type ConfigData = {
 export const DEFAULT_PREFS: Prefs = {
   lang: 'auto',
   theme: 'system',
+  lotrLock: false,
   viewModes: { all: 'list', image: 'grid', file: 'list', link: 'list' },
 };
 
