@@ -46,7 +46,7 @@ const RUNES: { x: number; y: number; rot: number; k: number; t: number }[] = (()
 export const star4 = (x: number, y: number, s: number) => `M${x} ${y - s}Q${x} ${y} ${x + s} ${y}Q${x} ${y} ${x} ${y + s}Q${x} ${y} ${x - s} ${y}Q${x} ${y} ${x} ${y - s}Z`;
 
 /** What the gate needs in <defs>: the light that pours out when it opens, the wall's and the door's stone patterns, the glow filter, the doorway clip, and the carving drawn once (dim and lit copies <use> it). */
-export function DoorDefs() {
+export function DoorDefs({ glow = true }: { glow?: boolean }) {
   return (
     <>
             <radialGradient id="moria-burst" cx="0.5" cy="0.5" r="0.5">
@@ -63,14 +63,16 @@ export function DoorDefs() {
               <rect width="70" height="46" fill="#2a4067" />
               <path d="M0 0H70M0 23H70M35 0V23M0 23V46M70 23V46" fill="none" stroke="#1a2a47" strokeWidth="2" />
             </pattern>
-            <filter id="moria-glow" x="-30%" y="-30%" width="160%" height="160%">
-              <feGaussianBlur stdDeviation="3.2" result="b" />
-              <feMerge>
-                <feMergeNode in="b" />
-                <feMergeNode in="b" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
+            {glow && (
+              <filter id="moria-glow" x="-30%" y="-30%" width="160%" height="160%">
+                <feGaussianBlur stdDeviation="3.2" result="b" />
+                <feMerge>
+                  <feMergeNode in="b" />
+                  <feMergeNode in="b" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            )}
             <clipPath id="moria-doorway">
               <path d={`M${CX - R_IN} ${BASE}V${SPRING}A${R_IN} ${R_IN} 0 0 1 ${CX + R_IN} ${SPRING}V${BASE}Z`} />
             </clipPath>
