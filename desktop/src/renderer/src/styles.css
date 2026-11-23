@@ -2735,19 +2735,14 @@ h2 {
   0%, 100% { opacity: 0.7; }
   50% { opacity: 1; }
 }
+/* Above the door, bent along its arch. Same horizontal scale as the door (width 100%); its bottom edge sits just over the top of the arch, so it hangs above the door box (the SVG is allowed to overflow). */
 .sdoor__label {
   position: absolute;
   left: 0;
-  right: 0;
-  top: 1.5%;
-  text-align: center;
-  font-size: 5.2cqw;
-  font-weight: 600;
-  letter-spacing: 1.4cqw;
-  text-indent: 1.4cqw;
-  text-transform: uppercase;
-  color: #d6efff;
-  text-shadow: 0 0 4px rgba(143, 208, 255, 0.5);
+  top: -8.9%;
+  width: 100%;
+  height: auto;
+  overflow: visible;
   pointer-events: none;
 }
 .sdoor__pin {

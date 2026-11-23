@@ -39,7 +39,15 @@ export function SimpleDoor({ open, cells = 4, label, children, below }: Props) {
           <use href="#moria-frame" />
           <use href="#moria-inner" />
         </svg>
-        {label && <div className="sdoor__label">{label}</div>}
+        {label && (
+          <svg className="sdoor__label" viewBox="525 140 550 70" aria-label={label} role="img">
+            {/* the text follows the top of the arch (circle of radius 210 around the arch's centre), sitting just above it */}
+            <path id="sdoor-label-arc" d="M590 410A210 210 0 0 1 1010 410" fill="none" />
+            <text fontSize={34} fontWeight={700} letterSpacing={9} textAnchor="middle" fill="#d6efff">
+              <textPath href="#sdoor-label-arc" startOffset="50%">{label}</textPath>
+            </text>
+          </svg>
+        )}
         <div className="sdoor__pin">{children}</div>
       </div>
       {below && <div className="sdoor__below">{below}</div>}
