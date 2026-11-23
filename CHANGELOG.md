@@ -4,6 +4,17 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [0.5.9] — 2026-11-23
+
+### Sửa
+- **Khóa đơn giản hết lag trên điện thoại.** Bản 0.5.8 vẫn giật vì trình duyệt phải vẽ lại SVG (có `mask`) mỗi nhịp sáng.
+
+### Đổi
+- Cánh cửa của khóa đơn giản giờ là hai ảnh WebP vẽ sẵn (nền tĩnh và hình khắc sáng, mỗi ảnh < 150 KB); chỉ độ sáng của ảnh sáng đổi chậm (3 giây mỗi nhịp), không còn gì vẽ lại lúc chạy. Hình ảnh giữ nguyên. Ảnh tạo bằng `desktop/scripts/render-door.mjs`. Chi tiết: [ADR 0020](docs/decisions/0020-khoa-don-gian-mac-dinh.md).
+
+### Nâng cấp
+Không có migration, không đổi server. Phát hành app máy tính mới và deploy lại PWA.
+
 ## [0.5.8] — 2026-11-23
 
 ### Thêm

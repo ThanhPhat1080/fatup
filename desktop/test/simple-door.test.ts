@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -18,13 +18,24 @@ function rules(css: string): { sel: string; body: string }[] {
 }
 const sdoor = rules(CSS).filter((r) => r.sel.split(',').some((s) => s.trim().startsWith('.sdoor')));
 
+const ASSETS = join(__dirname, '..', 'src', 'renderer', 'src', 'assets');
+const MAX_ASSET_BYTES = 160 * 1024;
+
 describe('SimpleDoor markup', () => {
   const html = renderToStaticMarkup(createElement(SimpleDoor, { open: false, label: 'VAULT', children: 'x' }));
 
-  it('has the label and the lit layer, none of the heavy parts', () => {
-    expect(html).toContain('VAULT');
+  it('is two plain images plus the label: no SVG art, filter, mask, gradient or <use>', () => {
+    expect(html.match(/<img /g)).toHaveLength(2);
+    expect(html).toContain('sdoor__base');
     expect(html).toContain('sdoor__lit');
-    for (const bad of ['feGaussianBlur', 'moria-glow', 'gate__halo', 'gate__stones']) expect(html).not.toContain(bad);
+    for (const bad of ['<use', '<filter', '<mask', 'Gradient', 'feGaussianBlur', 'moria-', 'gate__halo', 'gate__stones']) expect(html).not.toContain(bad);
+    expect(html.match(/<svg /g)).toHaveLength(1); // only the label
+  });
+
+  it('keeps the VAULT label as static text on the arch', () => {
+    expect(html).toContain('VAULT');
+    expect(html).toContain('textPath');
+    expect(renderToStaticMarkup(createElement(SimpleDoor, { open: false, children: 'x' }))).not.toContain('<svg');
   });
 
   it('adds sdoor--open when open, sdoor--6 for six cells', () => {
@@ -32,6 +43,16 @@ describe('SimpleDoor markup', () => {
     expect(renderToStaticMarkup(createElement(SimpleDoor, { open: true, children: 'x' }))).toContain('sdoor--open');
     expect(renderToStaticMarkup(createElement(SimpleDoor, { open: false, cells: 6, children: 'x' }))).toContain('sdoor--6');
   });
+});
+
+describe('pre-rendered door assets', () => {
+  for (const name of ['door-base.webp', 'door-lit.webp']) {
+    it(`${name} exists and stays small`, () => {
+      const size = statSync(join(ASSETS, name)).size;
+      expect(size).toBeGreaterThan(1000);
+      expect(size).toBeLessThan(MAX_ASSET_BYTES);
+    });
+  }
 });
 
 describe('DoorDefs glow flag', () => {
@@ -42,20 +63,26 @@ describe('DoorDefs glow flag', () => {
 });
 
 describe('.sdoor styles', () => {
-  it('exist and use no filter, blur or door leaves', () => {
+  it('exist and use no filter, blur, mask or door leaves', () => {
     expect(sdoor.length).toBeGreaterThan(0);
     for (const r of sdoor) {
       expect(r.body).not.toContain('filter:');
       expect(r.body).not.toContain('blur(');
+      expect(r.body).not.toContain('mask');
+      expect(r.body).not.toContain('gradient');
       expect(r.body).not.toContain('moria-leaf');
     }
   });
 
-  it('breathes the lit layer slowly with opacity only', () => {
-    const lit = sdoor.find((r) => r.sel === '.sdoor__lit');
-    expect(lit?.body).toContain('will-change: opacity');
-    const secs = /animation:[^;]*?(\d+(?:\.\d+)?)s/.exec(lit?.body ?? '');
+  it('has exactly one animated layer: the lit image, a slow opacity breathe of at least 3 s', () => {
+    const animated = sdoor.filter((r) => /(^|[\s;])animation:/.test(r.body) && !/animation:\s*none/.test(r.body));
+    expect(animated.map((r) => r.sel)).toEqual(['.sdoor__lit']);
+    expect(animated[0].body).toContain('will-change: opacity');
+    const secs = /animation:[^;]*?(\d+(?:\.\d+)?)s/.exec(animated[0].body);
     expect(Number(secs?.[1])).toBeGreaterThanOrEqual(3);
+    const kf = /@keyframes sdoor-breathe\s*\{([\s\S]*?)\n\}/.exec(CSS)?.[1] ?? '';
+    expect(kf).toContain('opacity');
+    expect(kf.replace(/opacity:\s*[\d.]+;/g, '').replace(/[\d%,\s{}]/g, '')).toBe('');
   });
 
   it('stops the animation for reduced motion', () => {

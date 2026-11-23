@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { DoorBody, DoorDefs } from './MoriaDoor';
+import baseUrl from '../assets/door-base.webp';
+import litUrl from '../assets/door-lit.webp';
 
 type Props = {
   /** True once the right PIN was entered: the whole door fades out quickly. */
@@ -14,31 +15,17 @@ type Props = {
   below?: ReactNode;
 };
 
-/** The part of the 1600 x 900 scene that holds the gate (same as LockGate). */
-const VIEW_BOX = '525 190 550 560';
-
 /**
- * A light lock door: the Doors of Durin drawn once, with a single transparent layer of lit carving over it whose opacity breathes
- * slowly. No filters, halo, stones, leaves, burst or flash: nothing is repainted while it runs.
+ * A light lock door: two pre-rendered images (desktop/scripts/render-door.mjs draws them from MoriaDoor.tsx), nothing drawn at runtime.
+ * The base is static; the lit image (only the glowing carving) is the single animated layer and only its opacity breathes, slowly.
+ * No SVG art, filter, mask or gradient to repaint (ADR 0020, approach C).
  */
 export function SimpleDoor({ open, cells = 4, label, children, below }: Props) {
   return (
     <div className={`sdoor${open ? ' sdoor--open' : ''}${cells === 6 ? ' sdoor--6' : ''}`}>
       <div className="sdoor__door">
-        <svg className="sdoor__base" viewBox={VIEW_BOX} preserveAspectRatio="none" aria-hidden>
-          <defs>
-            <DoorDefs glow={false} />
-          </defs>
-          <rect x={525} y={190} width={550} height={560} fill="url(#moria-rock)" />
-          <rect x={525} y={190} width={550} height={560} fill="#050a16" opacity={0.35} />
-          <DoorBody />
-          <use href="#moria-frame" opacity={0.16} />
-          <use href="#moria-inner" opacity={0.16} />
-        </svg>
-        <svg className="sdoor__lit" viewBox={VIEW_BOX} preserveAspectRatio="none" aria-hidden>
-          <use href="#moria-frame" />
-          <use href="#moria-inner" />
-        </svg>
+        <img className="sdoor__base" src={baseUrl} alt="" aria-hidden draggable={false} decoding="async" />
+        <img className="sdoor__lit" src={litUrl} alt="" aria-hidden draggable={false} decoding="async" />
         {label && (
           <svg className="sdoor__label" viewBox="525 140 550 70" aria-label={label} role="img">
             {/* the text follows the top of the arch (circle of radius 210 around the arch's centre), sitting just above it */}
