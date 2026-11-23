@@ -2413,6 +2413,15 @@ h2 {
   height: auto;
   z-index: 60;
 }
+/* The simple Vault gate: its own dark ground (the full gate gets it from LockBackdrop) and no padding, so the door is centred at full width. */
+.vaultscreen--simple {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #070d1c;
+  color: #e4efff;
+}
 /* Turning back: staff lowered and planted, no more bouncing. */
 .wizard--calm .wizard__body {
   animation: none;

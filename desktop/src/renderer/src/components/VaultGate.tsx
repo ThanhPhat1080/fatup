@@ -87,12 +87,10 @@ export function VaultGate({ lotr, onUnlocked, onBack, onRecover, hint }: { lotr:
       </p>
     );
     return (
-      <div className="lockscreen vaultscreen">
-        <div className="center-screen lockscreen__center">
-          <SimpleDoor open={false} cells={6} label="VAULT" below={<>{hint && <p className="vault-card__text">{hint}</p>}{err}{back}</>}>
-            <PinInput label={t.vaultPrompt} onComplete={submit} errorKey={errorKey} disabled={locked || leaving} length={VAULT_PIN_LENGTH} />
-          </SimpleDoor>
-        </div>
+      <div className="vaultscreen vaultscreen--simple">
+        <SimpleDoor open={false} cells={6} label="VAULT" below={<>{hint && <p className="vault-card__text">{hint}</p>}{err}{back}</>}>
+          <PinInput label={t.vaultPrompt} onComplete={submit} errorKey={errorKey} disabled={locked || leaving} length={VAULT_PIN_LENGTH} />
+        </SimpleDoor>
       </div>
     );
   }

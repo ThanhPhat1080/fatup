@@ -1,6 +1,6 @@
 # Khóa đơn giản (tùy chọn "Dùng khóa LOTR")
 
-Trạng thái: chờ duyệt. Cỡ: nhỏ.
+Trạng thái: đã duyệt (2026-11-23), đã cài đặt. Cỡ: nhỏ.
 
 ## Vì sao
 
@@ -42,7 +42,7 @@ Màn khóa app và cổng Két sắt còn giật, lag trên điện thoại, k�
 
 **Cổng Két sắt (`VaultGate.tsx`).** `lotrLock` bật: như hiện tại. Tắt: cùng cánh cửa đơn giản, thêm chữ **VAULT** (cố định, không dịch) ở trên đỉnh cửa, ô PIN 6 số, nút ← Quay lại, dòng `hint` nếu có. Không có ông phù thủy, quả bom, `LockBackdrop`. PIN đúng thì vào ngay như `stillGate()`; Quay lại thoát ngay, không chờ 3,4 giây.
 
-**Kiến trúc.** Cánh cửa đơn giản là một component dùng chung cho cả hai nơi (props: nhãn tùy chọn "VAULT", `panicKey`, `children`, `below`); logic quyết định hiển thị (`lotrLock` → cảnh nào) đặt ở hàm thuần trong `lib/` để test được.
+**Kiến trúc.** Cánh cửa đơn giản là một component dùng chung cho cả hai nơi (props: `open`, `cells`, nhãn tùy chọn "VAULT", `children`, `below`); logic quyết định hiển thị (`lotrLock` → cảnh nào) đặt ở hàm thuần trong `lib/` để test được.
 
 ## Quyết định do Claude tự đưa ra (cần xem lại)
 

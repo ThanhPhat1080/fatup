@@ -159,7 +159,7 @@ export function Settings({ state, onClose, onPrefs, onToast, onLock, onSignOut, 
             checked={state.prefs.lotrLock}
             onChange={(e) => onPrefs({ lotrLock: e.target.checked })}
             aria-label={t.lotrLock}
-            style={{ width: 20, height: 20, minWidth: 40, minHeight: 40, margin: 0, cursor: 'pointer' }}
+            style={{ width: 24, height: 24, margin: 0, cursor: 'pointer' }}
           />
         </label>
 
