@@ -5,7 +5,9 @@ import { ArrowLeft } from 'lucide-react';
 import { useI18n } from '../lib/i18n';
 import { gateMessage, vaultText, VAULT_PIN_LENGTH, type GateMessage } from '../lib/vault';
 import { stillGate } from '../lib/motion';
+import { vaultGateStill } from '../lib/lock-scene';
 import { PinInput } from './PinInput';
+import { SimpleDoor } from './SimpleDoor';
 
 const BOOM_MS = Math.round((BOMB_LANDS_S + 0.95) * 1000);
 const LEAVE_MS = 3400; // long enough to read what the wizard says
@@ -13,7 +15,7 @@ const LEAVE_MS = 3400; // long enough to read what the wizard says
 /**
  * Shown every time the Vault is opened: the PIN has to be entered again. `hint` says why it is asked (moving files in from the list).
  */
-export function VaultGate({ onUnlocked, onBack, onRecover, hint }: { onUnlocked: () => void; onBack: () => void; onRecover: () => void; hint?: string }) {
+export function VaultGate({ lotr, onUnlocked, onBack, onRecover, hint }: { lotr: boolean; onUnlocked: () => void; onBack: () => void; onRecover: () => void; hint?: string }) {
   const { t } = useI18n();
   const [message, setMessage] = useState<GateMessage | null>(null);
   const [errorKey, setErrorKey] = useState(0);
@@ -29,7 +31,7 @@ export function VaultGate({ onUnlocked, onBack, onRecover, hint }: { onUnlocked:
   function goBack() {
     if (leaving || boom) return;
     setLeaving(true);
-    boomTimer.current = setTimeout(onBack, stillGate() ? 0 : LEAVE_MS);
+    boomTimer.current = setTimeout(onBack, vaultGateStill(lotr, stillGate()) ? 0 : LEAVE_MS);
   }
 
   useEffect(() => {
@@ -51,7 +53,7 @@ export function VaultGate({ onUnlocked, onBack, onRecover, hint }: { onUnlocked:
     }
     if (res.ok) {
       // The right PIN blows the safe open; the Vault shows once the blast is over.
-      if (stillGate()) return onUnlocked();
+      if (vaultGateStill(lotr, stillGate())) return onUnlocked();
       setBoom(true);
       boomTimer.current = setTimeout(onUnlocked, BOOM_MS);
       return;
@@ -71,6 +73,30 @@ export function VaultGate({ onUnlocked, onBack, onRecover, hint }: { onUnlocked:
 
   const shown: GateMessage | null = locked ? gateMessage({ ok: false, reason: 'locked', lockedUntil }, now) : message;
 
+  const back = (
+    <button className="btn btn--text" onClick={goBack} disabled={boom || leaving}>
+      <ArrowLeft size={18} /> {t.goBack}
+    </button>
+  );
+
+  if (!lotr) {
+    // Simple lock: the light door with VAULT on it. No wizard, no flames, no boom: a wrong PIN only shakes the cells.
+    const err = (
+      <p className={`error ${shown || locked ? '' : 'error--hidden'}`} role="alert">
+        {shown ? vaultText(t, shown) : ' '}
+      </p>
+    );
+    return (
+      <div className="lockscreen vaultscreen">
+        <div className="center-screen lockscreen__center">
+          <SimpleDoor open={false} cells={6} label="VAULT" below={<>{hint && <p className="vault-card__text">{hint}</p>}{err}{back}</>}>
+            <PinInput label={t.vaultPrompt} onComplete={submit} errorKey={errorKey} disabled={locked || leaving} length={VAULT_PIN_LENGTH} />
+          </SimpleDoor>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="lockscreen vaultscreen">
       <LockBackdrop />
@@ -84,9 +110,7 @@ export function VaultGate({ onUnlocked, onBack, onRecover, hint }: { onUnlocked:
           <p className={`error ${shown || locked ? '' : 'error--hidden'}`} role="alert">
             {shown ? vaultText(t, shown) : ' '}
           </p>
-          <button className="btn btn--text" onClick={goBack} disabled={boom || leaving}>
-            <ArrowLeft size={18} /> {t.goBack}
-          </button>
+          {back}
         </div>
       </div>
     </div>

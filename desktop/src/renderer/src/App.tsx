@@ -35,7 +35,7 @@ export function App() {
   if (!state.configured || !state.hasPin) {
     screen = <Setup needsConnection={!state.configured} defaultUrl={state.defaultServerUrl} onDone={reload} />;
   } else if (!state.unlocked) {
-    screen = <Lock onUnlocked={reload} onReset={reload} />;
+    screen = <Lock lotr={state.prefs.lotrLock} onUnlocked={reload} onReset={reload} />;
   } else {
     screen = <Main state={state} onPrefs={updatePrefs} onLocked={reload} />;
   }

@@ -1,6 +1,7 @@
 // E2E area "settings": Settings: Android pairing QR behind the PIN; dark mode screens.
 // Run alone: npm run e2e -- settings   (see ../smoke.mjs)
-import { kind, showAll, typePin } from '../harness.mjs';
+import assert from 'node:assert/strict';
+import { kind, showAll, turnLotrOn, typePin } from '../harness.mjs';
 
 /** @param {Awaited<ReturnType<typeof import('../harness.mjs').createHarness>>} h */
 export async function run(h) {
@@ -24,4 +25,22 @@ export async function run(h) {
   await showAll(page);
   await page.waitForTimeout(200);
   await h.shot(page, '08-all-list-dark');
+
+  h.log('simple lock: off by default, the light door');
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await page.getByRole('button', { name: 'Khóa ngay' }).click();
+  await page.locator('.sdoor').waitFor();
+  assert.equal(await page.locator('.moria, .gate').count(), 0, 'the LOTR scenes are not drawn while the LOTR lock is off');
+  await h.shot(page, '09-lock-simple');
+  await typePin(page, '1234');
+  await page.getByText('Báo cáo tháng 11.pdf', { exact: true }).waitFor();
+
+  h.log('simple lock: LOTR lock on, the next lock shows the full scene');
+  await page.getByRole('button', { name: 'Cài đặt' }).click();
+  await turnLotrOn(page);
+  await page.getByRole('button', { name: 'Khóa ngay' }).click();
+  await page.locator('.moria').waitFor();
+  assert.equal(await page.locator('.sdoor').count(), 0, 'the simple door is gone once the LOTR lock is on');
+  await typePin(page, '1234');
+  await page.getByText('Báo cáo tháng 11.pdf', { exact: true }).waitFor();
 }

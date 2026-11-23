@@ -80,6 +80,8 @@ try {
   await page.getByText('Nhập lại PIN').waitFor();
   await typePin(page, '1234');
   await page.getByText('Báo cáo tháng 11.pdf', { exact: true }).waitFor();
+  // The full LOTR scenes are what this test checks: the simple lock (the default) is off until the pref is on.
+  await page.evaluate(() => window.fatup.setPrefs({ lotrLock: true }));
   await app.close();
 
   log('locked, on a phone');
