@@ -20,7 +20,7 @@ type Stored = {
   downloaded: string[];
 };
 
-const DEFAULT_PREFS: Prefs = { lang: 'auto', theme: 'system', viewModes: { all: 'list', image: 'grid', file: 'list', link: 'list' } };
+const DEFAULT_PREFS: Prefs = { lang: 'auto', theme: 'system', lotrLock: false, viewModes: { all: 'list', image: 'grid', file: 'list', link: 'list' } };
 
 function load(): Stored {
   const base: Stored = { serverUrl: null, token: null, lockout: { failedAttempts: 0, lockedUntil: 0 }, prefs: structuredClone(DEFAULT_PREFS), downloaded: [] };

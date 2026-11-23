@@ -9,6 +9,8 @@ export type Tab = 'all' | 'image' | 'file' | 'link';
 export type Prefs = {
   lang: Lang;
   theme: Theme;
+  /** Use the full animated LOTR lock scenes; off = the light simple door. */
+  lotrLock: boolean;
   viewModes: Record<Tab, ViewMode>;
 };
 
