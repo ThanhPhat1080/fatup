@@ -56,3 +56,4 @@ Cái được, cái mất, và điều agent KHÔNG được làm vì quyết đ
 | [0017](0017-lay-ra-khoi-ket-doi-giao-dien-ngay.md) | Lấy ra khỏi Két sắt đổi giao diện ngay: bản giả trong danh sách chính, làm mới có bộ đếm thế hệ | desktop, web | Đã chốt |
 | [0018](0018-nhap-anh-tu-thu-muc-bucket.md) | Nhập ảnh từ thư mục của bucket: di chuyển, id xác định từ nguồn, mọi thao tác qua S3 API | worker, shared, desktop, web | Đã chốt |
 | [0019](0019-ket-sat-khong-hien-thumbnail.md) | Két sắt không hiện thumbnail của bất kỳ mục nào: không tải, không giải mã; ảnh gốc chỉ tải khi mở | desktop, web | Đã chốt |
+| [0020](0020-khoa-don-gian-mac-dinh.md) | Màn khóa mặc định là cửa đơn giản nhẹ; cảnh LOTR đầy đủ bật bằng tùy chọn "Dùng khóa LOTR" | desktop, web | Đã chốt |
