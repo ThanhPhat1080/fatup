@@ -35,7 +35,7 @@ Các cách đã cân nhắc:
 Người dùng thử 0.5.8 trên điện thoại thật và vẫn thấy lag, nên "Chi tiết cửa đơn giản" (mục 4) được sửa như sau; các mục khác không đổi.
 
 - Cánh cửa được **vẽ sẵn thành hai ảnh WebP**, commit trong repo: `desktop/src/renderer/src/assets/door-base.webp` (tường + thân cửa + hình khắc mờ, phần mờ dần ở rìa đã nằm sẵn trong kênh alpha, nên không còn `mask-image`) và `door-lit.webp` (trong suốt, chỉ có hình khắc sáng, đã nướng sẵn vầng sáng nên không còn `filter`). Ảnh do `desktop/scripts/render-door.mjs` tạo ra từ chính `DoorDefs`/`DoorBody` của `MoriaDoor.tsx` (nghệ thuật vẫn một nguồn); chạy lại khi sửa hình cửa. Mỗi ảnh nhỏ hơn 150 KB (xem test).
-- `SimpleDoor` chỉ còn: hai thẻ `<img>`, chữ VAULT là một SVG `<text>` nhỏ đứng yên, và lớp ô PIN. **Một** hoạt họa duy nhất: `opacity` của ảnh sáng, 5 giây mỗi nhịp, giữa 0,5 và 1, `will-change: opacity`. Nghĩa là trình duyệt chỉ cần ghép lớp (compositor), không vẽ lại gì.
+- `SimpleDoor` chỉ còn: hai thẻ `<img>`, chữ VAULT là một SVG `<text>` nhỏ đứng yên, và lớp ô PIN. **Một** hoạt họa duy nhất: `opacity` của ảnh sáng, 3 giây mỗi nhịp, giữa 0,5 và 1, `will-change: opacity`. Nghĩa là trình duyệt chỉ cần ghép lớp (compositor), không vẽ lại gì.
 - Vẫn cấm: `<use>`, `filter`, `mask`, gradient vẽ lại, lớp hoạt họa thứ hai. `prefers-reduced-motion`: ảnh sáng đứng yên (độ sáng 1).
 - Ảnh cố định 920x937 (2 lần 460 px css); kích thước hiển thị vẫn `min(100vw, 460px)`, nên trên màn rất nét có thể hơi mềm. Chấp nhận.
 - Hiệu năng thật trên điện thoại vẫn do người dùng tự thử. Nếu vẫn lag thì lùi tiếp là bỏ hẳn hoạt họa (ảnh sáng đứng yên).

@@ -2723,7 +2723,7 @@ h2 {
 /* the only animated layer: a slow opacity breathe of the pre-rendered carving, nothing else moves */
 .sdoor__lit {
   will-change: opacity;
-  animation: sdoor-breathe 5s ease-in-out infinite;
+  animation: sdoor-breathe 3s ease-in-out infinite;
 }
 @keyframes sdoor-breathe {
   0%, 100% { opacity: 0.5; }
