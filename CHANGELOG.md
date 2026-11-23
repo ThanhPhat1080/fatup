@@ -4,6 +4,14 @@ Mọi thay đổi đáng chú ý của FatUp. Định dạng theo [Keep a Change
 
 Mục **Nâng cấp** ở mỗi phiên bản nói rõ phần server cần chạy. Thứ tự luôn là: **migrate trước, deploy sau** (`npm run db:migrate:remote` rồi `npm run deploy` trong `worker/`).
 
+## [0.5.7] — 2026-11-23
+
+### Sửa
+- **Làm mới theo yêu cầu nhập ảnh từ bucket ngay.** Nút làm mới và `Ctrl+R`/`Cmd+R` không còn bị giới hạn 30 giây của bước nhập ảnh từ thư mục bucket (`importSync`); file mới thấy ngay. Làm mới tự động (theo chu kỳ, lấy lại focus) vẫn giữ giới hạn đó.
+
+### Nâng cấp
+Không có migration, không đổi server. Phát hành app máy tính mới và deploy lại PWA.
+
 ## [0.5.6] — 2026-11-19
 
 ### Đổi

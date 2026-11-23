@@ -112,7 +112,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const lastPicked = useRef<string | null>(null);
   const lastRefresh = useRef(0);
   const lastImportSync = useRef(0);
-  const refreshRef = useRef<() => Promise<void>>(async () => {});
+  const refreshRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
   const searchRef = useRef<HTMLInputElement>(null);
   /** Ids on their way into the Vault: they stay out of the main list until the move ends, even if a refresh that started earlier answers with them. */
   const enteringVault = useRef(new Set<string>());
@@ -122,7 +122,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   const refreshGen = useRef(0);
 
   // Reads vaultActiveRef, not the render's value, so a refresh started by a move that ends later still sees a Vault opened meanwhile.
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force?: boolean) => {
     const gen = ++refreshGen.current;
     lastRefresh.current = Date.now();
     setLoading(true);
@@ -160,7 +160,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
     }
     // Ask the server to bring in images other apps dropped into its bucket folder. The list is read again only when some arrived
     // (that second refresh is inside the minimum gap, so it does not ask again); a failure is ignored and retried at the next refresh.
-    if (shouldSyncImport(Date.now(), lastImportSync.current)) {
+    if (shouldSyncImport(Date.now(), lastImportSync.current, undefined, force === true)) {
       lastImportSync.current = Date.now();
       void window.fatup.importSync().then((r) => {
         if (r.ok && r.value.imported > 0) void refreshRef.current();
@@ -172,9 +172,9 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
   // Opening or closing the Vault refreshes at once; polling and focus refresh the Vault list too while it is open (a pending item turns into a tick).
   useEffect(() => {
     refresh();
-    const timer = setInterval(refresh, POLL_MS);
+    const timer = setInterval(() => void refresh(), POLL_MS);
     const onFocus = () => {
-      if (Date.now() - lastRefresh.current > FOCUS_REFRESH_MIN_GAP_MS) refresh();
+      if (Date.now() - lastRefresh.current > FOCUS_REFRESH_MIN_GAP_MS) void refresh();
     };
     window.addEventListener('focus', onFocus);
     return () => {
@@ -188,7 +188,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === 'r') {
         e.preventDefault();
-        refresh();
+        void refresh(true);
       } else if (mod && e.key.toLowerCase() === 'f') {
         e.preventDefault();
         searchRef.current?.focus();
@@ -1095,7 +1095,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
             )}
             <div className="chips-row__tools">
               <TagFilter value={tagFilter} onChange={setTagFilter} />
-              <button className="icon-btn" onClick={refresh} title={`${t.refresh} (Ctrl+R)`} aria-label={t.refresh} disabled={loading}>
+              <button className="icon-btn" onClick={() => void refresh(true)} title={`${t.refresh} (Ctrl+R)`} aria-label={t.refresh} disabled={loading}>
                 <RotateCw size={20} className={loading ? 'spin' : ''} />
               </button>
               {/* Always there on the links tab (so the bar never shifts under the mouse); greyed out when nothing is grouped. */}
@@ -1125,7 +1125,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
         {error && (
           <div className="banner" role="alert">
             {error}
-            <button className="btn btn--text" onClick={refresh}>
+            <button className="btn btn--text" onClick={() => void refresh(true)}>
               {t.refresh}
             </button>
           </div>
@@ -1195,7 +1195,7 @@ export function Main({ state, onPrefs, onLocked }: { state: AppState; onPrefs: (
       )}
 
       {vaultTrashOpen && inVault && vaultUnlocked && (
-        <VaultTrash onClose={() => setVaultTrashOpen(false)} onChanged={refresh} onLocked={onLocked} />
+        <VaultTrash onClose={() => setVaultTrashOpen(false)} onChanged={() => void refresh()} onLocked={onLocked} />
       )}
 
       {menu && (

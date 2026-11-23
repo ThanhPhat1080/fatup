@@ -39,4 +39,7 @@ describe('ApiClient import and thumbnail calls', () => {
 
     expect(calls).toEqual(['POST /files/a%2Fb/thumb', 'POST /files/a%2Fb/thumb/complete']);
   });
+  it('force skips the minimum gap', () => {
+    expect(shouldSyncImport(2_000, 1_000, undefined, true)).toBe(true);
+  });
 });
